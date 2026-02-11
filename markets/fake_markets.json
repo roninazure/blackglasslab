@@ -1,0 +1,7 @@
+[
+  {"market_id":"FAKE-001","question":"Will the next major release include an agent orchestration feature?","outcome":"YES"},
+  {"market_id":"FAKE-002","question":"Will a major exchange outage occur this month?","outcome":"NO"},
+  {"market_id":"FAKE-003","question":"Will a top-10 crypto asset drop more than 10% in a single day this week?","outcome":"YES"},
+  {"market_id":"FAKE-004","question":"Will a widely used open-source library ship a breaking change without a major version bump?","outcome":"NO"},
+  {"market_id":"FAKE-005","question":"Will a notable AI product launch be delayed past its announced date?","outcome":"YES"}
+]

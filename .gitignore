@@ -1,0 +1,15 @@
+# runtime data (never commit)
+logs/
+memory/
+
+# python
+__pycache__/
+*.pyc
+
+# env
+.env
+.venv/
+venv/
+
+# runtime state
+agent_state.json
