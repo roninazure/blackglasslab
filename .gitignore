@@ -13,3 +13,20 @@ venv/
 
 # runtime state
 agent_state.json
+
+# runtime artifacts
+signals/
+logs/
+memory/*.sqlite
+memory/*.sqlite-*
+*.log
+
+# local backups
+*.bak.*
+*.bak
+*.tmp
+
+# python
+__pycache__/
+*.pyc
+.venv/
