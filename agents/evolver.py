@@ -1,3 +1,4 @@
+# agents/evolver.py
 from __future__ import annotations
 
 import random
@@ -5,13 +6,14 @@ import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Keep these aligned with your existing agent implementations.
 OPERATOR_MODES = [
     "heuristic_yes_bias",
     "mutant_0",
@@ -31,7 +33,7 @@ SKEPTIC_MODES = [
 @dataclass(frozen=True)
 class PopMember:
     agent_id: str
-    role: str
+    role: str               # operator|skeptic
     mode: str
     seed: int
     generation: int
@@ -39,17 +41,29 @@ class PopMember:
     mutation: str
 
 
-def ensure_seed_population(conn: sqlite3.Connection, per_role: int = 12) -> None:
+def _mode_pool(role: str) -> List[str]:
+    if role == "operator":
+        return OPERATOR_MODES
+    if role == "skeptic":
+        return SKEPTIC_MODES
+    raise ValueError(f"Unknown role: {role}")
+
+
+def ensure_seed_population(conn: sqlite3.Connection, per_role: int = 12, seed: int = 1337) -> Dict[str, Any]:
+    """
+    Create initial population if agent_population is empty.
+    Returns a small dict suitable for logging/telemetry.
+    """
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM agent_population;")
-    n = int(cur.fetchone()[0] or 0)
-    if n > 0:
-        return
+    existing = int(cur.fetchone()[0] or 0)
+    if existing > 0:
+        return {"status": "already_seeded", "existing": existing}
 
+    rng = random.Random(int(seed))
     ts = utc_now_iso()
-    rng = random.Random(1337)
 
-    def insert(role: str, mode: str, seed: int) -> None:
+    def insert(role: str, mode: str, member_seed: int) -> None:
         cur.execute(
             """
             INSERT INTO agent_population (
@@ -57,7 +71,7 @@ def ensure_seed_population(conn: sqlite3.Connection, per_role: int = 12) -> None
               parent_agent_id, mutation, created_ts_utc, is_active
             ) VALUES (?, ?, ?, ?, 0, NULL, 'seed_init', ?, 1);
             """,
-            (str(uuid.uuid4()), role, mode, int(seed), ts),
+            (str(uuid.uuid4()), role, mode, int(member_seed), ts),
         )
 
     for _ in range(per_role):
@@ -66,9 +80,13 @@ def ensure_seed_population(conn: sqlite3.Connection, per_role: int = 12) -> None
         insert("skeptic", rng.choice(SKEPTIC_MODES), rng.randrange(1_000_000))
 
     conn.commit()
+    return {"status": "seeded", "per_role": per_role, "total": per_role * 2}
 
 
 def sample_active(conn: sqlite3.Connection, role: str, k: int, seed: int) -> List[PopMember]:
+    """
+    Sample k active members for a role. Deterministic given seed.
+    """
     cur = conn.cursor()
     cur.execute(
         """
@@ -95,6 +113,42 @@ def _current_generation(conn: sqlite3.Connection) -> int:
     return int(cur.fetchone()[0] or 0)
 
 
+def _rank_agents_by_fitness(
+    conn: sqlite3.Connection,
+    role: str,
+    window_agent_runs: int,
+    min_obs: int,
+) -> List[Tuple[str, int, float]]:
+    """
+    Returns list of (agent_id, n, avg_fitness), ordered desc.
+    Only uses agent_runs rows that actually map to agent_population via agent_id.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT ar.agent_id,
+               COUNT(*) AS n,
+               AVG(ar.fitness) AS avg_fit
+        FROM (
+          SELECT id, agent_id, fitness
+          FROM agent_runs
+          WHERE agent_id IS NOT NULL AND agent_id != ''
+          ORDER BY id DESC
+          LIMIT ?
+        ) ar
+        JOIN agent_population ap
+          ON ap.agent_id = ar.agent_id
+        WHERE ap.role = ?
+        GROUP BY ar.agent_id
+        HAVING n >= ?
+        ORDER BY avg_fit DESC;
+        """,
+        (window_agent_runs, role, min_obs),
+    )
+    rows = cur.fetchall()
+    return [(str(a), int(n), float(f)) for (a, n, f) in rows]
+
+
 def evolve(
     conn: sqlite3.Connection,
     role: str,
@@ -102,63 +156,63 @@ def evolve(
     min_obs: int = 10,
     keep_top: int = 8,
     spawn: int = 8,
+    rng_seed: Optional[int] = None,
 ) -> Dict[str, Any]:
-    cur = conn.cursor()
+    """
+    Evolution step:
+      - rank last window_agent_runs population-linked agent_runs by avg fitness
+      - deactivate non-top actives
+      - spawn new children from top set (mode swap or seed jitter)
 
-    cur.execute(
-        """
-        SELECT ar.agent_id,
-               COUNT(*) AS n,
-               AVG(ar.fitness) AS avg_fit
-        FROM (
-          SELECT ar2.id, ar2.agent_id, ar2.fitness
-          FROM agent_runs ar2
-          JOIN agent_population ap2 ON ap2.agent_id = ar2.agent_id
-          WHERE ap2.role = ?
-          ORDER BY ar2.id DESC
-          LIMIT ?
-        ) ar
-        GROUP BY ar.agent_id
-        HAVING n >= ?
-        ORDER BY avg_fit DESC;
-        """,
-        (role, window_agent_runs, min_obs),
-    )
-    ranked = cur.fetchall()
+    Returns a dict suitable for writing into logs/events.jsonl.
+    """
+    ranked = _rank_agents_by_fitness(conn, role, window_agent_runs, min_obs)
 
     if not ranked:
-        return {"role": role, "status": "no_ranked_agents", "min_obs": min_obs, "window": window_agent_runs}
+        return {
+            "role": role,
+            "status": "no_ranked_agents",
+            "window": window_agent_runs,
+            "min_obs": min_obs,
+        }
 
     top = ranked[:keep_top]
-    top_ids = [r[0] for r in top]
+    top_ids = [a for (a, _, _) in top]
 
-    # Cull non-top actives
+    cur = conn.cursor()
+
+    # Deactivate all active members not in top_ids for this role.
     cur.execute(
-        """
+        f"""
         UPDATE agent_population
         SET is_active=0
-        WHERE role=? AND is_active=1 AND agent_id NOT IN (%s);
-        """ % ",".join("?" * len(top_ids)),
+        WHERE role=? AND is_active=1 AND agent_id NOT IN ({",".join("?" * len(top_ids))});
+        """,
         (role, *top_ids),
     )
 
     gen = _current_generation(conn) + 1
     ts = utc_now_iso()
-    rng = random.Random(uuid.uuid4().int & 0xFFFFFFFF)
-    mode_pool = OPERATOR_MODES if role == "operator" else SKEPTIC_MODES
+    rng = random.Random(int(rng_seed) if rng_seed is not None else (uuid.uuid4().int & 0xFFFFFFFF))
+    pool = _mode_pool(role)
 
-    def get_parent(pid: str) -> tuple[str, int]:
+    def get_parent(pid: str) -> Tuple[str, int]:
         cur.execute("SELECT mode, seed FROM agent_population WHERE agent_id=?;", (pid,))
-        m, s = cur.fetchone()
-        return str(m), int(s)
+        row = cur.fetchone()
+        if not row:
+            raise RuntimeError(f"Missing parent in agent_population: {pid}")
+        return str(row[0]), int(row[1])
 
     spawned = 0
-    for _ in range(spawn):
+    for _ in range(int(spawn)):
         parent_id = rng.choice(top_ids)
         pmode, pseed = get_parent(parent_id)
 
+        # Mutations:
+        #  - 30% mode swap
+        #  - 70% seed jitter
         if rng.random() < 0.30:
-            choices = [m for m in mode_pool if m != pmode] or [pmode]
+            choices = [m for m in pool if m != pmode] or [pmode]
             new_mode = rng.choice(choices)
             new_seed = rng.randrange(1_000_000)
             mutation = f"mode_swap:{pmode}->{new_mode}"
@@ -184,6 +238,8 @@ def evolve(
         "role": role,
         "status": "evolved",
         "generation": gen,
-        "kept": [{"agent_id": a, "n": int(n), "avg_fitness": float(f)} for a, n, f in top],
+        "window": window_agent_runs,
+        "min_obs": min_obs,
+        "kept": [{"agent_id": a, "n": n, "avg_fitness": f} for (a, n, f) in top],
         "spawned": spawned,
     }
