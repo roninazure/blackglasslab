@@ -142,7 +142,6 @@ def evolve(
         (role, *top_ids),
     )
 
-    # Spawn children
     gen = _current_generation(conn) + 1
     ts = utc_now_iso()
     rng = random.Random(uuid.uuid4().int & 0xFFFFFFFF)
@@ -153,6 +152,7 @@ def evolve(
         m, s = cur.fetchone()
         return str(m), int(s)
 
+    spawned = 0
     for _ in range(spawn):
         parent_id = rng.choice(top_ids)
         pmode, pseed = get_parent(parent_id)
@@ -176,6 +176,7 @@ def evolve(
             """,
             (str(uuid.uuid4()), role, new_mode, int(new_seed), int(gen), parent_id, mutation, ts),
         )
+        spawned += 1
 
     conn.commit()
 
@@ -184,5 +185,5 @@ def evolve(
         "status": "evolved",
         "generation": gen,
         "kept": [{"agent_id": a, "n": int(n), "avg_fitness": float(f)} for a, n, f in top],
-        "spawned": spawn,
+        "spawned": spawned,
     }
