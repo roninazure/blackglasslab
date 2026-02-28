@@ -99,6 +99,22 @@ def ensure_db() -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_runs_fitness ON agent_runs(fitness);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_runs_agent_id ON agent_runs(agent_id);")
 
+    # arbiter_runs table (v0.6+) — used by live_runner consensus mode
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS arbiter_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      ts_utc TEXT NOT NULL,
+      consensus_side TEXT NOT NULL,
+      consensus_p_yes REAL NOT NULL,
+      disagreement REAL NOT NULL,
+      winner_agent TEXT NOT NULL,
+      winner_fitness REAL NOT NULL,
+      notes TEXT NOT NULL
+    );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_arbiter_runs_runid ON arbiter_runs(run_id);")
+
     conn.commit()
     conn.close()
 
@@ -160,6 +176,89 @@ def insert_agent_run(
         """,
         (run_id, agent_id, agent_name, side, float(conf), rationale, float(brier),
          float(reward), float(score), notes, float(fitness), ts_utc),
+    )
+
+
+def _p_yes(side: str, conf: float) -> float:
+    s = (side or "").strip().upper()
+    c = float(conf)
+    return c if s == "YES" else (1.0 - c)
+
+
+def _compute_arbiter_from_swarm(op_results, sk_results) -> Dict[str, Any]:
+    """
+    Stable inline arbiter:
+    - consensus_p_yes: mean P(YES) across all agents in this run
+    - disagreement: range(max-min) P(YES) across all agents
+    - winner: max fitness across all agents
+    """
+    points: List[float] = []
+    winner_agent = "unknown"
+    winner_fitness = -1e18
+
+    for (m, out, sc, fit) in (op_results or []):
+        py = _p_yes(out.side, out.confidence)
+        points.append(py)
+        if float(fit) > winner_fitness:
+            winner_fitness = float(fit)
+            winner_agent = f"operator_{m.mode}"
+
+    for (m, out, sc, fit) in (sk_results or []):
+        py = _p_yes(out.side, out.confidence)
+        points.append(py)
+        if float(fit) > winner_fitness:
+            winner_fitness = float(fit)
+            winner_agent = f"skeptic_{m.mode}"
+
+    if not points:
+        consensus_p_yes = 0.5
+        disagreement = 0.0
+    else:
+        consensus_p_yes = sum(points) / float(len(points))
+        disagreement = max(points) - min(points)
+
+    consensus_side = "YES" if consensus_p_yes >= 0.5 else "NO"
+    notes = f"arbiter=v0.7_inline mean_p_yes={consensus_p_yes:.6f} range={disagreement:.6f} n={len(points)}"
+
+    return {
+        "consensus_side": consensus_side,
+        "consensus_p_yes": float(consensus_p_yes),
+        "disagreement": float(disagreement),
+        "winner_agent": winner_agent,
+        "winner_fitness": float(winner_fitness if winner_fitness > -1e17 else 0.0),
+        "notes": notes,
+    }
+
+
+def insert_arbiter_run(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    ts_utc: str,
+    consensus_side: str,
+    consensus_p_yes: float,
+    disagreement: float,
+    winner_agent: str,
+    winner_fitness: float,
+    notes: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO arbiter_runs (
+          run_id, ts_utc, consensus_side, consensus_p_yes, disagreement,
+          winner_agent, winner_fitness, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        """,
+        (
+            run_id,
+            ts_utc,
+            consensus_side,
+            float(consensus_p_yes),
+            float(disagreement),
+            winner_agent,
+            float(winner_fitness),
+            notes,
+        ),
     )
 
 
@@ -325,6 +424,20 @@ def main() -> None:
             float(sk_best[2].brier), float(sk_best[2].reward),
             op_best[2].notes, sk_best[2].notes,
         ),
+    )
+
+    # Write arbiter consensus row (enables live_runner arbiter mode)
+    arb = _compute_arbiter_from_swarm(op_results, sk_results)
+    insert_arbiter_run(
+        conn,
+        run_id=run_id,
+        ts_utc=ts,
+        consensus_side=arb["consensus_side"],
+        consensus_p_yes=arb["consensus_p_yes"],
+        disagreement=arb["disagreement"],
+        winner_agent=arb["winner_agent"],
+        winner_fitness=arb["winner_fitness"],
+        notes=arb["notes"],
     )
 
     # Evolution step every EVAL_INTERVAL runs
