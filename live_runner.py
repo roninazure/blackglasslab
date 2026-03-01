@@ -5,15 +5,18 @@ import argparse
 import json
 import os
 import sqlite3
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from adapters import get_adapter
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
 SIGNALS_DIR = Path("signals")
 CANDIDATES_PATH = SIGNALS_DIR / "trade_candidates.json"
+WATCHLIST_PATH = Path("markets") / "polymarket_watchlist.json"
 
 
 def utc_now_iso() -> str:
@@ -33,136 +36,167 @@ def _fetchone_dict(cur: sqlite3.Cursor) -> Optional[Dict[str, Any]]:
     if row is None:
         return None
     cols = [d[0] for d in cur.description]
-    return dict(zip(cols, row))
+    return {cols[i]: row[i] for i in range(len(cols))}
 
 
-def write_candidates(cands: list[Dict[str, Any]]) -> None:
-    """
-    Always write signals/trade_candidates.json when any candidate exists.
-    Atomic write: write temp file then replace.
-    """
+def write_candidates(cands: List[Dict[str, Any]]) -> None:
     SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = CANDIDATES_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cands, indent=2, sort_keys=True), encoding="utf-8")
-    tmp.replace(CANDIDATES_PATH)
+    CANDIDATES_PATH.write_text(json.dumps(cands, indent=2), encoding="utf-8")
 
 
-def normalize_candidate(*, cand: Dict[str, Any], venue: str) -> Dict[str, Any]:
+def _safe_float(x: Any) -> Optional[float]:
+    try:
+        if x is None:
+            return None
+        return float(x)
+    except Exception:
+        return None
+
+
+def _compact_market_snapshot(adapter_market: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Ensure candidate includes all required NOT NULL columns for paper_trades schema.
+    Take a potentially huge Polymarket market object and keep only stable, useful fields.
+    This avoids giant/truncated notes blobs and makes later analysis deterministic.
+    """
+    keep = [
+        "slug",
+        "id",
+        "question",
+        "updatedAt",
+        "endDate",
+        "active",
+        "closed",
+        "archived",
+        "volumeNum",
+        "liquidityNum",
+        "outcomes",
+        "outcomePrices",
+        "lastTradePrice",
+        "bestBid",
+        "bestAsk",
+        "spread",
+    ]
+    out: Dict[str, Any] = {}
+    for k in keep:
+        if k in adapter_market:
+            out[k] = adapter_market.get(k)
+    return out
+
+
+def _extract_p_yes_market(adapter_market: Dict[str, Any]) -> Optional[float]:
+    """
+    Prefer outcomePrices if available. For Polymarket, outcomePrices are strings in a JSON string
+    or list form. We want the YES price.
+    """
+    op = adapter_market.get("outcomePrices")
+    outcomes = adapter_market.get("outcomes")
+
+    # Normalize outcomes/outcomePrices into Python lists if possible
+    try:
+        if isinstance(outcomes, str):
+            outcomes = json.loads(outcomes)
+    except Exception:
+        pass
+
+    try:
+        if isinstance(op, str):
+            op = json.loads(op)
+    except Exception:
+        pass
+
+    if isinstance(outcomes, list) and isinstance(op, list) and len(outcomes) == len(op):
+        # Find "Yes" index if present, else assume index 0 is YES
+        idx = 0
+        for i, name in enumerate(outcomes):
+            if str(name).strip().lower() == "yes":
+                idx = i
+                break
+        return _safe_float(op[idx])
+
+    # Fallback to lastTradePrice if we cannot parse outcomePrices
+    return _safe_float(adapter_market.get("lastTradePrice"))
+
+
+def _normalize_candidate(
+    *,
+    cand: Dict[str, Any],
+    venue: str,
+    adapter_market: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Ensure candidate has all NOT NULL schema fields + a clean notes snapshot.
+    Also compute market snapshot fields: p_yes_market + edge_vs_market.
     """
     out = dict(cand)
 
-    out["ts_utc"] = (out.get("ts_utc") or utc_now_iso())
-    out["run_id"] = (out.get("run_id") or "").strip()
-    out["market_id"] = (out.get("market_id") or "UNKNOWN").strip() or "UNKNOWN"
+    out["venue"] = (out.get("venue") or venue or "polymarket").strip() or "polymarket"
+    out["status"] = (out.get("status") or "OPEN").strip() or "OPEN"
 
-    q = (out.get("question") or "").strip()
-    if not q:
-        q = f"Auto question for {out['market_id']}"
-    out["question"] = q
+    # Required NOT NULL
+    out["question"] = (out.get("question") or "").strip() or f"Auto question for {out.get('market_id','UNKNOWN')}"
+    out["reason"] = (out.get("reason") or "infer").strip() or "infer"
 
-    out["venue"] = (out.get("venue") or venue).strip() or venue
+    # Consensus / disagreement / sizing
+    out["consensus_p_yes"] = float(out.get("consensus_p_yes", out.get("p_yes", 0.5)))
+    out["disagreement"] = float(out.get("disagreement", 0.0))
+    out["size_usd"] = float(out.get("size_usd", 0.0))
 
+    # Side default
     side = (out.get("side") or "").strip().upper()
     if side not in ("YES", "NO"):
-        p_yes = out.get("p_yes")
-        try:
-            p = float(p_yes) if p_yes is not None else 0.0
-        except Exception:
-            p = 0.0
-        side = "YES" if p >= 0.5 else "NO"
+        side = "YES" if out["consensus_p_yes"] >= 0.5 else "NO"
     out["side"] = side
 
-    # Optional p_yes
-    p_yes = out.get("p_yes")
-    try:
-        out["p_yes"] = float(p_yes) if p_yes is not None else None
-    except Exception:
-        out["p_yes"] = None
+    # Compute market snapshot
+    p_yes_market = None
+    snapshot: Dict[str, Any] = {}
 
-    # consensus_p_yes required
-    cp = out.get("consensus_p_yes", out["p_yes"] if out["p_yes"] is not None else 0.5)
-    try:
-        out["consensus_p_yes"] = float(cp)
-    except Exception:
-        out["consensus_p_yes"] = 0.5
+    if adapter_market:
+        snapshot = _compact_market_snapshot(adapter_market)
+        p_yes_market = _extract_p_yes_market(adapter_market)
 
-    # disagreement required
-    d = out.get("disagreement", 0.0)
-    try:
-        out["disagreement"] = float(d)
-    except Exception:
-        out["disagreement"] = 0.0
+    # If we couldn't resolve market price, we still write something deterministic
+    stub = False
+    if p_yes_market is None:
+        p_yes_market = 0.5
+        stub = True
 
-    # size_usd required
-    s = out.get("size_usd", 0.0)
-    try:
-        out["size_usd"] = float(s)
-    except Exception:
-        out["size_usd"] = 0.0
+    # Signed and absolute edge
+    edge_vs_market = float(out["consensus_p_yes"]) - float(p_yes_market)
+    out["edge"] = float(out.get("edge", abs(edge_vs_market)))
+    out["edge_vs_market"] = edge_vs_market  # not a DB column; for JSON signal convenience
 
-    # reason required
-    reason = (out.get("reason") or "live_runner").strip() or "live_runner"
-    out["reason"] = reason
+    # Compact notes JSON (single source of truth for later analytics)
+    notes_obj = {
+        "adapter_venue": out["venue"],
+        "p_yes_market": float(p_yes_market),
+        "edge_vs_market": float(edge_vs_market),
+        "snapshot": snapshot,
+        "stub": bool(stub),
+        "ts_utc": out.get("ts_utc"),
+    }
 
-    # status required
-    status = (out.get("status") or "OPEN").strip().upper() or "OPEN"
-    out["status"] = status
+    # Preserve existing notes if they exist (but keep it bounded)
+    existing_notes = out.get("notes")
+    if isinstance(existing_notes, str) and existing_notes.strip():
+        notes_obj["prev_notes"] = existing_notes[:500]  # bounded
 
-    # Optional numeric fields
-    for k in ("edge", "brier"):
-        v = out.get(k)
-        if v is None:
-            continue
-        try:
-            out[k] = float(v)
-        except Exception:
-            out[k] = None
-
-    # Optional notes
-    if out.get("notes") is not None:
-        out["notes"] = str(out["notes"])
+    out["notes"] = json.dumps(notes_obj, separators=(",", ":"), ensure_ascii=False)
 
     return out
 
 
-def paper_trade_open_exists_for_run(
-    conn: sqlite3.Connection,
-    *,
-    run_id: str,
-    venue: str,
-    market_id: str,
-    side: str,
-) -> bool:
-    """
-    Dedupe guard: prevent duplicate OPEN paper trades for the SAME run_id and same market/side.
-
-    This avoids accidental double-inserts when you rerun live_runner --paper for the same run.
-    It will NOT block new runs (ship_check remains deterministic).
-    """
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT 1
-        FROM paper_trades
-        WHERE run_id=? AND venue=? AND market_id=? AND side=? AND status='OPEN'
-        LIMIT 1;
-        """,
-        (run_id, venue, market_id, side),
-    )
-    return cur.fetchone() is not None
-
-
 def insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> None:
-    cur = conn.cursor()
-    cur.execute(
+    """
+    Insert must populate all NOT NULL columns for paper_trades schema.
+    """
+    conn.execute(
         """
         INSERT INTO paper_trades (
           run_id, ts_utc, market_id, question, venue, side,
           consensus_p_yes, disagreement, size_usd, reason, status,
           p_yes, edge, brier, notes
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
         """,
         (
             cand["run_id"],
@@ -176,220 +210,152 @@ def insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> None:
             float(cand["size_usd"]),
             cand["reason"],
             cand["status"],
-            (float(cand["p_yes"]) if cand.get("p_yes") is not None else None),
-            (float(cand["edge"]) if cand.get("edge") is not None else None),
-            (float(cand["brier"]) if cand.get("brier") is not None else None),
-            (cand.get("notes") if cand.get("notes") is not None else None),
+            float(cand["consensus_p_yes"]),  # keep p_yes aligned to model (not market)
+            float(cand["edge"]) if cand.get("edge") is not None else None,
+            float(cand["brier"]) if cand.get("brier") is not None else None,
+            cand.get("notes"),
         ),
     )
     conn.commit()
 
 
-def _latest_run(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1;")
-    return _fetchone_dict(cur)
-
-
-def _latest_arbiter_for_run(conn: sqlite3.Connection, run_id: str) -> Optional[Dict[str, Any]]:
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT *
-        FROM arbiter_runs
-        WHERE run_id=?
-        ORDER BY id DESC
-        LIMIT 1;
-        """,
-        (run_id,),
+def _paper_trade_exists(conn: sqlite3.Connection, run_id: str, market_id: str, venue: str) -> bool:
+    cur = conn.execute(
+        "SELECT 1 FROM paper_trades WHERE run_id=? AND market_id=? AND venue=? LIMIT 1;",
+        (run_id, market_id, venue),
     )
-    return _fetchone_dict(cur)
+    return cur.fetchone() is not None
 
 
-def _fake_candidate(min_edge: float, max_disagree: float, paper_size: float) -> Optional[Dict[str, Any]]:
-    # Deterministic fake candidate for acceptance tests
-    p_yes = 0.464185
-    disagree = 0.197519
-
-    # Edge vs (stub) market baseline 0.50
-    edge_vs_market = abs(p_yes - 0.5)
-
-    if edge_vs_market < min_edge:
-        return None
-    if disagree > max_disagree:
-        return None
-
-    side = "YES" if p_yes >= 0.5 else "NO"
-    return {
-        "ts_utc": utc_now_iso(),
-        "run_id": str(os.environ.get("BGL_RUN_ID") or "").strip() or f"fallback-{utc_now_iso()}",
-        "market_id": "FAKE-004",
-        "question": "Will a widely used open-source library ship a breaking change without a major version bump?",
-        "side": side,
-        "p_yes": round(p_yes, 6),
-        "consensus_p_yes": round(p_yes, 6),
-        "disagreement": round(disagree, 6),
-        "edge": round(edge_vs_market, 6),
-        "size_usd": float(paper_size),
-        "reason": "fake_source",
-        "status": "OPEN",
-    }
+def _load_watchlist() -> List[str]:
+    if not WATCHLIST_PATH.exists():
+        return []
+    try:
+        data = json.loads(WATCHLIST_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [str(x).strip() for x in data if str(x).strip()]
+    except Exception:
+        return []
+    return []
 
 
-def build_candidate_from_db(
+def _infer_one(
     *,
-    run: Dict[str, Any],
-    arb: Optional[Dict[str, Any]],
-    adapter_source: str,
-    min_edge: float,
-    max_disagree: float,
+    adapter,
+    slug: str,
+    venue: str,
     paper_size: float,
-) -> Optional[Dict[str, Any]]:
-    run_id = (run.get("run_id") or "").strip() or "fallback-run"
-    market_id = (run.get("market_id") or "UNKNOWN").strip() or "UNKNOWN"
-    question = (run.get("question") or "").strip() or f"Auto question for {market_id}"
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """
+    Fetch live market data via adapter, then produce a deterministic-ish model probability.
+    For Phase 1.6A, we're focused on snapshot persistence; inference remains simple/stable.
+    Returns (candidate, adapter_market).
+    """
+    adapter_market = adapter.get_market(slug)
 
-    # Model probability (consensus)
-    if arb:
-        consensus_side = (arb.get("consensus_side") or "").strip().upper() or "NO"
-        consensus_p_yes = float(arb.get("consensus_p_yes"))
-        disagreement = float(arb.get("disagreement"))
-        reason = "arbiter"
-        p_yes_model = consensus_p_yes
-    else:
-        op_side = (run.get("operator_side") or "NO").strip().upper()
-        sk_side = (run.get("skeptic_side") or "NO").strip().upper()
-        op_conf = float(run.get("operator_conf") or 0.5)
-        sk_conf = float(run.get("skeptic_conf") or 0.5)
-        disagreement = min(1.0, abs(op_conf - sk_conf))
+    question = (adapter_market.get("question") or slug).strip()
+    # A stable pseudo-model probability: anchor around market price + small drift based on slug hash
+    p_yes_market = _extract_p_yes_market(adapter_market)
+    if p_yes_market is None:
+        p_yes_market = 0.5
 
-        if op_side == "YES" and sk_side == "YES":
-            p_yes_model = max(op_conf, sk_conf)
-        elif op_side == "NO" and sk_side == "NO":
-            p_yes_model = 1.0 - max(op_conf, sk_conf)
-        else:
-            if op_conf >= sk_conf:
-                p_yes_model = op_conf if op_side == "YES" else (1.0 - op_conf)
-            else:
-                p_yes_model = sk_conf if sk_side == "YES" else (1.0 - sk_conf)
+    drift = ((hash(slug) % 1000) / 1000.0 - 0.5) * 0.08  # +/- 4%
+    model_yes = min(0.99, max(0.01, float(p_yes_market) + drift))
 
-        consensus_p_yes = float(p_yes_model)
-        consensus_side = "YES" if consensus_p_yes >= 0.5 else "NO"
-        reason = "runs_fallback"
+    disagree = abs(drift) * 3.0  # bounded-ish proxy
 
-    # Market snapshot (adapter)
-    adapter = get_adapter(adapter_source)
-    snap = adapter.get_snapshot(market_id=market_id, question_hint=question)
-    p_yes_market = float(snap.p_yes_market)
-
-    # Trader-first edge: model vs market
-    edge_vs_market = abs(float(consensus_p_yes) - p_yes_market)
-
-    if edge_vs_market < min_edge:
-        return None
-    if float(disagreement) > max_disagree:
-        return None
-
-    notes_obj = {
-        "p_yes_market": p_yes_market,
-        "edge_vs_market": edge_vs_market,
-        "adapter_venue": snap.venue,
-        "adapter_extra": snap.extra,
+    side = "YES" if model_yes >= 0.5 else "NO"
+    cand = {
+        "ts_utc": utc_now_iso(),
+        "run_id": f"infer-{utc_now_iso()}",
+        "market_id": slug,
+        "question": question,
+        "side": side,
+        "consensus_p_yes": float(model_yes),
+        "disagreement": float(disagree),
+        "size_usd": float(paper_size),
+        "reason": "infer",
     }
-
-    return normalize_candidate(
-        cand={
-            "ts_utc": utc_now_iso(),
-            "run_id": run_id,
-            "market_id": market_id,
-            "question": question,
-            "venue": snap.venue,
-            "side": consensus_side,
-            "p_yes": float(p_yes_model),
-            "consensus_p_yes": float(consensus_p_yes),
-            "disagreement": float(disagreement),
-            "edge": float(edge_vs_market),
-            "size_usd": float(paper_size),
-            "reason": reason,
-            "status": "OPEN",
-            "notes": json.dumps(notes_obj, sort_keys=True),
-        },
-        venue=snap.venue,
-    )
-
-
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="BlackGlassLab live runner (paper trading wrapper)")
-    p.add_argument("--source", default="fake", help="data source / venue tag (fake, polymarket, kalshi)")
-    p.add_argument("--paper", action="store_true", help="insert candidate into paper_trades")
-    p.add_argument("--min-edge", type=float, default=float(os.environ.get("BGL_MIN_EDGE", "0.01")))
-    p.add_argument("--max-disagree", type=float, default=float(os.environ.get("BGL_MAX_DISAGREE", "0.50")))
-    p.add_argument("--paper-size", type=float, default=float(os.environ.get("BGL_PAPER_SIZE_USD", "100")))
-    return p.parse_args()
+    return cand, adapter_market
 
 
 def main() -> int:
-    args = parse_args()
-    source = (args.source or "fake").strip().lower() or "fake"
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--db", default=DB_PATH)
+    ap.add_argument("--source", default="polymarket")
+    ap.add_argument("--paper", action="store_true")
+    ap.add_argument("--infer", action="store_true")
+    ap.add_argument("--loops", type=int, default=1)
+    ap.add_argument("--sleep", type=float, default=0.0)
+    args = ap.parse_args()
 
-    SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
+    venue = (args.source or "polymarket").strip() or "polymarket"
 
-    with _connect_db(DB_PATH) as conn:
-        run = _latest_run(conn)
+    min_edge = float(os.environ.get("BGL_MIN_EDGE", "0.03"))
+    max_disagree = float(os.environ.get("BGL_MAX_DISAGREE", "0.60"))
+    paper_size = float(os.environ.get("BGL_PAPER_SIZE", "100"))
 
-        cand: Optional[Dict[str, Any]] = None
+    adapter = get_adapter(venue)
+    watchlist = _load_watchlist()
 
-        if source == "fake":
-            raw = _fake_candidate(args.min_edge, args.max_disagree, args.paper_size)
-            if raw:
-                cand = normalize_candidate(cand=raw, venue="fake")
+    conn = _connect_db(args.db)
+
+    inserted = 0
+    skipped_dup = 0
+    loops = max(1, int(args.loops))
+
+    for i in range(loops):
+        cands: List[Dict[str, Any]] = []
+        paper_status = ""
+
+        if args.infer:
+            if not watchlist:
+                write_candidates([])
+                print("LIVE_RUNNER OK candidates=0 (infer: empty watchlist) -> signals/trade_candidates.json")
+                return 0
+
+            slug = watchlist[i % len(watchlist)]
+            raw_cand, adapter_market = _infer_one(adapter=adapter, slug=slug, venue=venue, paper_size=paper_size)
+
+            # Normalize + snapshot
+            cand = _normalize_candidate(cand=raw_cand, venue=venue, adapter_market=adapter_market)
+
+            # Apply filters
+            if float(cand["edge"]) >= min_edge and float(cand["disagreement"]) <= max_disagree:
+                cands = [cand]
         else:
-            if run is not None:
-                run_id = (run.get("run_id") or "").strip()
-                arb = _latest_arbiter_for_run(conn, run_id) if run_id else None
-                cand = build_candidate_from_db(
-                    run=run,
-                    arb=arb,
-                    adapter_source=source,
-                    min_edge=args.min_edge,
-                    max_disagree=args.max_disagree,
-                    paper_size=args.paper_size,
-                )
+            # Non-infer modes are not used for Phase 1.6A. Keep signals deterministic.
+            cands = []
 
-        if cand:
-            # Always write signals when a candidate exists
-            write_candidates([cand])
+        # Always write signals JSON (even if empty) so pipelines don't break
+        write_candidates(cands)
 
-            inserted = False
-            skipped_duplicate = False
+        if cands and args.paper:
+            cand = cands[0]
+            if _paper_trade_exists(conn, cand["run_id"], cand["market_id"], cand["venue"]):
+                skipped_dup += 1
+                paper_status = "paper=skipped_duplicate"
+            else:
+                insert_paper_trade(conn, cand)
+                inserted += 1
+                paper_status = "paper=inserted"
 
-            if args.paper:
-                if paper_trade_open_exists_for_run(
-                    conn,
-                    run_id=cand["run_id"],
-                    venue=cand["venue"],
-                    market_id=cand["market_id"],
-                    side=cand["side"],
-                ):
-                    skipped_duplicate = True
-                else:
-                    insert_paper_trade(conn, cand)
-                    inserted = True
-
-            suffix = ""
-            if args.paper:
-                suffix = " paper=inserted" if inserted else (" paper=skipped_duplicate" if skipped_duplicate else " paper=skipped")
-
+        if cands:
+            c = cands[0]
             print(
                 "LIVE_RUNNER OK "
-                f"mode={cand.get('reason')} run_id={cand.get('run_id')} market_id={cand.get('market_id')} "
-                f"side={cand.get('side')} consensus_p_yes={cand.get('consensus_p_yes')} "
-                f"disagreement={cand.get('disagreement')} "
-                f"candidates=1 -> {CANDIDATES_PATH}{suffix}"
+                f"mode=infer run_id={c['run_id']} market_id={c['market_id']} side={c['side']} "
+                f"consensus_p_yes={c['consensus_p_yes']} disagreement={c['disagreement']} edge={c['edge']} "
+                f"candidates=1 -> {CANDIDATES_PATH} {paper_status}".rstrip()
             )
         else:
-            print("LIVE_RUNNER OK candidates=0 (no trade candidate passed filters)")
-        return 0
+            print("LIVE_RUNNER OK candidates=0 (infer no trade candidate passed filters) -> signals/trade_candidates.json")
+
+        if args.sleep and i < loops - 1:
+            time.sleep(float(args.sleep))
+
+    conn.close()
+    return 0
 
 
 if __name__ == "__main__":

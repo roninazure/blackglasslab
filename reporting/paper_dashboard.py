@@ -6,8 +6,7 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
-
+from typing import Any, List, Optional, Tuple
 
 DEFAULT_DB = os.path.join("memory", "runs.sqlite")
 
@@ -25,15 +24,6 @@ def _connect_db(path: str) -> sqlite3.Connection:
     return conn
 
 
-def _safe_float(x: Any) -> Optional[float]:
-    try:
-        if x is None:
-            return None
-        return float(x)
-    except Exception:
-        return None
-
-
 def _fetch_one(conn: sqlite3.Connection, q: str, params: Tuple[Any, ...] = ()) -> sqlite3.Row:
     cur = conn.execute(q, params)
     row = cur.fetchone()
@@ -43,14 +33,32 @@ def _fetch_one(conn: sqlite3.Connection, q: str, params: Tuple[Any, ...] = ()) -
 
 
 def _fetch_all(conn: sqlite3.Connection, q: str, params: Tuple[Any, ...] = ()) -> List[sqlite3.Row]:
-    cur = conn.execute(q, params)
-    return list(cur.fetchall())
+    return list(conn.execute(q, params).fetchall())
+
+
+def _safe_float(x: Any) -> Optional[float]:
+    try:
+        if x is None:
+            return None
+        return float(x)
+    except Exception:
+        return None
+
+
+def _notes_market_yes(notes: Any) -> Optional[float]:
+    if not isinstance(notes, str) or not notes.strip():
+        return None
+    try:
+        obj = json.loads(notes)
+        return _safe_float(obj.get("p_yes_market"))
+    except Exception:
+        return None
 
 
 def fmt(n: Any, nd: int = 4) -> str:
     if n is None:
         return "-"
-    if isinstance(n, (int,)):
+    if isinstance(n, int):
         return str(n)
     try:
         f = float(n)
@@ -60,21 +68,18 @@ def fmt(n: Any, nd: int = 4) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Phase 1.5: Paper trading dashboard (SQLite)")
+    ap = argparse.ArgumentParser(description="Phase 1.5/1.6: Paper trading dashboard (SQLite)")
     ap.add_argument("--db", default=DEFAULT_DB)
-    ap.add_argument("--venue", default="polymarket", help="Filter venue (default: polymarket)")
-    ap.add_argument("--limit", type=int, default=10, help="Rows to print for 'latest trades'")
-    ap.add_argument("--include-fake", action="store_true", help="Include FAKE-* market_id rows")
+    ap.add_argument("--venue", default="polymarket")
+    ap.add_argument("--limit", type=int, default=10)
+    ap.add_argument("--include-fake", action="store_true")
     args = ap.parse_args()
 
     venue = (args.venue or "").strip() or "polymarket"
-
     conn = _connect_db(args.db)
 
-    # Filters
     fake_filter = "" if args.include_fake else "AND market_id NOT LIKE 'FAKE-%'"
 
-    # 1) Topline counts + averages
     topline = _fetch_one(
         conn,
         f"""
@@ -94,7 +99,6 @@ def main() -> int:
         (venue,),
     )
 
-    # 2) Reason breakdown (infer vs arbiter vs runs_fallback, etc.)
     reasons = _fetch_all(
         conn,
         f"""
@@ -111,11 +115,10 @@ def main() -> int:
         (venue,),
     )
 
-    # 3) Latest trades
     latest = _fetch_all(
         conn,
         f"""
-        SELECT id, ts_utc, market_id, side, consensus_p_yes, edge, disagreement, status, resolved_outcome, brier
+        SELECT id, ts_utc, market_id, side, consensus_p_yes, edge, disagreement, status, resolved_outcome, brier, notes
         FROM paper_trades
         WHERE venue=?
           {fake_filter}
@@ -125,11 +128,10 @@ def main() -> int:
         (venue, int(args.limit)),
     )
 
-    # 4) Best/Worst edge (OPEN only)
     best_edge = _fetch_all(
         conn,
         f"""
-        SELECT id, ts_utc, market_id, side, consensus_p_yes, edge, disagreement, reason
+        SELECT id, market_id, side, consensus_p_yes, edge, disagreement, reason, notes
         FROM paper_trades
         WHERE venue=? AND status='OPEN'
           {fake_filter}
@@ -138,49 +140,10 @@ def main() -> int:
         """,
         (venue,),
     )
-    worst_edge = _fetch_all(
-        conn,
-        f"""
-        SELECT id, ts_utc, market_id, side, consensus_p_yes, edge, disagreement, reason
-        FROM paper_trades
-        WHERE venue=? AND status='OPEN'
-          {fake_filter}
-        ORDER BY edge ASC, id DESC
-        LIMIT 5;
-        """,
-        (venue,),
-    )
-
-    # 5) Closed performance (if any)
-    closed_best = _fetch_all(
-        conn,
-        f"""
-        SELECT id, ts_utc, market_id, side, consensus_p_yes, resolved_outcome, brier, edge
-        FROM paper_trades
-        WHERE venue=? AND status='CLOSED'
-          {fake_filter}
-        ORDER BY brier ASC, id DESC
-        LIMIT 5;
-        """,
-        (venue,),
-    )
-    closed_worst = _fetch_all(
-        conn,
-        f"""
-        SELECT id, ts_utc, market_id, side, consensus_p_yes, resolved_outcome, brier, edge
-        FROM paper_trades
-        WHERE venue=? AND status='CLOSED'
-          {fake_filter}
-        ORDER BY brier DESC, id DESC
-        LIMIT 5;
-        """,
-        (venue,),
-    )
 
     conn.close()
 
-    # --- Print dashboard ---
-    print("BLACK GLASS SWARM — PAPER DASHBOARD (Phase 1.5)")
+    print("BLACK GLASS SWARM — PAPER DASHBOARD (Phase 1.6A)")
     print(f"- generated_at_utc: {utc_now_iso()}")
     print(f"- db: {args.db}")
     print(f"- venue: {venue}")
@@ -211,53 +174,24 @@ def main() -> int:
         print("- (none)")
     else:
         for r in latest:
+            mkt_yes = _notes_market_yes(r["notes"])
             ro = r["resolved_outcome"] if r["resolved_outcome"] else "-"
             print(
-                f"- id={r['id']} ts={r['ts_utc']} market={r['market_id']} "
-                f"side={r['side']} model_yes={fmt(r['consensus_p_yes'],6)} "
+                f"- id={r['id']} ts={r['ts_utc']} market={r['market_id']} side={r['side']} "
+                f"market_yes={fmt(mkt_yes,6)} model_yes={fmt(r['consensus_p_yes'],6)} "
                 f"edge={fmt(r['edge'],6)} disagree={fmt(r['disagreement'],6)} "
                 f"status={r['status']} outcome={ro} brier={fmt(r['brier'],6)}"
             )
     print()
 
-    print("OPEN TRADES — TOP EDGE")
+    print("OPEN TRADES — TOP EDGE (with market_yes)")
     for r in best_edge:
+        mkt_yes = _notes_market_yes(r["notes"])
         print(
             f"- id={r['id']} market={r['market_id']} side={r['side']} "
-            f"model_yes={fmt(r['consensus_p_yes'],6)} edge={fmt(r['edge'],6)} "
-            f"disagree={fmt(r['disagreement'],6)} reason={r['reason']}"
+            f"market_yes={fmt(mkt_yes,6)} model_yes={fmt(r['consensus_p_yes'],6)} "
+            f"edge={fmt(r['edge'],6)} disagree={fmt(r['disagreement'],6)} reason={r['reason']}"
         )
-    print()
-
-    print("OPEN TRADES — LOWEST EDGE")
-    for r in worst_edge:
-        print(
-            f"- id={r['id']} market={r['market_id']} side={r['side']} "
-            f"model_yes={fmt(r['consensus_p_yes'],6)} edge={fmt(r['edge'],6)} "
-            f"disagree={fmt(r['disagreement'],6)} reason={r['reason']}"
-        )
-    print()
-
-    print("CLOSED PERFORMANCE (Brier) — BEST")
-    if not closed_best:
-        print("- (none yet)")
-    else:
-        for r in closed_best:
-            print(
-                f"- id={r['id']} market={r['market_id']} model_yes={fmt(r['consensus_p_yes'],6)} "
-                f"outcome={r['resolved_outcome']} brier={fmt(r['brier'],6)} edge={fmt(r['edge'],6)}"
-            )
-    print()
-
-    print("CLOSED PERFORMANCE (Brier) — WORST")
-    if not closed_worst:
-        print("- (none yet)")
-    else:
-        for r in closed_worst:
-            print(
-                f"- id={r['id']} market={r['market_id']} model_yes={fmt(r['consensus_p_yes'],6)} "
-                f"outcome={r['resolved_outcome']} brier={fmt(r['brier'],6)} edge={fmt(r['edge'],6)}"
-            )
     print()
 
     return 0
