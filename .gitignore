@@ -30,3 +30,4 @@ memory/*.sqlite-*
 __pycache__/
 *.pyc
 .venv/
+markets/_pm_search2/
