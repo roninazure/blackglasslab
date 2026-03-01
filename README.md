@@ -1,4 +1,3 @@
-
 <div align="center">
 
 <h1 style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
@@ -6,81 +5,77 @@
 ⚗️ <span style="color:#39ff14;">BlackGlassLab</span> <span style="color:#a855f7;">v0.7</span>
 </h1>
 
-<p style="max-width: 920px; font-size: 16px; line-height: 1.5; margin-top: 0;">
-An <b>evolutionary multi-agent forecasting swarm</b> that generates probabilistic YES/NO predictions, scores calibration with <b>Brier</b>,
-evolves populations by <b>fitness</b>, produces <b>arbiter consensus</b>, and emits <b>paper-executed trade signals</b> — built to graduate to
-<b>Polymarket</b> + <b>Kalshi</b>.
+<p style="max-width: 920px; font-size: 16px; line-height: 1.55; margin-top: 0;">
+A “digital prediction lab” that runs a small team of AIs, makes a probability call on a YES/NO question,
+then (paper) places a trade when the odds look mispriced. Built for <b>Polymarket</b> first, then <b>Kalshi</b>.
 </p>
 
 <p>
   <img src="https://img.shields.io/badge/Status-Paper%20Pilot%20Ready-39ff14?style=for-the-badge&labelColor=0b0f0b" />
-  <img src="https://img.shields.io/badge/Engine-Evolutionary%20Swarm-a855f7?style=for-the-badge&labelColor=0b0f0b" />
-  <img src="https://img.shields.io/badge/Consensus-Arbiter-00e5ff?style=for-the-badge&labelColor=0b0f0b" />
-  <img src="https://img.shields.io/badge/Scoring-Brier-ffd166?style=for-the-badge&labelColor=0b0f0b" />
-</p>
-
-<p>
-  <img src="https://img.shields.io/badge/Venue-Polymarket%20%7C%20Kalshi-ff4d6d?style=for-the-badge&labelColor=0b0f0b" />
+  <img src="https://img.shields.io/badge/Venue-Polymarket%20First-ff4d6d?style=for-the-badge&labelColor=0b0f0b" />
+  <img src="https://img.shields.io/badge/Mode-Paper%20Trading-00e5ff?style=for-the-badge&labelColor=0b0f0b" />
   <img src="https://img.shields.io/badge/DB-SQLite-9bf6ff?style=for-the-badge&labelColor=0b0f0b" />
-  <img src="https://img.shields.io/badge/Signals-trade__candidates.json-7c3aed?style=for-the-badge&labelColor=0b0f0b" />
 </p>
 
 <hr style="border:none;height:2px;background:linear-gradient(90deg,#39ff14,#00e5ff,#a855f7,#ff4d6d); margin: 14px auto; max-width: 980px;" />
 
 </div>
 
-## 🧠 What this is (mission)
+## 🧠 What BlackGlassLab does (in plain English)
 
-**BlackGlassLab is not a toy script.**  
-It’s an **adaptive forecasting swarm with capital allocation logic**:
+Think of BlackGlassLab as a **mini trading desk**:
 
-- Operators generate probabilistic forecasts (`p_yes`, rationale)
-- Skeptics challenge and stress-test the forecast
-- Auditor scores calibration with **Brier**
-- Evolver mutates populations based on **fitness**
-- Arbiter produces **consensus probability + disagreement**
-- Production wrapper emits **trade candidates** + **paper trades**
-- Target: **Polymarket/Kalshi** integration (paper-first → live)
+- One AI (“**Operator**”) makes a prediction.
+- Another AI (“**Skeptic**”) challenges it.
+- A referee (“**Arbiter**”) produces the final **consensus probability**.
+- The system checks: **Are the market odds different enough from our probability to justify a trade?**
+- If yes, it creates a **trade signal** and logs a **paper trade** (simulated trade) so everything is auditable.
 
----
-
-## 🧬 Architecture (clean mental model)
-
-<table>
-<tr>
-<td width="50%">
-
-### `orchestrator.py` — the swarm loop
-- Samples agents from `agent_population`
-- Runs operator + skeptic swarms
-- Scores with Brier via auditor
-- Updates fitness
-- Evolves population periodically
-- Writes to SQLite:
-  - `runs`
-  - `agent_runs`
-  - `arbiter_runs`
-
-</td>
-<td width="50%">
-
-### `live_runner.py` — production wrapper
-- Reads latest `runs` + `arbiter_runs`
-- Applies risk controls (.env)
-- Writes signals:
-  - `signals/trade_candidates.json`
-- Inserts paper executions:
-  - `paper_trades` (schema-correct, NOT NULL safe)
-
-</td>
-</tr>
-</table>
+This phase is **paper trading only** — no real money execution yet.
 
 ---
 
-## ⚡ Quickstart (paper pilot)
+## 🎯 Why this matters (real-world implication)
 
-### 1) Run a swarm cycle
+Prediction markets (Polymarket/Kalshi) are basically “**markets for probabilities**.”
+
+If our system can reliably estimate the probability of an outcome **better than the market price**, then:
+
+- we can trade the difference (edge),
+- manage risk,
+- and potentially build a repeatable income stream.
+
+---
+
+## 🔥 The big idea
+
+**BlackGlassLab is an autonomous forecasting swarm** that can improve over time.
+
+It does this by keeping score:
+
+- When it’s right, it gets rewarded.
+- When it’s wrong (or overconfident), it gets penalized.
+- Better strategies survive and get copied.
+- Weaker strategies get replaced (“mutations” are spawned).
+
+Over many runs, the goal is to become **more accurate and more profitable**.
+
+---
+
+## ✅ What’s working right now (v0.7 pilot)
+
+- Runs the AI “Operator vs Skeptic” loop
+- Produces a consensus probability (Arbiter)
+- Writes results to a database (for proof + history)
+- Generates a trade candidate
+- Writes a signal file you can show in a demo
+- Inserts a valid paper trade record (no schema errors)
+- Includes a one-command “ship check” that proves it works end-to-end
+
+---
+
+## 🧪 Quick demo (2 commands)
+
+### 1) Run one forecasting cycle
 ```bash
 python3 orchestrator.py
-
