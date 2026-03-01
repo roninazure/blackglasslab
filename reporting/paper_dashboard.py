@@ -40,25 +40,51 @@ def _fmt(x: Any, nd: int = 6) -> str:
         return str(x)
 
 
-def _extract_market_fields(notes: Dict[str, Any]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+def _extract_market_fields(notes: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
     """
-    Returns (p_yes_market, edge_vs_market, model_yes_recomputed_if_possible)
+    Returns (p_yes_market, edge_vs_market_signed).
     """
     p_yes_market = notes.get("p_yes_market")
     edge_vs_market = notes.get("edge_vs_market")
-
-    # model_yes can be recomputed if both exist; otherwise None
-    model_yes = None
     try:
-        if p_yes_market is not None and edge_vs_market is not None:
-            model_yes = float(p_yes_market) + float(edge_vs_market)
+        p_yes_market = float(p_yes_market) if p_yes_market is not None else None
     except Exception:
-        model_yes = None
-    return (
-        float(p_yes_market) if p_yes_market is not None else None,
-        float(edge_vs_market) if edge_vs_market is not None else None,
-        model_yes,
-    )
+        p_yes_market = None
+    try:
+        edge_vs_market = float(edge_vs_market) if edge_vs_market is not None else None
+    except Exception:
+        edge_vs_market = None
+    return p_yes_market, edge_vs_market
+
+
+def quality_score(edge_abs: float, disagree: float) -> float:
+    """
+    Explainable, bounded-ish quality score.
+
+    - edge_abs: |model - market| at entry (primary signal)
+    - disagree: swarm disagreement (uncertainty / instability)
+
+    Score favors high edge, penalizes disagreement.
+
+    score = edge_abs * (1 - 0.75*disagree)
+
+    If disagree=0.0 => score=edge
+    If disagree=1.0 => score=edge*0.25
+    """
+    d = max(0.0, min(1.0, float(disagree)))
+    e = max(0.0, float(edge_abs))
+    return e * (1.0 - 0.75 * d)
+
+
+def tier(score: float) -> str:
+    # Tuned to your current observed edge scale (~0.00–0.12)
+    if score >= 0.070:
+        return "A"
+    if score >= 0.040:
+        return "B"
+    if score >= 0.020:
+        return "C"
+    return "D"
 
 
 def main() -> int:
@@ -67,6 +93,16 @@ def main() -> int:
     ap.add_argument("--venue", default="polymarket")
     ap.add_argument("--limit", type=int, default=12)
     ap.add_argument("--include-fake", action="store_true")
+
+    # 1.6C filters (actionable signals)
+    ap.add_argument("--min-edge-vs-market", type=float, default=0.03,
+                    help="Minimum |edge_vs_market| required to treat as actionable (default 0.03 = 3%%).")
+    ap.add_argument("--min-edge-abs", type=float, default=0.03,
+                    help="Minimum edge_abs required (fallback when snapshot missing).")
+    ap.add_argument("--max-disagree", type=float, default=0.60,
+                    help="Maximum disagreement allowed for actionable signals.")
+    ap.add_argument("--max-actionable", type=int, default=10)
+
     args = ap.parse_args()
 
     conn = _connect_db(args.db)
@@ -128,71 +164,64 @@ def main() -> int:
     )
     latest = cur.fetchall()
 
-    # open trades sorted by edge
+    # build actionable + quality lists from recent OPEN trades
     cur.execute(
         f"""
-        SELECT id, market_id, side, consensus_p_yes, edge, disagreement, reason, notes
-        FROM paper_trades
-        {where} AND status='OPEN'
-        ORDER BY edge DESC
-        LIMIT 8;
-        """,
-        params,
-    )
-    top_edge = cur.fetchall()
-
-    cur.execute(
-        f"""
-        SELECT id, market_id, side, consensus_p_yes, edge, disagreement, reason, notes
-        FROM paper_trades
-        {where} AND status='OPEN'
-        ORDER BY edge ASC
-        LIMIT 8;
-        """,
-        params,
-    )
-    low_edge = cur.fetchall()
-
-    cur.execute(
-        f"""
-        SELECT id, market_id, side, consensus_p_yes, edge, disagreement, reason, notes
-        FROM paper_trades
-        {where} AND status='OPEN'
-        ORDER BY disagreement DESC
-        LIMIT 8;
-        """,
-        params,
-    )
-    top_disagree = cur.fetchall()
-
-    # edge_vs_market toplist (requires notes fields)
-    cur.execute(
-        f"""
-        SELECT id, market_id, side, consensus_p_yes, edge, disagreement, reason, notes
+        SELECT id, ts_utc, market_id, question, side, consensus_p_yes, edge, disagreement, status, notes, reason
         FROM paper_trades
         {where} AND status='OPEN'
         ORDER BY id DESC
-        LIMIT 200;
+        LIMIT 400;
         """,
         params,
     )
-    recent_open = cur.fetchall()
+    open_recent = cur.fetchall()
 
-    scored: List[Tuple[float, sqlite3.Row, float, float]] = []
-    for row in recent_open:
-        notes = _safe_json(row["notes"])
-        p_yes_mkt, evm, model_yes_re = _extract_market_fields(notes)
-        if evm is None:
+    actionable: List[Tuple[float, sqlite3.Row, Optional[float], Optional[float]]] = []
+    all_scored: List[Tuple[float, sqlite3.Row, Optional[float], Optional[float]]] = []
+
+    for r in open_recent:
+        notes = _safe_json(r["notes"])
+        p_yes_mkt, evm = _extract_market_fields(notes)
+
+        edge_abs = float(r["edge"] or 0.0)
+        disagree = float(r["disagreement"] or 0.0)
+        q = quality_score(edge_abs=edge_abs, disagree=disagree)
+
+        all_scored.append((q, r, p_yes_mkt, evm))
+
+        # Actionable criteria:
+        # - disagreement <= max
+        # - if we have edge_vs_market: |evm| >= min_edge_vs_market
+        # - else: edge_abs >= min_edge_abs
+        if disagree > args.max_disagree:
             continue
-        scored.append((abs(evm), row, evm, (p_yes_mkt if p_yes_mkt is not None else float("nan"))))
-    scored.sort(key=lambda t: t[0], reverse=True)
-    top_vs_market = scored[:8]
 
-    print(f"BLACK GLASS SWARM — PAPER DASHBOARD (Phase 1.6B)")
+        if evm is not None:
+            if abs(float(evm)) < args.min_edge_vs_market:
+                continue
+        else:
+            if edge_abs < args.min_edge_abs:
+                continue
+
+        actionable.append((q, r, p_yes_mkt, evm))
+
+    actionable.sort(key=lambda t: t[0], reverse=True)
+    all_scored.sort(key=lambda t: t[0], reverse=True)
+
+    # tier counts (open)
+    tier_counts = {"A": 0, "B": 0, "C": 0, "D": 0}
+    for q, r, _, _ in all_scored:
+        tier_counts[tier(q)] += 1
+
+    # Print
+    print(f"BLACK GLASS SWARM — PAPER DASHBOARD (Phase 1.6C)")
     print(f"- generated_at_utc: {utc_now_iso()}")
     print(f"- db: {args.db}")
     print(f"- venue: {args.venue}")
-    print(f"- include_fake: {bool(args.include_fake)}\n")
+    print(f"- include_fake: {bool(args.include_fake)}")
+    print(f"- actionable_filters: min_edge_vs_market={args.min_edge_vs_market} min_edge_abs={args.min_edge_abs} max_disagree={args.max_disagree}")
+    print()
 
     print("TOPLINE")
     print(f"- total_trades:      {total}")
@@ -202,7 +231,15 @@ def main() -> int:
     print(f"- avg_disagreement:  {_fmt(avg_disagree, 6)}")
     print(f"- avg_brier_closed:  {_fmt(avg_brier, 6)}")
     print(f"- first_ts:          {first_ts or '-'}")
-    print(f"- last_ts:           {last_ts or '-'}\n")
+    print(f"- last_ts:           {last_ts or '-'}")
+    print()
+
+    print("SIGNAL QUALITY (OPEN) — Tier Counts")
+    print(f"- A (>=0.070): {tier_counts['A']}")
+    print(f"- B (>=0.040): {tier_counts['B']}")
+    print(f"- C (>=0.020): {tier_counts['C']}")
+    print(f"- D (<0.020):  {tier_counts['D']}")
+    print()
 
     print("REASON BREAKDOWN")
     if not reasons:
@@ -212,76 +249,33 @@ def main() -> int:
             print(f"- {r['reason']}: n={r['n']} avg_edge_abs={_fmt(r['avg_edge'])} avg_disagree={_fmt(r['avg_disagree'])}")
     print()
 
-    print("LATEST TRADES (includes market snapshot fields when present)")
-    if not latest:
-        print("- (none)\n")
+    print("ACTIONABLE SIGNALS (OPEN) — ranked by QualityScore = edge_abs * (1 - 0.75*disagree)")
+    if not actionable:
+        print("- (none passed filters)")
     else:
-        for r in latest:
+        for q, r, p_yes_mkt, evm in actionable[: args.max_actionable]:
             notes = _safe_json(r["notes"])
-            p_yes_mkt, evm, _ = _extract_market_fields(notes)
-            print(
-                f"- id={r['id']} ts={r['ts_utc']} market={r['market_id']} side={r['side']} "
-                f"model_yes={_fmt(r['consensus_p_yes'])} market_yes={_fmt(p_yes_mkt)} "
-                f"edge_vs_mkt={_fmt(evm)} edge_abs={_fmt(r['edge'])} disagree={_fmt(r['disagreement'])} "
-                f"status={r['status']} outcome={(r['resolved_outcome'] or '-')}"
-            )
-    print()
-
-    print("OPEN TRADES — TOP EDGE VS MARKET (abs)")
-    if not top_vs_market:
-        print("- (no snapshot edge_vs_market found yet)\n")
-    else:
-        for abs_e, row, evm, p_yes_mkt in top_vs_market:
-            notes = _safe_json(row["notes"])
             snap = notes.get("snapshot") if isinstance(notes.get("snapshot"), dict) else {}
             updated_at = snap.get("updatedAt")
             print(
-                f"- id={row['id']} market={row['market_id']} side={row['side']} "
-                f"model_yes={_fmt(row['consensus_p_yes'])} market_yes={_fmt(p_yes_mkt)} "
-                f"edge_vs_mkt={_fmt(evm)} edge_abs={_fmt(row['edge'])} disagree={_fmt(row['disagreement'])} "
-                f"updatedAt={updated_at or '-'} reason={row['reason']}"
+                f"- tier={tier(q)} q={_fmt(q,6)} id={r['id']} market={r['market_id']} side={r['side']} "
+                f"model_yes={_fmt(r['consensus_p_yes'])} market_yes={_fmt(p_yes_mkt)} edge_vs_mkt={_fmt(evm)} "
+                f"edge_abs={_fmt(r['edge'])} disagree={_fmt(r['disagreement'])} updatedAt={updated_at or '-'}"
             )
     print()
 
-    print("OPEN TRADES — TOP EDGE (abs)")
-    if not top_edge:
-        print("- (none)\n")
+    print("LATEST TRADES")
+    if not latest:
+        print("- (none)")
     else:
-        for r in top_edge:
+        for r in latest:
             notes = _safe_json(r["notes"])
-            p_yes_mkt, evm, _ = _extract_market_fields(notes)
+            p_yes_mkt, evm = _extract_market_fields(notes)
+            q = quality_score(edge_abs=float(r["edge"] or 0.0), disagree=float(r["disagreement"] or 0.0))
             print(
-                f"- id={r['id']} market={r['market_id']} side={r['side']} "
-                f"model_yes={_fmt(r['consensus_p_yes'])} market_yes={_fmt(p_yes_mkt)} "
-                f"edge_vs_mkt={_fmt(evm)} edge_abs={_fmt(r['edge'])} disagree={_fmt(r['disagreement'])} reason={r['reason']}"
-            )
-    print()
-
-    print("OPEN TRADES — LOWEST EDGE (abs)")
-    if not low_edge:
-        print("- (none)\n")
-    else:
-        for r in low_edge:
-            notes = _safe_json(r["notes"])
-            p_yes_mkt, evm, _ = _extract_market_fields(notes)
-            print(
-                f"- id={r['id']} market={r['market_id']} side={r['side']} "
-                f"model_yes={_fmt(r['consensus_p_yes'])} market_yes={_fmt(p_yes_mkt)} "
-                f"edge_vs_mkt={_fmt(evm)} edge_abs={_fmt(r['edge'])} disagree={_fmt(r['disagreement'])} reason={r['reason']}"
-            )
-    print()
-
-    print("OPEN TRADES — HIGHEST DISAGREEMENT")
-    if not top_disagree:
-        print("- (none)\n")
-    else:
-        for r in top_disagree:
-            notes = _safe_json(r["notes"])
-            p_yes_mkt, evm, _ = _extract_market_fields(notes)
-            print(
-                f"- id={r['id']} market={r['market_id']} side={r['side']} "
-                f"model_yes={_fmt(r['consensus_p_yes'])} market_yes={_fmt(p_yes_mkt)} "
-                f"edge_vs_mkt={_fmt(evm)} edge_abs={_fmt(r['edge'])} disagree={_fmt(r['disagreement'])} reason={r['reason']}"
+                f"- tier={tier(q)} q={_fmt(q,6)} id={r['id']} ts={r['ts_utc']} market={r['market_id']} side={r['side']} "
+                f"model_yes={_fmt(r['consensus_p_yes'])} market_yes={_fmt(p_yes_mkt)} edge_vs_mkt={_fmt(evm)} "
+                f"edge_abs={_fmt(r['edge'])} disagree={_fmt(r['disagreement'])} status={r['status']}"
             )
     print()
 
