@@ -16,7 +16,6 @@ then (paper) places a trade when the odds look mispriced. Built for <b>Polymarke
 
 <p>
   <img src="https://img.shields.io/badge/Status-Paper%20Pilot%20Ready-39ff14?style=for-the-badge&labelColor=0b0f0b" />
-  <img src="https://img.shields.io/badge/Umbrella-BlackGlassLab-a855f7?style=for-the-badge&labelColor=0b0f0b" />
   <img src="https://img.shields.io/badge/Venue-Polymarket%20First-ff4d6d?style=for-the-badge&labelColor=0b0f0b" />
   <img src="https://img.shields.io/badge/Mode-Paper%20Trading-00e5ff?style=for-the-badge&labelColor=0b0f0b" />
   <img src="https://img.shields.io/badge/DB-SQLite-9bf6ff?style=for-the-badge&labelColor=0b0f0b" />
