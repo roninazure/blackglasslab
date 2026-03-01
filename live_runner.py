@@ -66,7 +66,6 @@ def normalize_candidate(*, cand: Dict[str, Any], venue: str) -> Dict[str, Any]:
 
     side = (out.get("side") or "").strip().upper()
     if side not in ("YES", "NO"):
-        # infer from p_yes if present, else default NO
         p_yes = out.get("p_yes")
         try:
             p = float(p_yes) if p_yes is not None else 0.0
@@ -128,6 +127,33 @@ def normalize_candidate(*, cand: Dict[str, Any], venue: str) -> Dict[str, Any]:
     return out
 
 
+def paper_trade_open_exists_for_run(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    venue: str,
+    market_id: str,
+    side: str,
+) -> bool:
+    """
+    Dedupe guard: prevent duplicate OPEN paper trades for the SAME run_id and same market/side.
+
+    This avoids accidental double-inserts when you rerun live_runner --paper for the same run.
+    It will NOT block new runs (ship_check remains deterministic).
+    """
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT 1
+        FROM paper_trades
+        WHERE run_id=? AND venue=? AND market_id=? AND side=? AND status='OPEN'
+        LIMIT 1;
+        """,
+        (run_id, venue, market_id, side),
+    )
+    return cur.fetchone() is not None
+
+
 def insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> None:
     cur = conn.cursor()
     cur.execute(
@@ -185,7 +211,7 @@ def _fake_candidate(min_edge: float, max_disagree: float, paper_size: float) -> 
     p_yes = 0.464185
     disagree = 0.197519
 
-    # Phase 1.2: edge will be computed vs market snapshot later; for fake, use neutral market=0.5 baseline
+    # Edge vs (stub) market baseline 0.50
     edge_vs_market = abs(p_yes - 0.5)
 
     if edge_vs_market < min_edge:
@@ -231,7 +257,6 @@ def build_candidate_from_db(
         reason = "arbiter"
         p_yes_model = consensus_p_yes
     else:
-        # Fallback proxy from runs row (kept simple and stable)
         op_side = (run.get("operator_side") or "NO").strip().upper()
         sk_side = (run.get("skeptic_side") or "NO").strip().upper()
         op_conf = float(run.get("operator_conf") or 0.5)
@@ -252,12 +277,12 @@ def build_candidate_from_db(
         consensus_side = "YES" if consensus_p_yes >= 0.5 else "NO"
         reason = "runs_fallback"
 
-    # Phase 1.2: market snapshot via adapter (Polymarket-first)
+    # Market snapshot (adapter)
     adapter = get_adapter(adapter_source)
     snap = adapter.get_snapshot(market_id=market_id, question_hint=question)
     p_yes_market = float(snap.p_yes_market)
 
-    # Trader-first edge definition:
+    # Trader-first edge: model vs market
     edge_vs_market = abs(float(consensus_p_yes) - p_yes_market)
 
     if edge_vs_market < min_edge:
@@ -278,7 +303,7 @@ def build_candidate_from_db(
             "run_id": run_id,
             "market_id": market_id,
             "question": question,
-            "venue": snap.venue if adapter_source in ("fake", "polymarket", "kalshi") else adapter_source,
+            "venue": snap.venue,
             "side": consensus_side,
             "p_yes": float(p_yes_model),
             "consensus_p_yes": float(consensus_p_yes),
@@ -317,7 +342,6 @@ def main() -> int:
         if source == "fake":
             raw = _fake_candidate(args.min_edge, args.max_disagree, args.paper_size)
             if raw:
-                # For fake, venue label should be 'fake'
                 cand = normalize_candidate(cand=raw, venue="fake")
         else:
             if run is not None:
@@ -333,18 +357,35 @@ def main() -> int:
                 )
 
         if cand:
-            cands = [cand]
-            write_candidates(cands)
+            # Always write signals when a candidate exists
+            write_candidates([cand])
+
+            inserted = False
+            skipped_duplicate = False
 
             if args.paper:
-                insert_paper_trade(conn, cand)
+                if paper_trade_open_exists_for_run(
+                    conn,
+                    run_id=cand["run_id"],
+                    venue=cand["venue"],
+                    market_id=cand["market_id"],
+                    side=cand["side"],
+                ):
+                    skipped_duplicate = True
+                else:
+                    insert_paper_trade(conn, cand)
+                    inserted = True
+
+            suffix = ""
+            if args.paper:
+                suffix = " paper=inserted" if inserted else (" paper=skipped_duplicate" if skipped_duplicate else " paper=skipped")
 
             print(
                 "LIVE_RUNNER OK "
                 f"mode={cand.get('reason')} run_id={cand.get('run_id')} market_id={cand.get('market_id')} "
                 f"side={cand.get('side')} consensus_p_yes={cand.get('consensus_p_yes')} "
                 f"disagreement={cand.get('disagreement')} "
-                f"candidates=1 -> {CANDIDATES_PATH}"
+                f"candidates=1 -> {CANDIDATES_PATH}{suffix}"
             )
         else:
             print("LIVE_RUNNER OK candidates=0 (no trade candidate passed filters)")
