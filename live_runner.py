@@ -5,11 +5,11 @@ import argparse
 import json
 import os
 import sqlite3
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
+from adapters import get_adapter
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
 SIGNALS_DIR = Path("signals")
@@ -47,28 +47,16 @@ def write_candidates(cands: list[Dict[str, Any]]) -> None:
     tmp.replace(CANDIDATES_PATH)
 
 
-def normalize_candidate(
-    *,
-    cand: Dict[str, Any],
-    venue: str,
-) -> Dict[str, Any]:
+def normalize_candidate(*, cand: Dict[str, Any], venue: str) -> Dict[str, Any]:
     """
     Ensure candidate includes all required NOT NULL columns for paper_trades schema.
-
-    Required (NOT NULL):
-      run_id, ts_utc, market_id, question, venue, side, consensus_p_yes,
-      disagreement, size_usd, reason, status
-    Optional:
-      p_yes, edge, brier, notes
     """
     out = dict(cand)
 
-    # Required identifiers
     out["ts_utc"] = (out.get("ts_utc") or utc_now_iso())
     out["run_id"] = (out.get("run_id") or "").strip()
     out["market_id"] = (out.get("market_id") or "UNKNOWN").strip() or "UNKNOWN"
 
-    # Required text fields
     q = (out.get("question") or "").strip()
     if not q:
         q = f"Auto question for {out['market_id']}"
@@ -76,7 +64,6 @@ def normalize_candidate(
 
     out["venue"] = (out.get("venue") or venue).strip() or venue
 
-    # Side
     side = (out.get("side") or "").strip().upper()
     if side not in ("YES", "NO"):
         # infer from p_yes if present, else default NO
@@ -88,45 +75,43 @@ def normalize_candidate(
         side = "YES" if p >= 0.5 else "NO"
     out["side"] = side
 
-    # Probabilities / metrics
+    # Optional p_yes
     p_yes = out.get("p_yes")
     try:
-        p_float = float(p_yes) if p_yes is not None else None
+        out["p_yes"] = float(p_yes) if p_yes is not None else None
     except Exception:
-        p_float = None
-    out["p_yes"] = p_float
+        out["p_yes"] = None
 
-    # consensus_p_yes must be NOT NULL
-    # If arbiter provided it, use it; else fall back to p_yes; else 0.5
-    cp = out.get("consensus_p_yes", p_float if p_float is not None else 0.5)
+    # consensus_p_yes required
+    cp = out.get("consensus_p_yes", out["p_yes"] if out["p_yes"] is not None else 0.5)
     try:
         out["consensus_p_yes"] = float(cp)
     except Exception:
         out["consensus_p_yes"] = 0.5
 
-    # disagreement must be NOT NULL
+    # disagreement required
     d = out.get("disagreement", 0.0)
     try:
         out["disagreement"] = float(d)
     except Exception:
         out["disagreement"] = 0.0
 
-    # size_usd must be NOT NULL
+    # size_usd required
     s = out.get("size_usd", 0.0)
     try:
         out["size_usd"] = float(s)
     except Exception:
         out["size_usd"] = 0.0
 
-    # reason must be NOT NULL
+    # reason required
     reason = (out.get("reason") or "live_runner").strip() or "live_runner"
     out["reason"] = reason
 
-    # status must be NOT NULL (schema default exists, but we supply explicitly)
+    # status required
     status = (out.get("status") or "OPEN").strip().upper() or "OPEN"
     out["status"] = status
 
-    # Optional numeric fields (keep as float or None)
+    # Optional numeric fields
     for k in ("edge", "brier"):
         v = out.get(k)
         if v is None:
@@ -137,17 +122,13 @@ def normalize_candidate(
             out[k] = None
 
     # Optional notes
-    notes = out.get("notes")
-    if notes is not None:
-        out["notes"] = str(notes)
+    if out.get("notes") is not None:
+        out["notes"] = str(out["notes"])
 
     return out
 
 
 def insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> None:
-    """
-    Insert candidate into paper_trades using existing schema (no DB changes).
-    """
     cur = conn.cursor()
     cur.execute(
         """
@@ -180,14 +161,7 @@ def insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> None:
 
 def _latest_run(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
     cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT *
-        FROM runs
-        ORDER BY id DESC
-        LIMIT 1
-        """
-    )
+    cur.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1;")
     return _fetchone_dict(cur)
 
 
@@ -199,7 +173,7 @@ def _latest_arbiter_for_run(conn: sqlite3.Connection, run_id: str) -> Optional[D
         FROM arbiter_runs
         WHERE run_id=?
         ORDER BY id DESC
-        LIMIT 1
+        LIMIT 1;
         """,
         (run_id,),
     )
@@ -207,15 +181,14 @@ def _latest_arbiter_for_run(conn: sqlite3.Connection, run_id: str) -> Optional[D
 
 
 def _fake_candidate(min_edge: float, max_disagree: float, paper_size: float) -> Optional[Dict[str, Any]]:
-    """
-    Deterministic-ish fake source candidate generator (enough for paper wrapper acceptance tests).
-    """
-    # Keep these stable and always valid. Edge/disagreement chosen to pass defaults.
+    # Deterministic fake candidate for acceptance tests
     p_yes = 0.464185
-    edge = 0.035815
     disagree = 0.197519
 
-    if edge < min_edge:
+    # Phase 1.2: edge will be computed vs market snapshot later; for fake, use neutral market=0.5 baseline
+    edge_vs_market = abs(p_yes - 0.5)
+
+    if edge_vs_market < min_edge:
         return None
     if disagree > max_disagree:
         return None
@@ -228,11 +201,12 @@ def _fake_candidate(min_edge: float, max_disagree: float, paper_size: float) -> 
         "question": "Will a widely used open-source library ship a breaking change without a major version bump?",
         "side": side,
         "p_yes": round(p_yes, 6),
-        "edge": round(edge, 6),
+        "consensus_p_yes": round(p_yes, 6),
         "disagreement": round(disagree, 6),
+        "edge": round(edge_vs_market, 6),
         "size_usd": float(paper_size),
         "reason": "fake_source",
-        # consensus_p_yes + venue will be normalized later
+        "status": "OPEN",
     }
 
 
@@ -240,87 +214,88 @@ def build_candidate_from_db(
     *,
     run: Dict[str, Any],
     arb: Optional[Dict[str, Any]],
+    adapter_source: str,
     min_edge: float,
     max_disagree: float,
     paper_size: float,
-    venue: str,
 ) -> Optional[Dict[str, Any]]:
-    """
-    Build a trade candidate based on latest run + arbiter consensus if present.
-    Falls back cleanly if arbiter_runs missing.
-    """
-    run_id = (run.get("run_id") or "").strip()
+    run_id = (run.get("run_id") or "").strip() or "fallback-run"
     market_id = (run.get("market_id") or "UNKNOWN").strip() or "UNKNOWN"
-    question = (run.get("question") or "").strip()
+    question = (run.get("question") or "").strip() or f"Auto question for {market_id}"
 
-    # If arbiter exists, use arbiter consensus/disagreement. Else fallback to operator/skeptic votes.
+    # Model probability (consensus)
     if arb:
         consensus_side = (arb.get("consensus_side") or "").strip().upper() or "NO"
         consensus_p_yes = float(arb.get("consensus_p_yes"))
         disagreement = float(arb.get("disagreement"))
         reason = "arbiter"
-        p_yes = consensus_p_yes
-        # Simple edge proxy: distance from 0.5 (your real edge logic can evolve later)
-        edge = abs(consensus_p_yes - 0.5)
+        p_yes_model = consensus_p_yes
     else:
-        # Fallback proxy using operator_conf vs skeptic_conf (still produces valid paper rows)
+        # Fallback proxy from runs row (kept simple and stable)
         op_side = (run.get("operator_side") or "NO").strip().upper()
         sk_side = (run.get("skeptic_side") or "NO").strip().upper()
         op_conf = float(run.get("operator_conf") or 0.5)
         sk_conf = float(run.get("skeptic_conf") or 0.5)
-
-        # crude disagreement proxy
         disagreement = min(1.0, abs(op_conf - sk_conf))
 
-        # crude consensus proxy
         if op_side == "YES" and sk_side == "YES":
-            consensus_side = "YES"
-            p_yes = max(op_conf, sk_conf)
+            p_yes_model = max(op_conf, sk_conf)
         elif op_side == "NO" and sk_side == "NO":
-            consensus_side = "NO"
-            p_yes = 1.0 - max(op_conf, sk_conf)
+            p_yes_model = 1.0 - max(op_conf, sk_conf)
         else:
-            # split vote: lean toward higher confidence
             if op_conf >= sk_conf:
-                consensus_side = op_side
-                p_yes = op_conf if op_side == "YES" else (1.0 - op_conf)
+                p_yes_model = op_conf if op_side == "YES" else (1.0 - op_conf)
             else:
-                consensus_side = sk_side
-                p_yes = sk_conf if sk_side == "YES" else (1.0 - sk_conf)
+                p_yes_model = sk_conf if sk_side == "YES" else (1.0 - sk_conf)
 
-        consensus_p_yes = float(p_yes)
-        edge = abs(consensus_p_yes - 0.5)
+        consensus_p_yes = float(p_yes_model)
+        consensus_side = "YES" if consensus_p_yes >= 0.5 else "NO"
         reason = "runs_fallback"
 
-    # Apply filters
-    if edge < min_edge:
+    # Phase 1.2: market snapshot via adapter (Polymarket-first)
+    adapter = get_adapter(adapter_source)
+    snap = adapter.get_snapshot(market_id=market_id, question_hint=question)
+    p_yes_market = float(snap.p_yes_market)
+
+    # Trader-first edge definition:
+    edge_vs_market = abs(float(consensus_p_yes) - p_yes_market)
+
+    if edge_vs_market < min_edge:
         return None
-    if disagreement > max_disagree:
+    if float(disagreement) > max_disagree:
         return None
+
+    notes_obj = {
+        "p_yes_market": p_yes_market,
+        "edge_vs_market": edge_vs_market,
+        "adapter_venue": snap.venue,
+        "adapter_extra": snap.extra,
+    }
 
     return normalize_candidate(
         cand={
             "ts_utc": utc_now_iso(),
-            "run_id": run_id or "fallback-run",
+            "run_id": run_id,
             "market_id": market_id,
-            "question": question or f"Auto question for {market_id}",
-            "venue": venue,
+            "question": question,
+            "venue": snap.venue if adapter_source in ("fake", "polymarket", "kalshi") else adapter_source,
             "side": consensus_side,
-            "p_yes": float(p_yes),
-            "edge": float(edge),
+            "p_yes": float(p_yes_model),
             "consensus_p_yes": float(consensus_p_yes),
             "disagreement": float(disagreement),
+            "edge": float(edge_vs_market),
             "size_usd": float(paper_size),
             "reason": reason,
             "status": "OPEN",
+            "notes": json.dumps(notes_obj, sort_keys=True),
         },
-        venue=venue,
+        venue=snap.venue,
     )
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="BlackGlassLab live runner (paper trading wrapper)")
-    p.add_argument("--source", default="fake", help="data source / venue tag (e.g. fake, polymarket)")
+    p.add_argument("--source", default="fake", help="data source / venue tag (fake, polymarket, kalshi)")
     p.add_argument("--paper", action="store_true", help="insert candidate into paper_trades")
     p.add_argument("--min-edge", type=float, default=float(os.environ.get("BGL_MIN_EDGE", "0.01")))
     p.add_argument("--max-disagree", type=float, default=float(os.environ.get("BGL_MAX_DISAGREE", "0.50")))
@@ -330,9 +305,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    venue = (args.source or "fake").strip() or "fake"
+    source = (args.source or "fake").strip().lower() or "fake"
 
-    # Ensure signals dir exists even if no candidates (but only write file when we have candidates)
     SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
 
     with _connect_db(DB_PATH) as conn:
@@ -340,35 +314,31 @@ def main() -> int:
 
         cand: Optional[Dict[str, Any]] = None
 
-        if args.source == "fake":
+        if source == "fake":
             raw = _fake_candidate(args.min_edge, args.max_disagree, args.paper_size)
             if raw:
-                cand = normalize_candidate(cand=raw, venue=venue)
+                # For fake, venue label should be 'fake'
+                cand = normalize_candidate(cand=raw, venue="fake")
         else:
-            # Real mode: rely on latest run + arbiter if present
             if run is not None:
                 run_id = (run.get("run_id") or "").strip()
                 arb = _latest_arbiter_for_run(conn, run_id) if run_id else None
                 cand = build_candidate_from_db(
                     run=run,
                     arb=arb,
+                    adapter_source=source,
                     min_edge=args.min_edge,
                     max_disagree=args.max_disagree,
                     paper_size=args.paper_size,
-                    venue=venue,
                 )
 
-        cands: list[Dict[str, Any]] = []
         if cand:
             cands = [cand]
-            # 1) Always write candidates json when a candidate exists
             write_candidates(cands)
 
-            # 2) Insert without NOT NULL failures (uses existing schema)
             if args.paper:
                 insert_paper_trade(conn, cand)
 
-            # Single stable summary line (no debug spam)
             print(
                 "LIVE_RUNNER OK "
                 f"mode={cand.get('reason')} run_id={cand.get('run_id')} market_id={cand.get('market_id')} "
@@ -377,7 +347,6 @@ def main() -> int:
                 f"candidates=1 -> {CANDIDATES_PATH}"
             )
         else:
-            # No candidate: do not write trade_candidates.json (your acceptance test expects it only when candidate exists)
             print("LIVE_RUNNER OK candidates=0 (no trade candidate passed filters)")
         return 0
 
