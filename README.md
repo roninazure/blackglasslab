@@ -2,7 +2,7 @@
 
 <h1 style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
            font-size: 42px; letter-spacing: 1px; margin-bottom: 6px;">
-⚗️ <span style="color:#39ff14;">Black Glass Swarm</span> <span style="color:#a855f7;">v0.7</span>
+⚗️ <span style="color:#39ff14;">Black Glass Swarm</span> <span style="color:#a855f7;">v0.7.1</span>
 </h1>
 
 <p style="max-width: 920px; font-size: 16px; line-height: 1.55; margin-top: 0;">
@@ -52,7 +52,7 @@ If our system can reliably estimate the probability of an outcome **better than 
 
 ---
 
-## ✅ What’s working right now (v0.7 pilot)
+## ✅ What’s working right now (v0.7.1 pilot)
 
 - Runs the AI “Operator vs Skeptic” loop
 - Produces a consensus probability (Arbiter)
