@@ -74,8 +74,40 @@ Over many runs, the goal is to become **more accurate and more profitable**.
 
 ---
 
-## 🧪 Quick demo (2 commands)
+## 🧪 Swarm scale (real numbers)
 
-### 1) Run one forecasting cycle
-```bash
-python3 orchestrator.py
+BlackGlassLab doesn’t run “one model.” It runs a **small committee** sampled from a larger evolving population.
+
+**Current population (from SQLite):**
+- **Total agents:** **152**
+  - **76 Operators** (they make a probability call)
+  - **76 Skeptics** (they challenge the call)
+- **Active pool (eligible to be sampled today):** **31**
+  - **15 active Operators**
+  - **16 active Skeptics**
+- **Used per run (the swarm size):** **6**
+  - **3 Operators + 3 Skeptics** per forecasting run
+
+### How these numbers are used
+- The system maintains a **large pool** (152) as a “gene bank” of strategies.
+- A smaller **active set** (31) is the “starting lineup” — the agents allowed to participate right now.
+- Each run uses only **6 agents** to keep the loop fast and repeatable:
+  - 3 Operators generate predictions
+  - 3 Skeptics challenge them
+  - The **Arbiter** combines those 6 opinions into:
+    - a final probability (`consensus_p_yes`)
+    - and an “internal disagreement” score (`disagreement`)
+- Over time, the **Evolver** updates which agents are active:
+  - top performers stay active
+  - weaker ones get replaced by new mutated variants
+
+### Why this matters (for trading)
+- The system is designed to **improve over time** instead of staying fixed.
+- The “disagreement” score helps risk control:
+  - lower disagreement → stronger consensus
+  - higher disagreement → more uncertainty
+
+> In other words: **big population for diversity**, **small swarm per run for speed**, and **active set evolves over time**.
+
+
+
