@@ -97,6 +97,33 @@ Black Glass Swarm doesn’t run “one model.” It runs a **small committee** s
   - lower disagreement → stronger consensus
   - higher disagreement → more uncertainty
 
+## 📈 Trading logic update (Phase 1.2)
+
+Black Glass Swarm now measures “edge” the way a trader would:
+
+- **Model probability**: what the swarm believes (`consensus_p_yes`)
+- **Market probability**: what the venue implies (`p_yes_market`)
+- **Edge vs market**: the gap between them  
+  `edge = |consensus_p_yes − p_yes_market|`
+
+When edge is large enough (and disagreement is acceptable), the system generates a trade candidate.
+
+### Polymarket-first adapter (current state)
+We introduced an adapter layer so the engine can plug into real venues cleanly:
+
+- `--source polymarket` now routes through a **Polymarket adapter**
+- In **Phase 1.2**, that adapter is a **safe stub** (no live API calls yet)
+- Market probability is currently a neutral baseline (**p_yes_market = 0.50**) until Phase 1.3 adds real odds ingestion
+
+To preserve auditability, each paper trade records the market probability and edge in `notes` (JSON).
+
+### Paper trade dedupe (safety)
+Re-running `live_runner.py --paper` on the **same run** will not create duplicate OPEN trades:
+
+- First run: inserts the paper trade (`paper=inserted`)
+- Repeat run for the same run_id: skips insert (`paper=skipped_duplicate`)
+- Signals JSON is still written when a candidate exists
+
 > In other words: **big population for diversity**, **small swarm per run for speed**, and **active set evolves over time**.
 
 ---
