@@ -28,8 +28,7 @@ then (paper) places a trade when the odds look mispriced. Built for <b>Polymarke
 
 ## 🧠 What this is (mission)
 
-**Black Glass Swarm is not a toy script.**  
-It’s an **adaptive forecasting swarm with capital allocation logic**:
+**Black Glass Swarm is an **adaptive forecasting swarm with capital allocation logic**:
 
 - Operators generate probabilistic forecasts (`p_yes`, rationale)
 - Skeptics challenge and stress-test the forecast
