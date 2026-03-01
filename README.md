@@ -49,7 +49,7 @@ If our system can reliably estimate the probability of an outcome **better than 
 
 - we can trade the difference (edge),
 - manage risk,
-- and potentially build a repeatable income stream.
+- build a repeatable income stream.
 
 ---
 
