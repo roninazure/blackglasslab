@@ -1,5 +1,3 @@
-cd ~/blackglasslab
-cat > README.md <<'MD'
 <div align="center">
 
 <h1 style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
