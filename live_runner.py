@@ -52,7 +52,7 @@ def _kv_set(conn: sqlite3.Connection, key: str, value: str) -> None:
 def _fetchone_dict(cur: sqlite3.Cursor) -> Optional[Dict[str, Any]]:
     row = cur.fetchone()
     if row is None:
-        return None
+        return fallback_cand
     cols = [d[0] for d in cur.description or []]
     return {cols[i]: row[i] for i in range(len(cols))}
 
@@ -223,6 +223,16 @@ def _infer_pick_slugs(conn: sqlite3.Connection, venue: str, watchlist: List[str]
 
 
 
+def _infer_recent_blocked(conn, venue: str, slug: str, window: int) -> bool:
+    if window <= 0:
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM paper_trades WHERE venue=? AND reason='infer' AND market_id=? ORDER BY id DESC LIMIT ?;",
+        (venue, slug, window),
+    ).fetchone()
+    return row is not None
+
+
 def _polymarket_yes_price_from_market(obj: Dict[str, Any]) -> Optional[float]:
     # Gamma returns outcomePrices like ["0.2455","0.7545"] where outcomes ["Yes","No"] commonly.
     # We assume index 0 corresponds to Yes when outcomes[0] == "Yes".
@@ -243,39 +253,72 @@ def _polymarket_yes_price_from_market(obj: Dict[str, Any]) -> Optional[float]:
         return None
 
 
+def _infer_recent_slugs(conn: sqlite3.Connection, venue: str, n: int) -> list[str]:
+    if n <= 0:
+        return []
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT market_id
+        FROM paper_trades
+        WHERE venue=? AND reason='infer'
+        ORDER BY id DESC
+        LIMIT ?;
+        """,
+        (venue, n),
+    )
+    return [r[0] for r in cur.fetchall() if r and r[0]]
+
+
+def _infer_pick_slugs_batch(conn: sqlite3.Connection, watchlist: list[str], batch: int) -> tuple[list[str], int]:
+    """Return (slugs_to_try, next_cursor). Cursor persisted in kv as infer_cursor."""
+    if not watchlist:
+        return ([], 0)
+
+    n = len(watchlist)
+    cur_raw = _kv_get(conn, "infer_cursor") or "0"
+    try:
+        cursor = int(cur_raw)
+    except Exception:
+        cursor = 0
+
+    batch = max(1, int(batch))
+    take = min(batch, n)
+    slugs = [watchlist[(cursor + i) % n] for i in range(take)]
+    next_cursor = (cursor + take) % n
+    return (slugs, next_cursor)
+
+
 def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Optional[Dict[str, Any]]:
     watchlist = _load_watchlist()
-    if not watchlist:
+    if not watchlist or get_adapter is None:
         return None
 
-    if get_adapter is None:
-        return None
+    batch = int(os.environ.get("BGL_INFER_BATCH", "8") or "8")
+    cooldown_n = int(os.environ.get("BGL_INFER_COOLDOWN", "0") or "0")
 
-    # How many slugs to evaluate each loop (Phase 1.6D)
-    n_pick = int(os.environ.get("BGL_INFER_BATCH", "8") or "8")
-    slugs = _infer_pick_slugs(conn, venue, watchlist, n_pick)
+    slugs, next_cursor = _infer_pick_slugs_batch(conn, watchlist, batch)
+    _kv_set(conn, "infer_cursor", str(next_cursor))
+    conn.commit()
 
+    recent = set(_infer_recent_slugs(conn, venue, cooldown_n))
     adapter = get_adapter(venue)
 
-    best: Optional[Dict[str, Any]] = None
-    best_q = -1.0
-
+    # IMPORTANT: skip cooldown slugs and KEEP SCANNING (no early return None)
     for slug in slugs:
-        try:
-            m = adapter.get_market(slug)  # type: ignore[attr-defined]
-        except Exception:
+        if cooldown_n > 0 and slug in recent:
             continue
+
+        m = adapter.get_market(slug)  # type: ignore[attr-defined]
 
         p_yes_market = _polymarket_yes_price_from_market(m)
         if p_yes_market is None:
             p_yes_market = 0.5
 
-        # Placeholder model until swarm inference is wired in:
-        # deterministic small deviation from market to keep pipeline functional
         jitter = (hash(slug) % 2000 - 1000) / 100000.0  # [-0.01, +0.01]
         p_yes_model = min(0.99, max(0.01, p_yes_market + jitter))
 
-        disagreement = abs(jitter) * 3.0  # 0..0.03 proxy
+        disagreement = abs(jitter) * 3.0  # ~0..0.03
         edge_vs_market = p_yes_model - p_yes_market
         edge_abs = abs(p_yes_model - 0.5)
 
@@ -291,7 +334,6 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             "p_yes": float(p_yes_model),
             "consensus_p_yes": float(p_yes_model),
             "disagreement": float(disagreement),
-            # edge in output = abs(edge_vs_market) when we have market odds
             "edge": float(abs(edge_vs_market)),
             "size_usd": float(paper_size),
             "reason": "infer",
@@ -309,17 +351,10 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             },
         }
 
-        # Filter gate
-        if not _passes_filters(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement):
-            continue
+        if _passes_filters(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement):
+            return cand
 
-        # Rank: prioritize edge vs market, penalize disagreement
-        q = abs(edge_vs_market) * (1.0 - 0.75 * disagreement)
-        if q > best_q:
-            best_q = q
-            best = cand
-
-    return best
+    return None
 
 
 def main() -> int:
