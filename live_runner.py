@@ -35,6 +35,20 @@ def _connect_db(path: str) -> sqlite3.Connection:
     return conn
 
 
+def _kv_get(conn: sqlite3.Connection, key: str) -> Optional[str]:
+    conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+    row = conn.execute("SELECT value FROM kv WHERE key=?;", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def _kv_set(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+    conn.execute(
+        "INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
+        (key, value),
+    )
+
+
 def _fetchone_dict(cur: sqlite3.Cursor) -> Optional[Dict[str, Any]]:
     row = cur.fetchone()
     if row is None:
@@ -188,13 +202,25 @@ def _arbiter_candidate_from_db(*, conn: sqlite3.Connection, venue: str, paper_si
     return cand
 
 
-def _infer_pick_slug_round_robin(conn: sqlite3.Connection, watchlist: List[str]) -> Optional[str]:
+def _infer_pick_slugs(conn: sqlite3.Connection, venue: str, watchlist: List[str], n_pick: int) -> List[str]:
     if not watchlist:
-        return None
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM paper_trades WHERE reason='infer';")
-    n = int(cur.fetchone()[0] or 0)
-    return watchlist[n % len(watchlist)]
+        return []
+    # Persist cursor so we advance even when no insert happens (fixes “stuck slug”)
+    key = f"infer_cursor:{venue}"
+    cur_raw = _kv_get(conn, key)
+    cursor = int(cur_raw) if (cur_raw and cur_raw.isdigit()) else 0
+
+    picks: List[str] = []
+    L = len(watchlist)
+    for i in range(max(1, n_pick)):
+        picks.append(watchlist[(cursor + i) % L])
+
+    # Advance cursor by n_pick regardless of whether we emit/insert
+    cursor = (cursor + max(1, n_pick)) % L
+    _kv_set(conn, key, str(cursor))
+    conn.commit()
+    return picks
+
 
 
 def _polymarket_yes_price_from_market(obj: Dict[str, Any]) -> Optional[float]:
@@ -219,65 +245,81 @@ def _polymarket_yes_price_from_market(obj: Dict[str, Any]) -> Optional[float]:
 
 def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Optional[Dict[str, Any]]:
     watchlist = _load_watchlist()
-    slug = _infer_pick_slug_round_robin(conn, watchlist)
-    if not slug:
+    if not watchlist:
         return None
 
     if get_adapter is None:
         return None
 
+    # How many slugs to evaluate each loop (Phase 1.6D)
+    n_pick = int(os.environ.get("BGL_INFER_BATCH", "8") or "8")
+    slugs = _infer_pick_slugs(conn, venue, watchlist, n_pick)
+
     adapter = get_adapter(venue)
-    # Phase 1.6A+ requires adapter.get_market(slug)
-    m = adapter.get_market(slug)  # type: ignore[attr-defined]
 
-    p_yes_market = _polymarket_yes_price_from_market(m)  # may be None
-    if p_yes_market is None:
-        p_yes_market = 0.5
+    best: Optional[Dict[str, Any]] = None
+    best_q = -1.0
 
-    # Placeholder “model” until you wire real model inference:
-    # For now: deterministic slight tilt off market (keeps system functional).
-    # You will replace this with swarm inference later.
-    # Keep it bounded and reproducible-ish:
-    jitter = (hash(slug) % 2000 - 1000) / 100000.0  # [-0.01, +0.01]
-    p_yes_model = min(0.99, max(0.01, p_yes_market + jitter))
+    for slug in slugs:
+        try:
+            m = adapter.get_market(slug)  # type: ignore[attr-defined]
+        except Exception:
+            continue
 
-    disagreement = abs(jitter) * 3.0  # cheap proxy (0..0.03)
-    edge_vs_market = p_yes_model - p_yes_market
-    edge_abs = abs(p_yes_model - 0.5)
+        p_yes_market = _polymarket_yes_price_from_market(m)
+        if p_yes_market is None:
+            p_yes_market = 0.5
 
-    side = "YES" if p_yes_model >= 0.5 else "NO"
+        # Placeholder model until swarm inference is wired in:
+        # deterministic small deviation from market to keep pipeline functional
+        jitter = (hash(slug) % 2000 - 1000) / 100000.0  # [-0.01, +0.01]
+        p_yes_model = min(0.99, max(0.01, p_yes_market + jitter))
 
-    cand = {
-        "ts_utc": utc_now_iso(),
-        "run_id": f"infer-{utc_now_iso()}",
-        "market_id": slug,
-        "question": str(m.get("question") or slug),
-        "venue": venue,
-        "side": side,
-        "p_yes": float(p_yes_model),
-        "consensus_p_yes": float(p_yes_model),
-        "disagreement": float(disagreement),
-        "edge": float(abs(edge_vs_market) if p_yes_market is not None else edge_abs),
-        "size_usd": float(paper_size),
-        "reason": "infer",
-        "status": "OPEN",
-        "notes": {
-            "adapter_venue": venue,
-            "p_yes_market": float(p_yes_market),
-            "edge_vs_market": float(edge_vs_market),
-            "snapshot": {
-                "slug": slug,
-                "id": m.get("id"),
-                "question": m.get("question"),
-                "updatedAt": m.get("updatedAt"),
+        disagreement = abs(jitter) * 3.0  # 0..0.03 proxy
+        edge_vs_market = p_yes_model - p_yes_market
+        edge_abs = abs(p_yes_model - 0.5)
+
+        side = "YES" if p_yes_model >= 0.5 else "NO"
+
+        cand = {
+            "ts_utc": utc_now_iso(),
+            "run_id": f"infer-{utc_now_iso()}",
+            "market_id": slug,
+            "question": str(m.get("question") or slug),
+            "venue": venue,
+            "side": side,
+            "p_yes": float(p_yes_model),
+            "consensus_p_yes": float(p_yes_model),
+            "disagreement": float(disagreement),
+            # edge in output = abs(edge_vs_market) when we have market odds
+            "edge": float(abs(edge_vs_market)),
+            "size_usd": float(paper_size),
+            "reason": "infer",
+            "status": "OPEN",
+            "notes": {
+                "adapter_venue": venue,
+                "p_yes_market": float(p_yes_market),
+                "edge_vs_market": float(edge_vs_market),
+                "snapshot": {
+                    "slug": slug,
+                    "id": m.get("id"),
+                    "question": m.get("question"),
+                    "updatedAt": m.get("updatedAt"),
+                },
             },
-        },
-    }
+        }
 
-    if not _passes_filters(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement):
-        return None
+        # Filter gate
+        if not _passes_filters(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement):
+            continue
 
-    return cand
+        # Rank: prioritize edge vs market, penalize disagreement
+        q = abs(edge_vs_market) * (1.0 - 0.75 * disagreement)
+        if q > best_q:
+            best_q = q
+            best = cand
+
+    return best
 
 
 def main() -> int:
