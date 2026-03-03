@@ -3,75 +3,99 @@ set -euo pipefail
 
 echo "== Phase 1.1 Ship Check =="
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+# Always anchor to repo root (no cwd surprises)
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
 
 db="memory/runs.sqlite"
+DB="$db"
 
-SOURCE="${BGL_SOURCE:-fake}"
-PAPER_SIZE="${BGL_PAPER_SIZE:-100}"
+SOURCE="${SOURCE:-fake}"
+PAPER_SIZE="${PAPER_SIZE:-100}"
+MIN_EDGE="${MIN_EDGE:-0.0}"
+MAX_DISAGREE="${MAX_DISAGREE:-1.0}"
 
-MIN_EDGE="${BGL_MIN_EDGE:-0.0}"
-MAX_DISAGREE="${BGL_MAX_DISAGREE:-1.0}"
-
-echo "root=$ROOT"
-echo "db=$db"
+echo "root=$root"
+echo "db=$DB"
 echo "source=$SOURCE paper_size=$PAPER_SIZE"
 echo "ship_check_overrides: min_edge=$MIN_EDGE max_disagree=$MAX_DISAGREE"
 echo
 
+mkdir -p memory signals logs
+
 echo "1) Compile gate..."
-python3 -m py_compile orchestrator.py live_runner.py
+python3 -m py_compile orchestrator.py live_runner.py scripts/publish_latest_swarm_forecasts.py
 
 echo "2) Run orchestrator..."
 python3 orchestrator.py
 
 echo "3) Latest run_id from runs..."
-RID="$(sqlite3 "$db" "select run_id from runs order by id desc limit 1;")"
-echo "latest run_id=$RID"
+latest_run_id="$(sqlite3 "$DB" "select run_id from runs order by id desc limit 1;")"
+if [[ -z "$latest_run_id" ]]; then
+  echo "SHIP_CHECK FAIL: latest_run_id empty"
+  exit 1
+fi
+echo "latest run_id=$latest_run_id"
 echo
 
 echo "4) Run live_runner in ARBITER mode..."
-rm -f signals/trade_candidates.json
-mkdir -p signals
-
-BGL_MIN_EDGE="$MIN_EDGE" \
 BGL_MIN_EDGE_ABS="$MIN_EDGE" \
 BGL_MIN_EDGE_VS_MARKET="$MIN_EDGE" \
 BGL_MAX_DISAGREE="$MAX_DISAGREE" \
 BGL_MAX_DISAGREEMENT="$MAX_DISAGREE" \
 BGL_PAPER_SIZE="$PAPER_SIZE" \
-python3 live_runner.py --source polymarket --paper --mode arbiter
+python3 live_runner.py --source polymarket --paper --mode arbiter --loops 1
 
 echo "5) Verify signals JSON exists + run_id matches..."
 test -f signals/trade_candidates.json || { echo "SHIP_CHECK FAIL: Missing signals/trade_candidates.json"; exit 1; }
 
-SIG_RID="$(python3 - <<'PY'
+sig_rid="$(python3 - <<'PY'
 import json
-with open("signals/trade_candidates.json","r",encoding="utf-8") as f:
-    arr=json.load(f)
-print(arr[0].get("run_id","") if arr else "")
+p="signals/trade_candidates.json"
+with open(p,"r",encoding="utf-8") as f:
+    data=json.load(f)
+if not data:
+    print("")
+else:
+    print(data[0].get("run_id",""))
 PY
 )"
-
-if [[ -z "$SIG_RID" ]]; then
-  echo "SHIP_CHECK FAIL: signals JSON is empty (no candidate emitted)"
+if [[ -z "$sig_rid" ]]; then
+  echo "SHIP_CHECK FAIL: signals/trade_candidates.json had no candidate run_id"
   exit 1
 fi
-
-if [[ "$SIG_RID" != "$RID" ]]; then
-  echo "SHIP_CHECK FAIL: signals run_id mismatch (signals=$SIG_RID db=$RID)"
+if [[ "$sig_rid" != "$latest_run_id" ]]; then
+  echo "SHIP_CHECK FAIL: signals run_id=$sig_rid does not match latest run_id=$latest_run_id"
   exit 1
 fi
-
 echo "signals OK"
 echo
 
 echo "6) DB proofs..."
-echo "LATEST_RUN_ID|$RID"
-sqlite3 "$db" "select 'ARBITER_COUNT|' || count(*) from arbiter_runs where run_id='$RID';"
-sqlite3 "$db" "select 'PAPER_TRADE_FOR_RUN_COUNT|' || count(*) from paper_trades where run_id='$RID';"
-sqlite3 "$db" "select 'PAPER_TRADE_FOR_RUN_ROW|' || id || '|' || run_id || '|' || venue || '|' || reason || '|' || status || '|' || market_id || '|' || side || '|' || consensus_p_yes || '|' || disagreement || '|' || size_usd from paper_trades where run_id='$RID' order by id desc limit 1;"
+echo "LATEST_RUN_ID|$latest_run_id"
+arb_count="$(sqlite3 "$DB" "select count(*) from arbiter_runs where run_id='$latest_run_id';")"
+echo "ARBITER_COUNT|$arb_count"
 
+paper_cnt="$(sqlite3 "$DB" "select count(*) from paper_trades where run_id='$latest_run_id';")"
+echo "PAPER_TRADE_FOR_RUN_COUNT|$paper_cnt"
+
+paper_row="$(sqlite3 "$DB" "select id,run_id,venue,reason,status,market_id,side,consensus_p_yes,disagreement,size_usd from paper_trades where run_id='$latest_run_id' order by id desc limit 1;")"
+echo "PAPER_TRADE_FOR_RUN_ROW|$paper_row"
 echo
-echo "SHIP_CHECK PASS: run_id=$RID"
+
+echo "7) Publish latest swarm forecast + verify model_forecasts.run_id matches..."
+python3 scripts/publish_latest_swarm_forecasts.py
+
+pub_rid="$(sqlite3 "$DB" "select run_id from model_forecasts order by ts_utc desc limit 1;")"
+if [[ -z "$pub_rid" ]]; then
+  echo "SHIP_CHECK FAIL: model_forecasts has no rows"
+  exit 1
+fi
+if [[ "$pub_rid" != "$latest_run_id" ]]; then
+  echo "SHIP_CHECK FAIL: model_forecasts.run_id=$pub_rid does not match latest run_id=$latest_run_id"
+  exit 1
+fi
+echo "publish OK"
+echo
+
+echo "SHIP_CHECK PASS: run_id=$latest_run_id"
