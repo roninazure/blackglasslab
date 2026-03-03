@@ -47,11 +47,11 @@ BGL_PAPER_SIZE="$PAPER_SIZE" \
 python3 live_runner.py --source polymarket --paper --mode arbiter --loops 1
 
 echo "5) Verify signals JSON exists + run_id matches..."
-test -f signals/trade_candidates.json || { echo "SHIP_CHECK FAIL: Missing signals/trade_candidates.json"; exit 1; }
+test -f signals/trade_candidates_arbiter.json || { echo "SHIP_CHECK FAIL: Missing signals/trade_candidates_arbiter.json"; exit 1; }
 
 sig_rid="$(python3 - <<'PY'
 import json
-p="signals/trade_candidates.json"
+p="signals/trade_candidates_arbiter.json"
 with open(p,"r",encoding="utf-8") as f:
     data=json.load(f)
 if not data:
@@ -61,7 +61,7 @@ else:
 PY
 )"
 if [[ -z "$sig_rid" ]]; then
-  echo "SHIP_CHECK FAIL: signals/trade_candidates.json had no candidate run_id"
+  echo "SHIP_CHECK FAIL: signals/trade_candidates_arbiter.json had no candidate run_id"
   exit 1
 fi
 if [[ "$sig_rid" != "$latest_run_id" ]]; then

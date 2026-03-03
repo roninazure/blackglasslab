@@ -21,7 +21,14 @@ except Exception:
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
 SIGNALS_DIR = Path("signals")
-CANDIDATES_PATH = SIGNALS_DIR / "trade_candidates.json"
+def _candidates_path(mode: str) -> Path:
+    # Avoid arbiter/infer clobbering each other
+    if mode == "arbiter":
+        return SIGNALS_DIR / "trade_candidates_arbiter.json"
+    if mode == "infer":
+        return SIGNALS_DIR / "trade_candidates_infer.json"
+    return SIGNALS_DIR / "trade_candidates.json"
+
 WATCHLIST_PATH = Path("markets") / "polymarket_watchlist.json"
 
 
@@ -57,9 +64,9 @@ def _fetchone_dict(cur: sqlite3.Cursor) -> Optional[Dict[str, Any]]:
     return {cols[i]: row[i] for i in range(len(cols))}
 
 
-def _write_candidates(cands: List[Dict[str, Any]]) -> None:
+def _write_candidates(mode: str, cands) -> None:
     SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
-    CANDIDATES_PATH.write_text(json.dumps(cands, indent=2), encoding="utf-8")
+    _candidates_path(mode).write_text(json.dumps(cands, indent=2), encoding="utf-8")
 
 
 def _load_watchlist() -> List[str]:
@@ -392,7 +399,7 @@ def main() -> int:
             cands = [cand]
             emitted = 1
 
-        _write_candidates(cands)
+        _write_candidates(mode, cands)
 
         paper_status = ""
         if args.paper and cand is not None:
@@ -400,14 +407,14 @@ def main() -> int:
 
         if cand is None:
             # Print clear mode-specific message
-            msg = f"LIVE_RUNNER OK candidates=0 ({mode} no trade candidate passed filters) -> {CANDIDATES_PATH}"
+            msg = f"LIVE_RUNNER OK candidates=0 ({mode} no trade candidate passed filters) -> {_candidates_path(mode)}"
             print(msg)
             last_print = msg
         else:
             msg = (
                 f"LIVE_RUNNER OK mode={mode} run_id={cand['run_id']} market_id={cand['market_id']} "
                 f"side={cand['side']} consensus_p_yes={cand['consensus_p_yes']} disagreement={cand['disagreement']} "
-                f"edge={cand.get('edge')} candidates=1 -> {CANDIDATES_PATH} {paper_status}".rstrip()
+                f"edge={cand.get('edge')} candidates=1 -> {_candidates_path(mode)} {paper_status}".rstrip()
             )
             print(msg)
             last_print = msg
