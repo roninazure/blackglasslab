@@ -1,129 +1,146 @@
-<div align="center">
-
-<h1 style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+::: {align="center"}
+```{=html}
+<h1 style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, &#39;Liberation Mono&#39;, &#39;Courier New&#39;, monospace;
            font-size: 42px; letter-spacing: 1px; margin-bottom: 6px;">
-⚗️ <span style="color:#39ff14;">Black Glass Swarm</span> <span style="color:#a855f7;">v0.7.1</span>
+```
+⚗️ [Black Glass Swarm]{style="color:#39ff14;"}
+[v0.7.1]{style="color:#a855f7;"}
+```{=html}
 </h1>
-
+```
+```{=html}
 <p style="max-width: 920px; font-size: 16px; line-height: 1.55; margin-top: 0;">
-A “digital prediction lab” that runs a small team of AIs, makes a probability call on a YES/NO question,
-then (paper) places a trade when the odds look mispriced. Built for <b>Polymarket</b> first, then <b>Kalshi</b>.
+```
+A digital prediction lab that runs a small team of AIs, produces a
+probability on a YES/NO question, and (paper) places a trade when odds
+look mispriced. Built for `<b>`{=html}Polymarket`</b>`{=html} first,
+then `<b>`{=html}Kalshi`</b>`{=html}.
+```{=html}
 </p>
-
+```
+```{=html}
 <p style="max-width: 920px; font-size: 14px; opacity: 0.9; margin-top: 0;">
-<b>BlackGlassLab</b> is the umbrella. <b>Black Glass Swarm</b> is the flagship forecasting + trading engine.
+```
+`<b>`{=html}BlackGlassLab`</b>`{=html} is the umbrella.
+`<b>`{=html}Black Glass Swarm`</b>`{=html} is the flagship forecasting +
+trading engine.
+```{=html}
 </p>
-
+```
+```{=html}
 <p>
-  <img src="https://img.shields.io/badge/Status-Paper%20Pilot%20Ready-39ff14?style=for-the-badge&labelColor=0b0f0b" />
-  <img src="https://img.shields.io/badge/BlackGlassLab-a855f7?style=for-the-badge&labelColor=0b0f0b" />
-  <img src="https://img.shields.io/badge/Venue-Polymarket%20First-ff4d6d?style=for-the-badge&labelColor=0b0f0b" />
-  <img src="https://img.shields.io/badge/Mode-Paper%20Trading-00e5ff?style=for-the-badge&labelColor=0b0f0b" />
-  <img src="https://img.shields.io/badge/DB-SQLite-9bf6ff?style=for-the-badge&labelColor=0b0f0b" />
+```
+`<img src="https://img.shields.io/badge/Status-Certified%20Baseline-39ff14?style=for-the-badge&labelColor=0b0f0b" />`{=html}
+`<img src="https://img.shields.io/badge/Venue-Polymarket%20First-ff4d6d?style=for-the-badge&labelColor=0b0f0b" />`{=html}
+`<img src="https://img.shields.io/badge/Mode-Paper%20Trading-00e5ff?style=for-the-badge&labelColor=0b0f0b" />`{=html}
+`<img src="https://img.shields.io/badge/DB-SQLite-9bf6ff?style=for-the-badge&labelColor=0b0f0b" />`{=html}
+```{=html}
 </p>
-
+```
+```{=html}
 <hr style="border:none;height:2px;background:linear-gradient(90deg,#39ff14,#00e5ff,#a855f7,#ff4d6d); margin: 14px auto; max-width: 980px;" />
+```
+:::
 
-</div>
+------------------------------------------------------------------------
 
-## 🧠 What this is (mission)
+## 🧠 Mission
 
-**Black Glass Swarm is an **adaptive forecasting swarm with capital allocation logic**:
+Black Glass Swarm is an adaptive forecasting swarm with capital
+allocation logic.
 
-- Operators generate probabilistic forecasts (`p_yes`, rationale)
-- Skeptics challenge and stress-test the forecast
-- Auditor scores calibration with **Brier**
-- Evolver mutates populations based on **fitness**
-- Arbiter produces **consensus probability + disagreement**
-- Production wrapper emits **trade candidates** + **paper trades**
-- Target: **Polymarket/Kalshi** integration (paper-first → live)
+-   Operators generate probabilistic forecasts (`p_yes`)
+-   Skeptics challenge those forecasts
+-   Arbiter produces `consensus_p_yes` and `disagreement`
+-   Production wrapper emits trade candidates + paper trades
+-   Publish step writes model forecast stream
 
----
+Goal: trade only when meaningful.
 
-## 🎯 Why this matters (real-world implication)
+------------------------------------------------------------------------
 
-Prediction markets (Polymarket/Kalshi) are basically “**markets for probabilities**.”
+## 🎯 Real-World Purpose
 
-If our system can reliably estimate the probability of an outcome **better than the market price**, then:
+Prediction markets are markets for probabilities.
 
-- we can trade the difference (edge),
-- manage risk,
-- build a repeatable income stream.
+If our probability estimate is better than the market's implied
+probability, we can trade the difference (edge), manage risk, and scale
+capital over time.
 
----
+Paper-first. Deterministic. Auditable.
 
-## ✅ What’s working right now (v0.7.1 pilot)
+------------------------------------------------------------------------
 
-- Runs the AI “Operator vs Skeptic” loop
-- Produces a consensus probability (Arbiter)
-- Writes results to a database (for proof + history)
-- Generates a trade candidate
-- Writes a signal file you can show in a demo
-- Inserts a valid paper trade record (no schema errors)
-- Includes a one-command “ship check” that proves it works end-to-end
+## ✅ What Works (v0.7.1 Certified)
 
----
+-   Swarm runs deterministically
+-   Consensus probability generated
+-   Disagreement score produced
+-   Trade candidate JSON emitted
+-   Paper trade inserted (schema-safe)
+-   Publish step updates model_forecasts
+-   One-command ship check certifies entire pipeline
 
-## 🧪 Swarm scale (real numbers)
+Certified via:
 
-Black Glass Swarm doesn’t run “one model.” It runs a **small committee** sampled from a larger evolving population.
+    ./scripts/ship_check.sh
 
-**Current population (from SQLite):**
-- **Total agents:** **152**
-  - **76 Operators** (they make a probability call)
-  - **76 Skeptics** (they challenge the call)
-- **Active pool (eligible to be sampled today):** **31**
-  - **15 active Operators**
-  - **16 active Skeptics**
-- **Used per run (the swarm size):** **6**
-  - **3 Operators + 3 Skeptics** per forecasting run
+If it returns:
 
-### How these numbers are used
-- The system maintains a **large pool** (152) as a “gene bank” of strategies.
-- A smaller **active set** (31) is the “starting lineup” — the agents allowed to participate right now.
-- Each run uses only **6 agents** to keep the loop fast and repeatable:
-  - 3 Operators generate predictions
-  - 3 Skeptics challenge them
-  - The **Arbiter** combines those 6 opinions into:
-    - a final probability (`consensus_p_yes`)
-    - and an “internal disagreement” score (`disagreement`)
-- Over time, the **Evolver** updates which agents are active:
-  - top performers stay active
-  - weaker ones get replaced by new mutated variants
+    SHIP_CHECK PASS
 
-### Why this matters (for trading)
-- The system is designed to **improve over time** instead of staying fixed.
-- The “disagreement” score helps risk control:
-  - lower disagreement → stronger consensus
-  - higher disagreement → more uncertainty
+The contract is intact.
 
-## 📈 Trading logic update (Phase 1.2)
+------------------------------------------------------------------------
 
-Black Glass Swarm now measures “edge” the way a trader would:
+## 🧪 Swarm Structure
 
-- **Model probability**: what the swarm believes (`consensus_p_yes`)
-- **Market probability**: what the venue implies (`p_yes_market`)
-- **Edge vs market**: the gap between them  
-  `edge = |consensus_p_yes − p_yes_market|`
+Population: - 152 total agents - 76 Operators - 76 Skeptics
 
-When edge is large enough (and disagreement is acceptable), the system generates a trade candidate.
+Active pool: - 31 agents eligible
 
-### Polymarket-first adapter (current state)
-We introduced an adapter layer so the engine can plug into real venues cleanly:
+Per run: - 3 Operators - 3 Skeptics
 
-- `--source polymarket` now routes through a **Polymarket adapter**
-- In **Phase 1.2**, that adapter is a **safe stub** (no live API calls yet)
-- Market probability is currently a neutral baseline (**p_yes_market = 0.50**) until Phase 1.3 adds real odds ingestion
+Arbiter combines into: - `consensus_p_yes` - `disagreement`
 
-To preserve auditability, each paper trade records the market probability and edge in `notes` (JSON).
+------------------------------------------------------------------------
 
-### Paper trade dedupe (safety)
-Re-running `live_runner.py --paper` on the **same run** will not create duplicate OPEN trades:
+## 📈 Trading Logic
 
-- First run: inserts the paper trade (`paper=inserted`)
-- Repeat run for the same run_id: skips insert (`paper=skipped_duplicate`)
-- Signals JSON is still written when a candidate exists
+### edge_abs
 
-> In other words: **big population for diversity**, **small swarm per run for speed**, and **active set evolves over time**.
+abs(consensus_p\_yes - 0.5)
 
----
+### edge_vs_market
+
+abs(consensus_p\_yes - p_yes_market)
+
+Trade generation uses edge_vs_market. Confidence filters may use
+edge_abs.
+
+------------------------------------------------------------------------
+
+## 📡 Publish Layer
+
+-   Updates `model_forecasts`
+-   UPSERT semantics
+-   UNIQUE(venue, market_id)
+-   Idempotent
+
+Model stream venue = `swarm` Trade venue = `polymarket`
+
+------------------------------------------------------------------------
+
+# 🔒 Contract Lock --- v0.7.1
+
+If ship_check passes:
+
+✔ run_id exists\
+✔ signals JSON matches run_id\
+✔ paper trade inserted\
+✔ publish updated model_forecasts\
+✔ schema constraints respected
+
+------------------------------------------------------------------------
+
+
