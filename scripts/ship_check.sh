@@ -41,7 +41,7 @@ BGL_MIN_EDGE_VS_MARKET="$MIN_EDGE" \
 BGL_MAX_DISAGREE="$MAX_DISAGREE" \
 BGL_MAX_DISAGREEMENT="$MAX_DISAGREE" \
 BGL_PAPER_SIZE="$PAPER_SIZE" \
-python3 live_runner.py --source "$SOURCE" --paper --mode arbiter
+python3 live_runner.py --source polymarket --paper --mode arbiter
 
 echo "5) Verify signals JSON exists + run_id matches..."
 test -f signals/trade_candidates.json || { echo "SHIP_CHECK FAIL: Missing signals/trade_candidates.json"; exit 1; }
