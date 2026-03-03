@@ -31,3 +31,7 @@ __pycache__/
 *.pyc
 .venv/
 markets/_pm_search2/
+
+# runtime artifacts
+signals/infer_diagnostics.json
+signals/trade_candidates_*.json
