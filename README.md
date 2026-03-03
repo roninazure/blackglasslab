@@ -1,4 +1,3 @@
-::: {align="center"}
 ```{=html}
 <h1 style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, &#39;Liberation Mono&#39;, &#39;Courier New&#39;, monospace;
            font-size: 42px; letter-spacing: 1px; margin-bottom: 6px;">
