@@ -18,6 +18,11 @@ try:
 except Exception:
     get_adapter = None  # noqa
 
+try:
+    from llm.openai_client import openai_enabled, forecast_yes_probability
+except Exception:
+    openai_enabled = lambda: False  # type: ignore
+    forecast_yes_probability = None  # type: ignore
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
 SIGNALS_DIR = Path("signals")
@@ -69,6 +74,26 @@ def _write_candidates(mode: str, cands) -> None:
     _candidates_path(mode).write_text(json.dumps(cands, indent=2), encoding="utf-8")
 
 
+def _infer_rejection_reason(*, edge_abs: float, edge_vs_market: float, disagreement: float) -> str:
+    min_edge_abs, min_edge_vs_market, max_disagree = _filters()
+    if disagreement > max_disagree:
+        return "max_disagree"
+    if edge_abs < min_edge_abs:
+        return "min_edge_abs"
+    if edge_vs_market < min_edge_vs_market:
+        return "min_edge_vs_market"
+    return "pass"
+
+
+def _write_infer_diagnostics(payload: dict) -> None:
+    SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
+    (SIGNALS_DIR / "infer_diagnostics.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+
 def _load_watchlist() -> List[str]:
     if not WATCHLIST_PATH.exists():
         return []
@@ -84,6 +109,18 @@ def _env_float(name: str, default: float) -> float:
         return float(val)
     except Exception:
         return default
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    t = str(v).strip().lower()
+    if t in ("1", "true", "yes", "y", "on"):
+        return True
+    if t in ("0", "false", "no", "n", "off", ""):
+        return False
+    return default
 
 
 def _filters() -> Tuple[float, float, float]:
@@ -311,25 +348,105 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
     recent = set(_infer_recent_slugs(conn, venue, cooldown_n))
     adapter = get_adapter(venue)
 
+    infer_diag_rows: list[dict] = []
+    infer_diag_counts = {
+        "evaluated": 0,
+        "passed": 0,
+        "rejected": {
+            "max_disagree": 0,
+            "min_edge_abs": 0,
+            "min_edge_vs_market": 0,
+            "fetch_failed": 0,
+        },
+    }
+
     # IMPORTANT: skip cooldown slugs and KEEP SCANNING (no early return None)
     for slug in slugs:
         if cooldown_n > 0 and slug in recent:
             continue
 
-        m = adapter.get_market(slug)  # type: ignore[attr-defined]
+        try:
+            m = adapter.get_market(slug)  # type: ignore[attr-defined]
+        except Exception as e:
+            infer_diag_counts["evaluated"] += 1
+            infer_diag_counts["rejected"]["fetch_failed"] += 1
+            infer_diag_rows.append({
+                "slug": slug,
+                "decision": "REJECT",
+                "reason": "fetch_failed",
+                "error": str(e)[:500],
+            })
+            continue
 
         p_yes_market = _polymarket_yes_price_from_market(m)
         if p_yes_market is None:
             p_yes_market = 0.5
 
-        jitter = (hash(slug) % 2000 - 1000) / 100000.0  # [-0.01, +0.01]
-        p_yes_model = min(0.99, max(0.01, p_yes_market + jitter))
 
-        disagreement = abs(jitter) * 3.0  # ~0..0.03
-        edge_vs_market = p_yes_model - p_yes_market
+        use_llm = (
+            _env_bool("BGL_INFER_USE_LLM", False)
+            and openai_enabled()
+            and (forecast_yes_probability is not None)
+        )
+
+        # Model probability (Phase 1.8):
+        # - default: stub jitter around market (safe)
+        # - optional: real LLM forecast (paper-only) when enabled and key is set
+        if use_llm:
+            ctx = {
+                "venue": venue,
+                "slug": slug,
+                "p_yes_market": float(p_yes_market),
+                "market_snapshot": {
+                "id": m.get("id"),
+                "question": m.get("question"),
+                "updatedAt": m.get("updatedAt"),
+                "outcomes": m.get("outcomes"),
+                "outcomePrices": m.get("outcomePrices"),
+                  },
+                "policy": {
+                "return_json_only": True,
+                "paper_only": True,
+                  },
+              }
+            p_yes_model, llm_conf, llm_rationale = forecast_yes_probability(
+                question=str(m.get("question") or slug),
+                context=ctx,
+              )
+              # disagreement placeholder in Phase 1.8 (single-model infer)
+            disagreement = float(max(0.0, min(1.0, 1.0 - llm_conf)))
+            edge_vs_market = float(p_yes_model - p_yes_market)
+        else:
+            jitter = (hash(slug) % 2000 - 1000) / 100000.0  # [-0.01, +0.01]
+            p_yes_model = min(0.99, max(0.01, p_yes_market + jitter))
+            disagreement = abs(jitter) * 3.0  # ~0..0.03
+            edge_vs_market = p_yes_model - p_yes_market
+            llm_rationale = ""
+            llm_conf = 0.0
+            p_yes_model = min(0.99, max(0.01, p_yes_market + jitter))
+
+            disagreement = abs(jitter) * 3.0  # ~0..0.03
+            edge_vs_market = p_yes_model - p_yes_market
         edge_abs = abs(p_yes_model - 0.5)
 
         side = "YES" if p_yes_model >= 0.5 else "NO"
+
+        infer_diag_counts["evaluated"] += 1
+        reason = _infer_rejection_reason(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement)
+        infer_diag_rows.append({
+            "slug": slug,
+            "question": str(m.get("question") or slug),
+            "p_yes_market": float(p_yes_market),
+            "p_yes_model": float(p_yes_model),
+            "edge_vs_market": float(edge_vs_market),
+            "edge_abs": float(edge_abs),
+            "disagreement": float(disagreement),
+            "side": side,
+            "decision": "PASS" if reason == "pass" else "REJECT",
+            "reason": reason,
+        })
+        if reason != "pass":
+            infer_diag_counts["rejected"][reason] += 1
 
         cand = {
             "ts_utc": utc_now_iso(),
@@ -349,6 +466,12 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
                 "adapter_venue": venue,
                 "p_yes_market": float(p_yes_market),
                 "edge_vs_market": float(edge_vs_market),
+                "llm": {
+                  "enabled": bool(use_llm),
+                  "model": os.environ.get("BGL_LLM_MODEL", ""),
+                  "confidence": float(llm_conf),
+                  "rationale": llm_rationale,
+                },
                 "snapshot": {
                     "slug": slug,
                     "id": m.get("id"),
@@ -359,8 +482,39 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
         }
 
         if _passes_filters(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement):
+            infer_diag_counts["passed"] += 1
+            _write_infer_diagnostics({
+                "ts_utc": utc_now_iso(),
+                "source": venue,
+                "mode": "infer",
+                "settings": {
+                    "batch": int(os.environ.get("BGL_INFER_BATCH", "8") or "8"),
+                    "cooldown": int(os.environ.get("BGL_INFER_COOLDOWN", "0") or "0"),
+                    "min_edge_abs": _filters()[0],
+                    "min_edge_vs_market": _filters()[1],
+                    "max_disagree": _filters()[2],
+                    "paper_size": float(os.environ.get("BGL_PAPER_SIZE", "100") or "100"),
+                },
+                "summary": infer_diag_counts,
+                "rows": infer_diag_rows,
+            })
             return cand
 
+    _write_infer_diagnostics({
+        "ts_utc": utc_now_iso(),
+        "source": venue,
+        "mode": "infer",
+        "settings": {
+            "batch": int(os.environ.get("BGL_INFER_BATCH", "8") or "8"),
+            "cooldown": int(os.environ.get("BGL_INFER_COOLDOWN", "0") or "0"),
+            "min_edge_abs": _filters()[0],
+            "min_edge_vs_market": _filters()[1],
+            "max_disagree": _filters()[2],
+            "paper_size": float(os.environ.get("BGL_PAPER_SIZE", "100") or "100"),
+        },
+        "summary": infer_diag_counts,
+        "rows": infer_diag_rows,
+    })
     return None
 
 

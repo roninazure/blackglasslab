@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "== Phase 1.1 Ship Check =="
+echo "== Phase 1.7 Ship Check (Arbiter + Publish) =="
 
 # Always anchor to repo root (no cwd surprises)
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-db="memory/runs.sqlite"
-DB="$db"
-
+DB="memory/runs.sqlite"
 SOURCE="${SOURCE:-fake}"
 PAPER_SIZE="${PAPER_SIZE:-100}"
 MIN_EDGE="${MIN_EDGE:-0.0}"
@@ -22,6 +20,9 @@ echo "ship_check_overrides: min_edge=$MIN_EDGE max_disagree=$MAX_DISAGREE"
 echo
 
 mkdir -p memory signals logs
+
+# Always start clean so we never validate a stale file
+rm -f signals/trade_candidates_arbiter.json
 
 echo "1) Compile gate..."
 python3 -m py_compile orchestrator.py live_runner.py scripts/publish_latest_swarm_forecasts.py
@@ -46,7 +47,7 @@ BGL_MAX_DISAGREEMENT="$MAX_DISAGREE" \
 BGL_PAPER_SIZE="$PAPER_SIZE" \
 python3 live_runner.py --source polymarket --paper --mode arbiter --loops 1
 
-echo "5) Verify signals JSON exists + run_id matches..."
+echo "5) Verify arbiter signals JSON exists + run_id matches..."
 test -f signals/trade_candidates_arbiter.json || { echo "SHIP_CHECK FAIL: Missing signals/trade_candidates_arbiter.json"; exit 1; }
 
 sig_rid="$(python3 - <<'PY'
@@ -54,14 +55,11 @@ import json
 p="signals/trade_candidates_arbiter.json"
 with open(p,"r",encoding="utf-8") as f:
     data=json.load(f)
-if not data:
-    print("")
-else:
-    print(data[0].get("run_id",""))
+print("" if not data else data[0].get("run_id",""))
 PY
 )"
 if [[ -z "$sig_rid" ]]; then
-  echo "SHIP_CHECK FAIL: signals/trade_candidates_arbiter.json had no candidate run_id"
+  echo "SHIP_CHECK FAIL: trade_candidates_arbiter.json had no candidate run_id"
   exit 1
 fi
 if [[ "$sig_rid" != "$latest_run_id" ]]; then
@@ -75,10 +73,8 @@ echo "6) DB proofs..."
 echo "LATEST_RUN_ID|$latest_run_id"
 arb_count="$(sqlite3 "$DB" "select count(*) from arbiter_runs where run_id='$latest_run_id';")"
 echo "ARBITER_COUNT|$arb_count"
-
 paper_cnt="$(sqlite3 "$DB" "select count(*) from paper_trades where run_id='$latest_run_id';")"
 echo "PAPER_TRADE_FOR_RUN_COUNT|$paper_cnt"
-
 paper_row="$(sqlite3 "$DB" "select id,run_id,venue,reason,status,market_id,side,consensus_p_yes,disagreement,size_usd from paper_trades where run_id='$latest_run_id' order by id desc limit 1;")"
 echo "PAPER_TRADE_FOR_RUN_ROW|$paper_row"
 echo
