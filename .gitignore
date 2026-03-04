@@ -35,3 +35,8 @@ markets/_pm_search2/
 # runtime artifacts
 signals/infer_diagnostics.json
 signals/trade_candidates_*.json
+
+# local scratch / patch fallout
+live_runner.py.BROKEN.*
+live_runner.py.bak.*
+markets/_pm_search/

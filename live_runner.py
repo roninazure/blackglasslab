@@ -64,7 +64,7 @@ def _kv_set(conn: sqlite3.Connection, key: str, value: str) -> None:
 def _fetchone_dict(cur: sqlite3.Cursor) -> Optional[Dict[str, Any]]:
     row = cur.fetchone()
     if row is None:
-        return fallback_cand
+        return None
     cols = [d[0] for d in cur.description or []]
     return {cols[i]: row[i] for i in range(len(cols))}
 
@@ -95,10 +95,42 @@ def _write_infer_diagnostics(payload: dict) -> None:
 
 
 def _load_watchlist() -> List[str]:
+    """
+    Accepts either:
+      1) ["slug-a","slug-b",...]
+      2) [{"market_id":"slug-a"}, {"slug":"slug-b"}, ...]
+    Returns: List[str] of slugs.
+    """
     if not WATCHLIST_PATH.exists():
         return []
+
     data = json.loads(WATCHLIST_PATH.read_text(encoding="utf-8"))
-    return [str(x) for x in data] if isinstance(data, list) else []
+    if not isinstance(data, list):
+        return []
+
+    slugs: List[str] = []
+    for x in data:
+        if isinstance(x, str):
+            t = x.strip()
+            if t:
+                slugs.append(t)
+            continue
+        if isinstance(x, dict):
+            cand = x.get("market_id") or x.get("slug") or x.get("id")
+            if isinstance(cand, str) and cand.strip():
+                slugs.append(cand.strip())
+            continue
+        t = str(x).strip()
+        if t:
+            slugs.append(t)
+
+    out: List[str] = []
+    seen = set()
+    for slug in slugs:
+        if slug not in seen:
+            out.append(slug)
+            seen.add(slug)
+    return out
 
 
 def _env_float(name: str, default: float) -> float:
@@ -389,8 +421,11 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             and (forecast_yes_probability is not None)
         )
 
+        llm_rationale = ""
+        llm_conf = 0.0
+
         # Model probability (Phase 1.8):
-        # - default: stub jitter around market (safe)
+        # - default: stub jitter around market (safe, deterministic)
         # - optional: real LLM forecast (paper-only) when enabled and key is set
         if use_llm:
             ctx = {
@@ -398,35 +433,27 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
                 "slug": slug,
                 "p_yes_market": float(p_yes_market),
                 "market_snapshot": {
-                "id": m.get("id"),
-                "question": m.get("question"),
-                "updatedAt": m.get("updatedAt"),
-                "outcomes": m.get("outcomes"),
-                "outcomePrices": m.get("outcomePrices"),
-                  },
-                "policy": {
-                "return_json_only": True,
-                "paper_only": True,
-                  },
-              }
+                    "id": m.get("id"),
+                    "question": m.get("question"),
+                    "updatedAt": m.get("updatedAt"),
+                    "outcomes": m.get("outcomes"),
+                    "outcomePrices": m.get("outcomePrices"),
+                },
+                "policy": {"return_json_only": True, "paper_only": True},
+            }
             p_yes_model, llm_conf, llm_rationale = forecast_yes_probability(
                 question=str(m.get("question") or slug),
                 context=ctx,
-              )
-              # disagreement placeholder in Phase 1.8 (single-model infer)
-            disagreement = float(max(0.0, min(1.0, 1.0 - llm_conf)))
+            )
+            p_yes_model = float(min(0.99, max(0.01, p_yes_model)))
+            disagreement = float(max(0.0, min(1.0, 1.0 - float(llm_conf))))
             edge_vs_market = float(p_yes_model - p_yes_market)
         else:
             jitter = (hash(slug) % 2000 - 1000) / 100000.0  # [-0.01, +0.01]
-            p_yes_model = min(0.99, max(0.01, p_yes_market + jitter))
-            disagreement = abs(jitter) * 3.0  # ~0..0.03
-            edge_vs_market = p_yes_model - p_yes_market
-            llm_rationale = ""
-            llm_conf = 0.0
-            p_yes_model = min(0.99, max(0.01, p_yes_market + jitter))
+            p_yes_model = float(min(0.99, max(0.01, p_yes_market + jitter)))
+            disagreement = float(abs(jitter) * 3.0)  # ~0..0.03
+            edge_vs_market = float(p_yes_model - p_yes_market)
 
-            disagreement = abs(jitter) * 3.0  # ~0..0.03
-            edge_vs_market = p_yes_model - p_yes_market
         edge_abs = abs(p_yes_model - 0.5)
 
         side = "YES" if p_yes_model >= 0.5 else "NO"
