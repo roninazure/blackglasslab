@@ -6,13 +6,10 @@ import json
 import os
 import sqlite3
 import time
-import uuid
-from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple
 
-# Optional: adapters only used for infer mode / market snapshot
 try:
     from adapters import get_adapter  # type: ignore
 except Exception:
@@ -24,17 +21,19 @@ except Exception:
     openai_enabled = lambda: False  # type: ignore
     forecast_yes_probability = None  # type: ignore
 
+from models.baseline import score_market
+
 DB_PATH = os.path.join("memory", "runs.sqlite")
 SIGNALS_DIR = Path("signals")
+WATCHLIST_PATH = Path("markets") / "polymarket_watchlist.json"
+
+
 def _candidates_path(mode: str) -> Path:
-    # Avoid arbiter/infer clobbering each other
     if mode == "arbiter":
         return SIGNALS_DIR / "trade_candidates_arbiter.json"
     if mode == "infer":
         return SIGNALS_DIR / "trade_candidates_infer.json"
     return SIGNALS_DIR / "trade_candidates.json"
-
-WATCHLIST_PATH = Path("markets") / "polymarket_watchlist.json"
 
 
 def utc_now_iso() -> str:
@@ -69,20 +68,9 @@ def _fetchone_dict(cur: sqlite3.Cursor) -> Optional[Dict[str, Any]]:
     return {cols[i]: row[i] for i in range(len(cols))}
 
 
-def _write_candidates(mode: str, cands) -> None:
+def _write_candidates(mode: str, cands: List[Dict[str, Any]]) -> None:
     SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
     _candidates_path(mode).write_text(json.dumps(cands, indent=2), encoding="utf-8")
-
-
-def _infer_rejection_reason(*, edge_abs: float, edge_vs_market: float, disagreement: float) -> str:
-    min_edge_abs, min_edge_vs_market, max_disagree = _filters()
-    if disagreement > max_disagree:
-        return "max_disagree"
-    if edge_abs < min_edge_abs:
-        return "min_edge_abs"
-    if edge_vs_market < min_edge_vs_market:
-        return "min_edge_vs_market"
-    return "pass"
 
 
 def _write_infer_diagnostics(payload: dict) -> None:
@@ -93,14 +81,7 @@ def _write_infer_diagnostics(payload: dict) -> None:
     )
 
 
-
 def _load_watchlist() -> List[str]:
-    """
-    Accepts either:
-      1) ["slug-a","slug-b",...]
-      2) [{"market_id":"slug-a"}, {"slug":"slug-b"}, ...]
-    Returns: List[str] of slugs.
-    """
     if not WATCHLIST_PATH.exists():
         return []
 
@@ -119,10 +100,6 @@ def _load_watchlist() -> List[str]:
             cand = x.get("market_id") or x.get("slug") or x.get("id")
             if isinstance(cand, str) and cand.strip():
                 slugs.append(cand.strip())
-            continue
-        t = str(x).strip()
-        if t:
-            slugs.append(t)
 
     out: List[str] = []
     seen = set()
@@ -156,28 +133,29 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def _filters() -> Tuple[float, float, float]:
-    # Support old/new env var names (avoid breakage)
     min_edge_abs = _env_float("BGL_MIN_EDGE_ABS", _env_float("BGL_MIN_EDGE", 0.03))
     min_edge_vs_market = _env_float("BGL_MIN_EDGE_VS_MARKET", 0.0)
     max_disagree = _env_float("BGL_MAX_DISAGREEMENT", _env_float("BGL_MAX_DISAGREE", 0.60))
-    # NOTE: ship_check sets all of these to 0/1 so it must pass.
     return (min_edge_abs, min_edge_vs_market, max_disagree)
 
 
-def _passes_filters(*, edge_abs: float, edge_vs_market: Optional[float], disagreement: float) -> bool:
+def _infer_rejection_reason(*, edge_abs: float, edge_vs_market: float, disagreement: float) -> str:
     min_edge_abs, min_edge_vs_market, max_disagree = _filters()
-
     if disagreement > max_disagree:
-        return False
-
+        return "max_disagree"
     if edge_abs < min_edge_abs:
-        return False
+        return "min_edge_abs"
+    if abs(edge_vs_market) < min_edge_vs_market:
+        return "min_edge_vs_market"
+    return "pass"
 
-    # If we know edge_vs_market, enforce it too
-    if edge_vs_market is not None and edge_vs_market < min_edge_vs_market:
-        return False
 
-    return True
+def _passes_filters(*, edge_abs: float, edge_vs_market: Optional[float], disagreement: float) -> bool:
+    return _infer_rejection_reason(
+        edge_abs=edge_abs,
+        edge_vs_market=float(edge_vs_market or 0.0),
+        disagreement=disagreement,
+    ) == "pass"
 
 
 def _latest_run(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
@@ -188,15 +166,11 @@ def _latest_run(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
 
 def _latest_arbiter_for_run(conn: sqlite3.Connection, run_id: str) -> Optional[Dict[str, Any]]:
     cur = conn.cursor()
-    cur.execute(
-        "SELECT * FROM arbiter_runs WHERE run_id=? ORDER BY id DESC LIMIT 1;",
-        (run_id,),
-    )
+    cur.execute("SELECT * FROM arbiter_runs WHERE run_id=? ORDER BY id DESC LIMIT 1;", (run_id,))
     return _fetchone_dict(cur)
 
 
 def _insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> str:
-    # Skip duplicates (same run_id)
     cur = conn.cursor()
     cur.execute("SELECT 1 FROM paper_trades WHERE run_id=? LIMIT 1;", (cand["run_id"],))
     if cur.fetchone() is not None:
@@ -271,62 +245,10 @@ def _arbiter_candidate_from_db(*, conn: sqlite3.Connection, venue: str, paper_si
         },
     }
 
-    # In arbiter mode, we do NOT require edge_vs_market.
     if not _passes_filters(edge_abs=edge_abs, edge_vs_market=None, disagreement=disagreement):
         return None
 
     return cand
-
-
-def _infer_pick_slugs(conn: sqlite3.Connection, venue: str, watchlist: List[str], n_pick: int) -> List[str]:
-    if not watchlist:
-        return []
-    # Persist cursor so we advance even when no insert happens (fixes “stuck slug”)
-    key = f"infer_cursor:{venue}"
-    cur_raw = _kv_get(conn, key)
-    cursor = int(cur_raw) if (cur_raw and cur_raw.isdigit()) else 0
-
-    picks: List[str] = []
-    L = len(watchlist)
-    for i in range(max(1, n_pick)):
-        picks.append(watchlist[(cursor + i) % L])
-
-    # Advance cursor by n_pick regardless of whether we emit/insert
-    cursor = (cursor + max(1, n_pick)) % L
-    _kv_set(conn, key, str(cursor))
-    conn.commit()
-    return picks
-
-
-
-def _infer_recent_blocked(conn, venue: str, slug: str, window: int) -> bool:
-    if window <= 0:
-        return False
-    row = conn.execute(
-        "SELECT 1 FROM paper_trades WHERE venue=? AND reason='infer' AND market_id=? ORDER BY id DESC LIMIT ?;",
-        (venue, slug, window),
-    ).fetchone()
-    return row is not None
-
-
-def _polymarket_yes_price_from_market(obj: Dict[str, Any]) -> Optional[float]:
-    # Gamma returns outcomePrices like ["0.2455","0.7545"] where outcomes ["Yes","No"] commonly.
-    # We assume index 0 corresponds to Yes when outcomes[0] == "Yes".
-    outcomes_raw = obj.get("outcomes")
-    prices_raw = obj.get("outcomePrices")
-    try:
-        outcomes = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
-        prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
-        if not (isinstance(outcomes, list) and isinstance(prices, list) and len(outcomes) >= 2 and len(prices) >= 2):
-            return None
-        if str(outcomes[0]).strip().lower() == "yes":
-            return float(prices[0])
-        # fallback: if outcomes reversed
-        if str(outcomes[1]).strip().lower() == "yes":
-            return float(prices[1])
-        return None
-    except Exception:
-        return None
 
 
 def _infer_recent_slugs(conn: sqlite3.Connection, venue: str, n: int) -> list[str]:
@@ -347,7 +269,6 @@ def _infer_recent_slugs(conn: sqlite3.Connection, venue: str, n: int) -> list[st
 
 
 def _infer_pick_slugs_batch(conn: sqlite3.Connection, watchlist: list[str], batch: int) -> tuple[list[str], int]:
-    """Return (slugs_to_try, next_cursor). Cursor persisted in kv as infer_cursor."""
     if not watchlist:
         return ([], 0)
 
@@ -363,6 +284,23 @@ def _infer_pick_slugs_batch(conn: sqlite3.Connection, watchlist: list[str], batc
     slugs = [watchlist[(cursor + i) % n] for i in range(take)]
     next_cursor = (cursor + take) % n
     return (slugs, next_cursor)
+
+
+def _polymarket_yes_price_from_market(obj: Dict[str, Any]) -> Optional[float]:
+    outcomes_raw = obj.get("outcomes")
+    prices_raw = obj.get("outcomePrices")
+    try:
+        outcomes = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
+        prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
+        if not (isinstance(outcomes, list) and isinstance(prices, list) and len(outcomes) >= 2 and len(prices) >= 2):
+            return None
+        if str(outcomes[0]).strip().lower() == "yes":
+            return float(prices[0])
+        if str(outcomes[1]).strip().lower() == "yes":
+            return float(prices[1])
+        return None
+    except Exception:
+        return None
 
 
 def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Optional[Dict[str, Any]]:
@@ -392,7 +330,6 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
         },
     }
 
-    # IMPORTANT: skip cooldown slugs and KEEP SCANNING (no early return None)
     for slug in slugs:
         if cooldown_n > 0 and slug in recent:
             continue
@@ -414,7 +351,6 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
         if p_yes_market is None:
             p_yes_market = 0.5
 
-
         use_llm = (
             _env_bool("BGL_INFER_USE_LLM", False)
             and openai_enabled()
@@ -424,9 +360,6 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
         llm_rationale = ""
         llm_conf = 0.0
 
-        # Model probability (Phase 1.8):
-        # - default: stub jitter around market (safe, deterministic)
-        # - optional: real LLM forecast (paper-only) when enabled and key is set
         if use_llm:
             ctx = {
                 "venue": venue,
@@ -447,15 +380,14 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             )
             p_yes_model = float(min(0.99, max(0.01, p_yes_model)))
             disagreement = float(max(0.0, min(1.0, 1.0 - float(llm_conf))))
-            edge_vs_market = float(p_yes_model - p_yes_market)
         else:
-            jitter = (hash(slug) % 2000 - 1000) / 100000.0  # [-0.01, +0.01]
-            p_yes_model = float(min(0.99, max(0.01, p_yes_market + jitter)))
-            disagreement = float(abs(jitter) * 3.0)  # ~0..0.03
-            edge_vs_market = float(p_yes_model - p_yes_market)
+            baseline = score_market(m)
+            p_yes_model = float(baseline.p_yes_model)
+            llm_conf = float(baseline.confidence)
+            disagreement = float(max(0.0, min(1.0, 1.0 - baseline.confidence)))
 
+        edge_vs_market = float(p_yes_model - p_yes_market)
         edge_abs = abs(p_yes_model - 0.5)
-
         side = "YES" if p_yes_model >= 0.5 else "NO"
 
         infer_diag_counts["evaluated"] += 1
@@ -494,16 +426,22 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
                 "p_yes_market": float(p_yes_market),
                 "edge_vs_market": float(edge_vs_market),
                 "llm": {
-                  "enabled": bool(use_llm),
-                  "model": os.environ.get("BGL_LLM_MODEL", ""),
-                  "confidence": float(llm_conf),
-                  "rationale": llm_rationale,
+                    "enabled": bool(use_llm),
+                    "model": os.environ.get("BGL_LLM_MODEL", ""),
+                    "confidence": float(llm_conf),
+                    "rationale": llm_rationale,
                 },
+                "baseline_components": {} if use_llm else score_market(m).components,
                 "snapshot": {
                     "slug": slug,
                     "id": m.get("id"),
                     "question": m.get("question"),
                     "updatedAt": m.get("updatedAt"),
+                    "volume": m.get("volume"),
+                    "liquidity": m.get("liquidity"),
+                    "bestBid": m.get("bestBid"),
+                    "bestAsk": m.get("bestAsk"),
+                    "lastTradePrice": m.get("lastTradePrice"),
                 },
             },
         }
@@ -558,14 +496,9 @@ def main() -> int:
 
     venue = str(args.source).strip().lower()
     paper_size = float(os.environ.get("BGL_PAPER_SIZE", "100") or "100")
-
-    # Determine mode explicitly
     mode = args.mode or ("infer" if args.infer else "arbiter")
 
     conn = _connect_db(args.db)
-
-    emitted = 0
-    last_print = ""
 
     for i in range(int(args.loops)):
         cand: Optional[Dict[str, Any]] = None
@@ -575,11 +508,7 @@ def main() -> int:
         else:
             cand = _infer_one(conn=conn, venue=venue, paper_size=paper_size)
 
-        cands: List[Dict[str, Any]] = []
-        if cand is not None:
-            cands = [cand]
-            emitted = 1
-
+        cands: List[Dict[str, Any]] = [cand] if cand is not None else []
         _write_candidates(mode, cands)
 
         paper_status = ""
@@ -587,18 +516,13 @@ def main() -> int:
             paper_status = "paper=" + _insert_paper_trade(conn, cand)
 
         if cand is None:
-            # Print clear mode-specific message
-            msg = f"LIVE_RUNNER OK candidates=0 ({mode} no trade candidate passed filters) -> {_candidates_path(mode)}"
-            print(msg)
-            last_print = msg
+            print(f"LIVE_RUNNER OK candidates=0 ({mode} no trade candidate passed filters) -> {_candidates_path(mode)}")
         else:
-            msg = (
+            print(
                 f"LIVE_RUNNER OK mode={mode} run_id={cand['run_id']} market_id={cand['market_id']} "
                 f"side={cand['side']} consensus_p_yes={cand['consensus_p_yes']} disagreement={cand['disagreement']} "
                 f"edge={cand.get('edge')} candidates=1 -> {_candidates_path(mode)} {paper_status}".rstrip()
             )
-            print(msg)
-            last_print = msg
 
         if i < int(args.loops) - 1:
             time.sleep(float(args.sleep))
