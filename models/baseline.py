@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 import json
@@ -8,8 +8,12 @@ import json
 
 @dataclass
 class BaselineScore:
+    p_yes_market: float
     p_yes_model: float
     confidence: float
+    spread: float
+    pricing_source: str
+    reject_reason: Optional[str]
     components: Dict[str, float]
 
 
@@ -24,7 +28,7 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return default
 
 
-def _parse_yes_price(market: Dict[str, Any]) -> float:
+def _parse_yes_price_from_outcomes(market: Dict[str, Any]) -> Optional[float]:
     outcomes = market.get("outcomes")
     prices = market.get("outcomePrices")
 
@@ -34,15 +38,14 @@ def _parse_yes_price(market: Dict[str, Any]) -> float:
         prices = json.loads(prices)
 
     if not (isinstance(outcomes, list) and isinstance(prices, list)):
-        return 0.5
+        return None
     if len(outcomes) < 2 or len(prices) < 2:
-        return 0.5
+        return None
 
     for i, outcome in enumerate(outcomes):
         if str(outcome).strip().lower() == "yes":
             return _clamp(_safe_float(prices[i], 0.5), 0.01, 0.99)
-
-    return 0.5
+    return None
 
 
 def _hours_to_end(end_date: Any) -> Optional[float]:
@@ -52,46 +55,120 @@ def _hours_to_end(end_date: Any) -> Optional[float]:
         s = str(end_date).replace("Z", "+00:00")
         dt = datetime.fromisoformat(s)
         now = datetime.now(timezone.utc)
-        delta = dt - now
-        return delta.total_seconds() / 3600.0
+        return (dt - now).total_seconds() / 3600.0
     except Exception:
         return None
 
 
+def market_yes_price(market: Dict[str, Any]) -> tuple[float, float, str]:
+    """
+    Returns:
+      (p_yes_market, spread, pricing_source)
+
+    Pricing priority:
+      1) midpoint(bestBid, bestAsk)
+      2) lastTradePrice
+      3) outcomePrices[Yes]
+      4) fallback 0.50
+    """
+    best_bid = _safe_float(market.get("bestBid"), 0.0)
+    best_ask = _safe_float(market.get("bestAsk"), 0.0)
+    last_trade = _safe_float(market.get("lastTradePrice"), 0.0)
+    yes_outcome = _parse_yes_price_from_outcomes(market)
+
+    if best_bid > 0 and best_ask > 0 and best_ask >= best_bid:
+        mid = (best_bid + best_ask) / 2.0
+        spread = max(0.0, best_ask - best_bid)
+        return (_clamp(mid, 0.01, 0.99), spread, "mid")
+
+    if last_trade > 0:
+        return (_clamp(last_trade, 0.01, 0.99), 0.0, "last_trade")
+
+    if yes_outcome is not None:
+        return (_clamp(yes_outcome, 0.01, 0.99), 0.0, "outcome_yes")
+
+    return (0.50, 0.0, "fallback")
+
+
 def score_market(market: Dict[str, Any]) -> BaselineScore:
     """
-    Deterministic Phase 1.9 baseline scorer.
-
-    Philosophy:
-    - Start from market probability
-    - Only make small, explainable adjustments
-    - Reward liquid/high-volume markets with higher confidence
-    - Penalize ultra-extreme markets and very wide spreads
+    Phase 2.0A deterministic baseline:
+    - execution-aware pricing (mid-price preferred)
+    - market quality gates
+    - conservative model adjustment
     """
+    p_yes_market, spread, pricing_source = market_yes_price(market)
 
-    p_yes_market = _parse_yes_price(market)
-
+    active = bool(market.get("active"))
+    closed = bool(market.get("closed"))
     volume = _safe_float(market.get("volume"), 0.0)
     liquidity = _safe_float(market.get("liquidity"), 0.0)
     best_bid = _safe_float(market.get("bestBid"), p_yes_market)
     best_ask = _safe_float(market.get("bestAsk"), p_yes_market)
     last_trade = _safe_float(market.get("lastTradePrice"), p_yes_market)
-
     hours_to_end = _hours_to_end(market.get("endDate"))
     if hours_to_end is None:
         hours_to_end = 24.0 * 30.0
 
-    # Normalize quality features conservatively
+    # Hard market-quality gates
+    if not active:
+        return BaselineScore(
+            p_yes_market=p_yes_market,
+            p_yes_model=p_yes_market,
+            confidence=0.0,
+            spread=spread,
+            pricing_source=pricing_source,
+            reject_reason="inactive_market",
+            components={},
+        )
+    if closed:
+        return BaselineScore(
+            p_yes_market=p_yes_market,
+            p_yes_model=p_yes_market,
+            confidence=0.0,
+            spread=spread,
+            pricing_source=pricing_source,
+            reject_reason="closed_market",
+            components={},
+        )
+    if liquidity < 10000:
+        return BaselineScore(
+            p_yes_market=p_yes_market,
+            p_yes_model=p_yes_market,
+            confidence=0.0,
+            spread=spread,
+            pricing_source=pricing_source,
+            reject_reason="low_liquidity",
+            components={},
+        )
+    if volume < 50000:
+        return BaselineScore(
+            p_yes_market=p_yes_market,
+            p_yes_model=p_yes_market,
+            confidence=0.0,
+            spread=spread,
+            pricing_source=pricing_source,
+            reject_reason="low_volume",
+            components={},
+        )
+    if spread > 0.03:
+        return BaselineScore(
+            p_yes_market=p_yes_market,
+            p_yes_model=p_yes_market,
+            confidence=0.0,
+            spread=spread,
+            pricing_source=pricing_source,
+            reject_reason="wide_spread",
+            components={},
+        )
+
+    # Normalized features
     liquidity_score = _clamp(liquidity / 100000.0, 0.0, 1.0)
     volume_score = _clamp(volume / 2500000.0, 0.0, 1.0)
+    spread_penalty = _clamp(spread / 0.03, 0.0, 1.0)
 
-    spread = abs(best_ask - best_bid) if best_ask and best_bid else 0.0
-    spread_penalty = _clamp(spread / 0.10, 0.0, 1.0)  # 10-cent spread = bad
-
-    # Long-dated markets deserve lower confidence than near-term,
-    # but avoid extreme penalties.
     if hours_to_end <= 24:
-        time_score = 1.0
+        time_score = 1.00
     elif hours_to_end <= 24 * 7:
         time_score = 0.85
     elif hours_to_end <= 24 * 30:
@@ -101,29 +178,26 @@ def score_market(market: Dict[str, Any]) -> BaselineScore:
     else:
         time_score = 0.40
 
-    # If market is extremely close to 0 or 1, be conservative.
-    extremity = abs(p_yes_market - 0.5) * 2.0  # 0..1
+    extremity = abs(p_yes_market - 0.5) * 2.0
     extremity_penalty = _clamp(extremity, 0.0, 1.0)
 
-    # Tiny “last trade vs implied” nudge if present, capped hard.
-    micro_signal = _clamp(last_trade - p_yes_market, -0.02, 0.02)
+    # Last-trade micro signal
+    micro_signal = _clamp(last_trade - p_yes_market, -0.01, 0.01)
 
-    # Baseline adjustment:
-    # - small positive if liquid/active market
-    # - small negative if spread is wide / market is too extreme
+    # Conservative quality-driven adjustment
     quality_boost = (
-        0.015 * liquidity_score
-        + 0.010 * volume_score
-        + 0.010 * time_score
-        - 0.015 * spread_penalty
-        - 0.010 * extremity_penalty
+        0.010 * liquidity_score
+        + 0.008 * volume_score
+        + 0.006 * time_score
+        - 0.012 * spread_penalty
+        - 0.006 * extremity_penalty
     )
 
-    adjustment = _clamp(quality_boost + micro_signal, -0.03, 0.03)
+    adjustment = _clamp(quality_boost + micro_signal, -0.02, 0.02)
     p_yes_model = _clamp(p_yes_market + adjustment, 0.01, 0.99)
 
     confidence = _clamp(
-        0.25
+        0.20
         + 0.30 * liquidity_score
         + 0.20 * volume_score
         + 0.15 * time_score
@@ -133,16 +207,18 @@ def score_market(market: Dict[str, Any]) -> BaselineScore:
     )
 
     return BaselineScore(
+        p_yes_market=p_yes_market,
         p_yes_model=p_yes_model,
         confidence=confidence,
+        spread=spread,
+        pricing_source=pricing_source,
+        reject_reason=None,
         components={
-            "p_yes_market": p_yes_market,
             "volume": volume,
             "liquidity": liquidity,
             "best_bid": best_bid,
             "best_ask": best_ask,
             "last_trade": last_trade,
-            "spread": spread,
             "hours_to_end": hours_to_end,
             "liquidity_score": liquidity_score,
             "volume_score": volume_score,

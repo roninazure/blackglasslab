@@ -21,7 +21,7 @@ except Exception:
     openai_enabled = lambda: False  # type: ignore
     forecast_yes_probability = None  # type: ignore
 
-from models.baseline import score_market
+from models.baseline import score_market, market_yes_price
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
 SIGNALS_DIR = Path("signals")
@@ -286,23 +286,6 @@ def _infer_pick_slugs_batch(conn: sqlite3.Connection, watchlist: list[str], batc
     return (slugs, next_cursor)
 
 
-def _polymarket_yes_price_from_market(obj: Dict[str, Any]) -> Optional[float]:
-    outcomes_raw = obj.get("outcomes")
-    prices_raw = obj.get("outcomePrices")
-    try:
-        outcomes = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
-        prices = json.loads(prices_raw) if isinstance(prices_raw, str) else prices_raw
-        if not (isinstance(outcomes, list) and isinstance(prices, list) and len(outcomes) >= 2 and len(prices) >= 2):
-            return None
-        if str(outcomes[0]).strip().lower() == "yes":
-            return float(prices[0])
-        if str(outcomes[1]).strip().lower() == "yes":
-            return float(prices[1])
-        return None
-    except Exception:
-        return None
-
-
 def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Optional[Dict[str, Any]]:
     watchlist = _load_watchlist()
     if not watchlist or get_adapter is None:
@@ -323,10 +306,15 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
         "evaluated": 0,
         "passed": 0,
         "rejected": {
+            "fetch_failed": 0,
+            "inactive_market": 0,
+            "closed_market": 0,
+            "low_liquidity": 0,
+            "low_volume": 0,
+            "wide_spread": 0,
             "max_disagree": 0,
             "min_edge_abs": 0,
             "min_edge_vs_market": 0,
-            "fetch_failed": 0,
         },
     }
 
@@ -347,9 +335,7 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             })
             continue
 
-        p_yes_market = _polymarket_yes_price_from_market(m)
-        if p_yes_market is None:
-            p_yes_market = 0.5
+        p_yes_market, spread, pricing_source = market_yes_price(m)
 
         use_llm = (
             _env_bool("BGL_INFER_USE_LLM", False)
@@ -359,6 +345,27 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
 
         llm_rationale = ""
         llm_conf = 0.0
+        baseline = score_market(m)
+
+        if baseline.reject_reason is not None:
+            infer_diag_counts["evaluated"] += 1
+            infer_diag_counts["rejected"][baseline.reject_reason] += 1
+            infer_diag_rows.append({
+                "slug": slug,
+                "question": str(m.get("question") or slug),
+                "p_yes_market": float(baseline.p_yes_market),
+                "p_yes_model": float(baseline.p_yes_model),
+                "edge_vs_market": float(baseline.p_yes_model - baseline.p_yes_market),
+                "edge_abs": float(abs(baseline.p_yes_model - 0.5)),
+                "disagreement": 1.0,
+                "side": "YES" if baseline.p_yes_model >= 0.5 else "NO",
+                "decision": "REJECT",
+                "reason": baseline.reject_reason,
+                "pricing_source": pricing_source,
+                "spread": float(spread),
+                "components": baseline.components,
+            })
+            continue
 
         if use_llm:
             ctx = {
@@ -371,6 +378,11 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
                     "updatedAt": m.get("updatedAt"),
                     "outcomes": m.get("outcomes"),
                     "outcomePrices": m.get("outcomePrices"),
+                    "bestBid": m.get("bestBid"),
+                    "bestAsk": m.get("bestAsk"),
+                    "lastTradePrice": m.get("lastTradePrice"),
+                    "volume": m.get("volume"),
+                    "liquidity": m.get("liquidity"),
                 },
                 "policy": {"return_json_only": True, "paper_only": True},
             }
@@ -380,11 +392,12 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             )
             p_yes_model = float(min(0.99, max(0.01, p_yes_model)))
             disagreement = float(max(0.0, min(1.0, 1.0 - float(llm_conf))))
+            components = {}
         else:
-            baseline = score_market(m)
             p_yes_model = float(baseline.p_yes_model)
             llm_conf = float(baseline.confidence)
             disagreement = float(max(0.0, min(1.0, 1.0 - baseline.confidence)))
+            components = baseline.components
 
         edge_vs_market = float(p_yes_model - p_yes_market)
         edge_abs = abs(p_yes_model - 0.5)
@@ -403,6 +416,9 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             "side": side,
             "decision": "PASS" if reason == "pass" else "REJECT",
             "reason": reason,
+            "pricing_source": pricing_source,
+            "spread": float(spread),
+            "components": components,
         })
         if reason != "pass":
             infer_diag_counts["rejected"][reason] += 1
@@ -425,13 +441,15 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
                 "adapter_venue": venue,
                 "p_yes_market": float(p_yes_market),
                 "edge_vs_market": float(edge_vs_market),
+                "pricing_source": pricing_source,
+                "spread": float(spread),
                 "llm": {
                     "enabled": bool(use_llm),
                     "model": os.environ.get("BGL_LLM_MODEL", ""),
                     "confidence": float(llm_conf),
                     "rationale": llm_rationale,
                 },
-                "baseline_components": {} if use_llm else score_market(m).components,
+                "baseline_components": components,
                 "snapshot": {
                     "slug": slug,
                     "id": m.get("id"),
