@@ -1,5 +1,30 @@
 from __future__ import annotations
 
+def _bgl_single_market_override() -> dict | None:
+    """
+    Optional override: run swarm on exactly one market.
+    Env:
+      BGL_MARKET_ID=<slug>
+      BGL_MARKET_QUESTION=<question>   (optional; if missing, we try to fetch)
+    """
+    mid = os.environ.get("BGL_MARKET_ID")
+    if not mid:
+        return None
+    q = os.environ.get("BGL_MARKET_QUESTION", "").strip()
+    if not q:
+        try:
+            from adapters import get_adapter
+            a = get_adapter("polymarket")
+            m = a.get_market(mid)
+            q = (m.get("question") or mid).strip()
+        except Exception:
+            q = mid
+    # outcome is required by schema; for forecast jobs it's not used for "truth"
+    # We set a placeholder to keep schema happy. Do NOT treat as ground truth.
+    return {"market_id": mid, "question": q, "outcome": "UNRESOLVED"}
+
+
+
 import json
 import os
 import sqlite3
@@ -120,6 +145,10 @@ def ensure_db() -> None:
 
 
 def load_markets() -> List[Dict[str, Any]]:
+    ov = _bgl_single_market_override()
+    if ov is not None:
+        return [ov]
+
     if not MARKETS_PATH.exists():
         raise FileNotFoundError(f"Missing {MARKETS_PATH}. Create markets/fake_markets.json first.")
     return json.loads(MARKETS_PATH.read_text(encoding="utf-8"))
