@@ -2,7 +2,7 @@
 
 <h1 style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
            font-size: 42px; letter-spacing: 1px; margin-bottom: 6px;">
-⚗️ <span style="color:#39ff14;">Black Glass Swarm</span> <span style="color:#a855f7;">v0.7.1</span>
+⚗️ <span style="color:#39ff14;">Swarm</span> <span style="color:#a855f7;">v0.7.1</span>
 </h1>
 
 <p style="max-width: 920px; font-size: 16px; line-height: 1.55; margin-top: 0;">
@@ -11,7 +11,7 @@ then (paper) places a trade when the odds look mispriced. Built for <b>Polymarke
 </p>
 
 <p style="max-width: 920px; font-size: 14px; opacity: 0.9; margin-top: 0;">
-<b>BlackGlassLab</b> is the umbrella. <b>Black Glass Swarm</b> is the flagship forecasting + trading engine.
+<b>BlackGlassLab</b> is the umbrella. <b>Swarm</b> is the flagship forecasting + trading engine.
 </p>
 
 <p>
@@ -28,7 +28,7 @@ then (paper) places a trade when the odds look mispriced. Built for <b>Polymarke
 
 ## 🧠 What this is (mission)
 
-**Black Glass Swarm is an adaptive forecasting swarm with capital allocation logic:**
+**Swarm is an adaptive forecasting swarm with capital allocation logic:**
 
 - Operators generate probabilistic forecasts (`p_yes`, rationale)
 - Skeptics challenge and stress-test the forecast
@@ -65,7 +65,7 @@ If our system can reliably estimate the probability of an outcome **better than 
 
 ## 🧪 Swarm scale (real numbers)
 
-Black Glass Swarm doesn’t run “one model.” It runs a **small committee** sampled from a larger evolving population.
+Swarm doesn’t run “one model.” It runs a **small committee** sampled from a larger evolving population.
 
 **Current population (from SQLite):**
 - **Total agents:** **152**
@@ -85,7 +85,7 @@ Black Glass Swarm doesn’t run “one model.” It runs a **small committee** s
 
 ## 📈 Trading logic (edge semantics)
 
-Black Glass Swarm uses two “edge” concepts:
+Swarm uses two “edge” concepts:
 
 - **edge_abs (confidence):** `abs(consensus_p_yes - 0.5)`
 - **edge_vs_market (true trade edge):** `abs(consensus_p_yes - p_yes_market)`
