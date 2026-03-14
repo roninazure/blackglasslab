@@ -52,6 +52,11 @@ def main() -> None:
         question,
     ) = row
 
+    # Guard: never publish FAKE/test markets to model_forecasts
+    if str(market_id).upper().startswith("FAKE"):
+        print(f"PUBLISH SKIP: market_id={market_id} is a FAKE market — not written to model_forecasts")
+        return
+
     ts_utc = utc_now_iso()
 
     notes = {

@@ -50,6 +50,7 @@ python3 live_runner.py --source polymarket --paper --mode arbiter --loops 1
 echo "5) Verify arbiter signals JSON exists + run_id matches..."
 test -f signals/trade_candidates_arbiter.json || { echo "SHIP_CHECK FAIL: Missing signals/trade_candidates_arbiter.json"; exit 1; }
 
+latest_market_id="$(sqlite3 "$DB" "select market_id from runs order by id desc limit 1;")"
 sig_rid="$(python3 - <<'PY'
 import json
 p="signals/trade_candidates_arbiter.json"
@@ -59,14 +60,20 @@ print("" if not data else data[0].get("run_id",""))
 PY
 )"
 if [[ -z "$sig_rid" ]]; then
-  echo "SHIP_CHECK FAIL: trade_candidates_arbiter.json had no candidate run_id"
-  exit 1
+  # candidates=0 is expected when the latest run was on a FAKE market (FAKE guard working)
+  if [[ "${latest_market_id^^}" == FAKE* ]]; then
+    echo "signals OK (candidates=0 expected: FAKE market guard active, market_id=$latest_market_id)"
+  else
+    echo "SHIP_CHECK FAIL: trade_candidates_arbiter.json had no candidate run_id (market_id=$latest_market_id is not FAKE)"
+    exit 1
+  fi
+else
+  if [[ "$sig_rid" != "$latest_run_id" ]]; then
+    echo "SHIP_CHECK FAIL: signals run_id=$sig_rid does not match latest run_id=$latest_run_id"
+    exit 1
+  fi
+  echo "signals OK"
 fi
-if [[ "$sig_rid" != "$latest_run_id" ]]; then
-  echo "SHIP_CHECK FAIL: signals run_id=$sig_rid does not match latest run_id=$latest_run_id"
-  exit 1
-fi
-echo "signals OK"
 echo
 
 echo "6) DB proofs..."
@@ -82,16 +89,21 @@ echo
 echo "7) Publish latest swarm forecast + verify model_forecasts.run_id matches..."
 python3 scripts/publish_latest_swarm_forecasts.py
 
-pub_rid="$(sqlite3 "$DB" "select run_id from model_forecasts order by ts_utc desc limit 1;")"
-if [[ -z "$pub_rid" ]]; then
-  echo "SHIP_CHECK FAIL: model_forecasts has no rows"
-  exit 1
+# FAKE markets are intentionally skipped by the publish guard — that is a PASS
+if [[ "${latest_market_id^^}" == FAKE* ]]; then
+  echo "publish OK (FAKE market skipped as expected, market_id=$latest_market_id)"
+else
+  pub_rid="$(sqlite3 "$DB" "select run_id from model_forecasts order by ts_utc desc limit 1;")"
+  if [[ -z "$pub_rid" ]]; then
+    echo "SHIP_CHECK FAIL: model_forecasts has no rows"
+    exit 1
+  fi
+  if [[ "$pub_rid" != "$latest_run_id" ]]; then
+    echo "SHIP_CHECK FAIL: model_forecasts.run_id=$pub_rid does not match latest run_id=$latest_run_id"
+    exit 1
+  fi
+  echo "publish OK"
 fi
-if [[ "$pub_rid" != "$latest_run_id" ]]; then
-  echo "SHIP_CHECK FAIL: model_forecasts.run_id=$pub_rid does not match latest run_id=$latest_run_id"
-  exit 1
-fi
-echo "publish OK"
 echo
 
 echo "SHIP_CHECK PASS: run_id=$latest_run_id"
