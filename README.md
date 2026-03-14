@@ -50,35 +50,30 @@ When enough edge is proven, it trades **real capital**.
 ## 🧬 SIGNAL PIPELINE
 
 ```
-╔══════════════════════════════════════════════════════════════════════╗
-║                    SWARM — SIGNAL PIPELINE                         ║
-╠══════════════════════════════════════════════════════════════════════╣
-║                                                                      ║
-║   polymarket_watchlist.json  ──▶  43 markets · 5 categories         ║
-║              │                                                       ║
-║       ┌──────┴───────┐                                               ║
-║       │              │                                               ║
-║  [INFER LOOP]   [ARBITER LOOP]                                       ║
-║   every 5 min    every 30 min                                        ║
-║   lightweight    full consensus · tighter filters                    ║
-║       │              │                                               ║
-║       └──────┬───────┘                                               ║
-║              │                                                       ║
-║              ▼                                                       ║
-║   ┌────────────────────────────┐                                     ║
-║   │  OPERATORS  (3 sampled)    │  independent p_yes + rationale      ║
-║   │  SKEPTICS   (3 sampled)    │  challenge every assumption         ║
-║   │  ARBITER                  │  consensus_p_yes + disagreement      ║
-║   └────────────────────────────┘                                     ║
-║              │                                                       ║
-║              ▼                                                       ║
-║   edge_vs_market > threshold?  ──  YES  ──▶  paper_trade (SQLite)   ║
-║                                                      │               ║
-║   [AUTO-RESOLVER]  every 6h  ──▶  Polymarket API     │               ║
-║       p_yes ≥ 0.999  ──▶  resolved YES               ▼               ║
-║       p_no  ≥ 0.999  ──▶  resolved NO        Brier score + P&L      ║
-║                                                                      ║
-╚══════════════════════════════════════════════════════════════════════╝
+                     SWARM — SIGNAL PIPELINE
+  ──────────────────────────────────────────────────────────────────
+
+  polymarket_watchlist.json  ──▶  43 markets · 5 categories
+               │
+        ┌──────┴──────┐
+        │             │
+   [INFER LOOP]  [ARBITER LOOP]
+    every 5 min   every 30 min
+    lightweight   full consensus · tighter filters
+        │             │
+        └──────┬──────┘
+               │
+               ▼
+  ┌── OPERATORS  (3 sampled)  ──▶  independent p_yes + rationale
+  ├── SKEPTICS   (3 sampled)  ──▶  challenge every assumption
+  └── ARBITER                 ──▶  consensus_p_yes + disagreement
+               │
+               ▼
+  edge_vs_market > threshold?  ──  YES  ──▶  paper_trade (SQLite)
+                                                     │
+  [AUTO-RESOLVER]  every 6h  ──▶  Polymarket API     │
+      p_yes ≥ 0.999  ──▶  resolved YES               ▼
+      p_no  ≥ 0.999  ──▶  resolved NO        Brier score + P&L
 ```
 
 ---
