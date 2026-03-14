@@ -138,6 +138,59 @@ def main() -> int:
     cur.execute(f"SELECT MAX(ts_utc) AS t FROM paper_trades {where};", params)
     last_ts = cur.fetchone()["t"]
 
+    # P&L on closed trades
+    cur.execute(
+        f"""
+        SELECT side, size_usd, p_yes, notes, resolved_outcome
+        FROM paper_trades
+        {where} AND status='CLOSED' AND resolved_outcome IN ('YES','NO');
+        """,
+        params,
+    )
+    closed_trades = cur.fetchall()
+
+    total_wagered = 0.0
+    total_profit = 0.0
+    for ct in closed_trades:
+        size = float(ct["size_usd"] or 100.0)
+        side = ct["side"]
+        outcome = ct["resolved_outcome"]
+        notes_c = _safe_json(ct["notes"])
+        p_mkt = notes_c.get("p_yes_market")
+        try:
+            p_mkt = float(p_mkt) if p_mkt is not None else None
+        except Exception:
+            p_mkt = None
+        # fallback to model p_yes if no market price recorded
+        if p_mkt is None:
+            try:
+                p_mkt = float(ct["p_yes"]) if ct["p_yes"] is not None else None
+            except Exception:
+                p_mkt = None
+
+        total_wagered += size
+        if p_mkt is None or p_mkt <= 0.0 or p_mkt >= 1.0:
+            # Can't compute payout without valid entry price — count as loss
+            if (side == "YES" and outcome == "YES") or (side == "NO" and outcome == "NO"):
+                pass  # unknown win — skip
+            else:
+                total_profit -= size
+            continue
+
+        if side == "YES":
+            if outcome == "YES":
+                total_profit += size * (1.0 / p_mkt - 1.0)
+            else:
+                total_profit -= size
+        else:  # side == NO
+            if outcome == "NO":
+                total_profit += size * (p_mkt / (1.0 - p_mkt))
+            else:
+                total_profit -= size
+
+    roi_pct = (total_profit / total_wagered * 100.0) if total_wagered > 0 else 0.0
+    open_exposure = open_n * 100.0  # flat $100/trade
+
     # reason breakdown
     cur.execute(
         f"""
@@ -232,6 +285,17 @@ def main() -> int:
     print(f"- avg_brier_closed:  {_fmt(avg_brier, 6)}")
     print(f"- first_ts:          {first_ts or '-'}")
     print(f"- last_ts:           {last_ts or '-'}")
+    print()
+
+    print("PNL (REALIZED — closed trades only)")
+    print(f"- resolved_trades:   {len(closed_trades)}")
+    print(f"- total_wagered:     ${total_wagered:,.2f}")
+    print(f"- total_profit:      ${total_profit:+,.2f}")
+    print(f"- roi:               {roi_pct:+.1f}%")
+    print()
+    print("OPEN EXPOSURE")
+    print(f"- open_trades:       {open_n}")
+    print(f"- open_exposure:     ${open_exposure:,.2f}  (at $100/trade)")
     print()
 
     print("SIGNAL QUALITY (OPEN) — Tier Counts")
