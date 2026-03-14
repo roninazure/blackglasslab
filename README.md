@@ -221,7 +221,7 @@ bash scripts/ship_check.sh   # output must contain: SHIP_CHECK PASS
 
 <p style=”font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, ‘Courier New’, monospace;
           font-size: 11px; letter-spacing: 3px; color: #39ff14; opacity: 0.6; margin: 0;”>
-⚗️ &nbsp; SWARM &nbsp;·&nbsp; PHASE 2.2 &nbsp;·&nbsp; PAPER TRADING LIVE SINCE FEB 28, 2026<br/>
+⚗️ &nbsp; SWARM &nbsp;·&nbsp; PHASE 2.2 &nbsp;·&nbsp; AUTOMATED TRADING LIVE SINCE FEB 2026<br/>
 REAL CAPITAL IS THE ENDGAME
 </p>
 
