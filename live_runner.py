@@ -176,6 +176,14 @@ def _insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> str:
     if cur.fetchone() is not None:
         return "skipped_duplicate"
 
+    # Skip if an OPEN position already exists for this market + side + venue
+    cur.execute(
+        "SELECT 1 FROM paper_trades WHERE market_id=? AND side=? AND venue=? AND status='OPEN' LIMIT 1;",
+        (cand["market_id"], cand["side"], cand["venue"]),
+    )
+    if cur.fetchone() is not None:
+        return "skipped_open_position"
+
     conn.execute(
         """
         INSERT INTO paper_trades (
