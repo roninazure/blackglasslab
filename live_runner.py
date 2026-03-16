@@ -176,14 +176,6 @@ def _insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> str:
     if cur.fetchone() is not None:
         return "skipped_duplicate"
 
-    # Skip if an OPEN position already exists for this market + side + venue
-    cur.execute(
-        "SELECT 1 FROM paper_trades WHERE market_id=? AND side=? AND venue=? AND status='OPEN' LIMIT 1;",
-        (cand["market_id"], cand["side"], cand["venue"]),
-    )
-    if cur.fetchone() is not None:
-        return "skipped_open_position"
-
     conn.execute(
         """
         INSERT INTO paper_trades (
@@ -219,44 +211,38 @@ def _arbiter_candidate_from_db(*, conn: sqlite3.Connection, venue: str, paper_si
         return None
 
     run_id = str(run["run_id"])
-    market_id = str(run.get("market_id", ""))
-
-    # Fix B: reject fake/test markets — they have no live price and produce phantom signals
-    if market_id.upper().startswith("FAKE"):
-        return None
-
     arb = _latest_arbiter_for_run(conn, run_id)
     if not arb:
         return None
 
-    consensus_p_yes = float(arb.get("consensus_p_yes"))
+    p_yes = float(arb.get("consensus_p_yes"))
     disagreement = float(arb.get("disagreement"))
+    side = "YES" if p_yes >= 0.5 else "NO"
+    edge_abs = abs(p_yes - 0.5)
 
-    # Fix A: fetch live market price so edge is model vs market, not model vs 0.5
-    p_yes_market = 0.5
-    pricing_source = "fallback_50"
-    spread = 0.0
-    if get_adapter is not None:
-        try:
+    # Fetch live market price so dashboard can display market_yes and edge_vs_market
+    p_yes_market: Optional[float] = None
+    edge_vs_market: Optional[float] = None
+    try:
+        if get_adapter is not None:
             adapter = get_adapter(venue)
-            m = adapter.get_market(market_id)
-            p_yes_market, spread, pricing_source = market_yes_price(m)
-        except Exception as e:
-            print(f"LIVE_RUNNER WARN arbiter: could not fetch live price for {market_id}: {e}")
-
-    edge_vs_market = consensus_p_yes - p_yes_market
-    edge_abs = abs(edge_vs_market)
-    side = "YES" if edge_vs_market > 0 else "NO"
+            market_id = str(run.get("market_id"))
+            m = adapter.get_market(market_id)  # type: ignore[attr-defined]
+            p_mkt, _spread, _src = market_yes_price(m)
+            p_yes_market = float(p_mkt)
+            edge_vs_market = float(p_yes - p_yes_market)
+    except Exception:
+        pass
 
     cand = {
         "ts_utc": utc_now_iso(),
         "run_id": run_id,
-        "market_id": market_id,
+        "market_id": str(run.get("market_id")),
         "question": str(run.get("question")),
         "venue": venue,
         "side": side,
-        "p_yes": consensus_p_yes,
-        "consensus_p_yes": consensus_p_yes,
+        "p_yes": p_yes,
+        "consensus_p_yes": p_yes,
         "disagreement": disagreement,
         "edge": edge_abs,
         "size_usd": float(paper_size),
@@ -264,11 +250,9 @@ def _arbiter_candidate_from_db(*, conn: sqlite3.Connection, venue: str, paper_si
         "status": "OPEN",
         "notes": {
             "mode": "arbiter",
-            "p_yes_market": float(p_yes_market),
-            "edge_vs_market": float(edge_vs_market),
-            "edge_abs": float(edge_abs),
-            "pricing_source": pricing_source,
-            "spread": float(spread),
+            "edge_abs": edge_abs,
+            "p_yes_market": p_yes_market,
+            "edge_vs_market": edge_vs_market,
             "filters": {
                 "min_edge_abs": _filters()[0],
                 "min_edge_vs_market": _filters()[1],
@@ -277,7 +261,7 @@ def _arbiter_candidate_from_db(*, conn: sqlite3.Connection, venue: str, paper_si
         },
     }
 
-    if not _passes_filters(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement):
+    if not _passes_filters(edge_abs=edge_abs, edge_vs_market=None, disagreement=disagreement):
         return None
 
     return cand
@@ -433,7 +417,7 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
 
         edge_vs_market = float(p_yes_model - p_yes_market)
         edge_abs = abs(p_yes_model - 0.5)
-        side = "YES" if p_yes_model > p_yes_market else "NO"
+        side = "YES" if p_yes_model >= 0.5 else "NO"
 
         infer_diag_counts["evaluated"] += 1
         reason = _infer_rejection_reason(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement)

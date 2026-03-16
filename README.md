@@ -20,15 +20,15 @@ Not a demo. Not a prototype. <b>A live autonomous trading intelligence — evolv
 
 <p>
   <img src=”https://img.shields.io/badge/STATUS-LIVE_24%2F7-39ff14?style=for-the-badge&labelColor=0b0f0b” />
-  <img src=”https://img.shields.io/badge/PHASE-2.2_ACTIVE-a855f7?style=for-the-badge&labelColor=0b0f0b” />
+  <img src=”https://img.shields.io/badge/PHASE-2.3_ACTIVE-a855f7?style=for-the-badge&labelColor=0b0f0b” />
   <img src=”https://img.shields.io/badge/VENUE-POLYMARKET-ff4d6d?style=for-the-badge&labelColor=0b0f0b” />
   <img src=”https://img.shields.io/badge/MODE-PAPER_TRADING-00e5ff?style=for-the-badge&labelColor=0b0f0b” />
 </p>
 <p>
-  <img src=”https://img.shields.io/badge/TRADES-291_PLACED-9bf6ff?style=for-the-badge&labelColor=0b0f0b” />
+  <img src=”https://img.shields.io/badge/TRADES-545_PLACED-9bf6ff?style=for-the-badge&labelColor=0b0f0b” />
   <img src=”https://img.shields.io/badge/MARKETS-43_TRACKED-ffbe0b?style=for-the-badge&labelColor=0b0f0b” />
   <img src=”https://img.shields.io/badge/AGENTS-168_IN_POPULATION-39ff14?style=for-the-badge&labelColor=0b0f0b” />
-  <img src=”https://img.shields.io/badge/RUNS-736_TOTAL-a855f7?style=for-the-badge&labelColor=0b0f0b” />
+  <img src=”https://img.shields.io/badge/RUNS-590_TOTAL-a855f7?style=for-the-badge&labelColor=0b0f0b” />
 </p>
 
 <hr style=”border:none;height:3px;background:linear-gradient(90deg,#39ff14,#00e5ff,#a855f7,#ff4d6d,#39ff14); margin: 18px auto; max-width: 980px;” />
@@ -84,15 +84,16 @@ When enough edge is proven, it trades **real capital**.
 
 | 🔴 METRIC | VALUE |
 |-----------|-------|
-| Paper trades placed | **291** |
-| Open positions | **117** |
+| Paper trades placed | **545** |
+| Open positions | **371** |
 | Markets tracked | **43** |
 | Agent population | **168** (32 active per run) |
-| Total swarm runs | **736** |
-| Operational since | **Feb 28, 2026** |
+| Total swarm runs | **590+** |
+| Operational since | **Mar 1, 2026** |
 | Infer loop cadence | **Every 5 min** |
 | Arbiter loop cadence | **Every 30 min** |
 | Auto-resolution | **Every 6 hrs via cron** |
+| Min signal tier | **Tier C (edge ≥ 0.030)** |
 
 </div>
 
@@ -132,8 +133,8 @@ EACH RUN:
 |------|-----------|----------------|
 | 🔴 **A** | edge_abs ≥ 0.070 | Maximum conviction — act immediately |
 | 🟠 **B** | edge_abs ≥ 0.040 | Strong signal — monitor closely |
-| 🟡 **C** | edge_abs ≥ 0.020 | Moderate signal — data collection mode |
-| ⚪ **D** | edge_abs < 0.020 | Noise floor — observation only |
+| 🟡 **C** | edge_abs ≥ 0.030 | Minimum tradeable — entry floor (Phase 2.3) |
+| ⚪ **D** | edge_abs < 0.030 | Noise floor — **blocked from trading** |
 
 ---
 
@@ -173,7 +174,8 @@ bash scripts/ship_check.sh
 | PHASE | STATUS | MISSION OBJECTIVE |
 |-------|--------|-------------------|
 | **① Baseline** | ✅ **COMPLETE** | Swarm built · paper trading live · Brier scoring · ship_check certified |
-| **② Live Loops** | ✅ **ACTIVE NOW** | Infer + Arbiter running 24/7 · auto-resolver on cron · 736 runs |
+| **② Live Loops** | ✅ **COMPLETE** | Infer + Arbiter running 24/7 · auto-resolver on cron · 590+ runs |
+| **② Optimized** | ✅ **ACTIVE NOW** | Stronger signals · Tier C+ floor · cooldown dedup · Phase 2.3 |
 | **③ LLM Layer** | 🔬 **IN THE LAB** | Wire LLM reasoning into every agent — news, geopolitics, sports form |
 | **④ Kalshi** | 📡 **PLANNED** | Second venue · larger market universe · cross-venue signals |
 | **⑤ Real Money** | 💰 **PENDING PROOF** | Proven Brier edge → live capital allocation → real P&L |
@@ -221,7 +223,7 @@ bash scripts/ship_check.sh   # output must contain: SHIP_CHECK PASS
 
 <p style=”font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, ‘Courier New’, monospace;
           font-size: 11px; letter-spacing: 3px; color: #39ff14; opacity: 0.6; margin: 0;”>
-⚗️ &nbsp; SWARM &nbsp;·&nbsp; PHASE 2.2 &nbsp;·&nbsp; AUTOMATED TRADING LIVE SINCE FEB 2026<br/>
+⚗️ &nbsp; SWARM &nbsp;·&nbsp; PHASE 2.3 &nbsp;·&nbsp; AUTOMATED TRADING LIVE SINCE MAR 2026<br/>
 REAL CAPITAL AND PROFITABILITY IS THE ENDGAME
 </p>
 
