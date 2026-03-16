@@ -178,30 +178,41 @@ def score_market(market: Dict[str, Any]) -> BaselineScore:
     else:
         time_score = 0.40
 
-    extremity = abs(p_yes_market - 0.5) * 2.0
-    extremity_penalty = _clamp(extremity, 0.0, 1.0)
+    # --- Directional signals ---
 
-    # Last-trade micro signal
-    micro_signal = _clamp(last_trade - p_yes_market, -0.01, 0.01)
+    # Momentum: last trade vs current mid — capped at ±2.5%
+    micro_signal = _clamp(last_trade - p_yes_market, -0.025, 0.025)
 
-    # Conservative quality-driven adjustment
-    quality_boost = (
-        0.010 * liquidity_score
-        + 0.008 * volume_score
-        + 0.006 * time_score
-        - 0.012 * spread_penalty
-        - 0.006 * extremity_penalty
+    # Bid-ask pressure: if last trade diverges from the mid-point of the current book
+    bid_ask_pressure = 0.0
+    if best_bid > 0 and best_ask > 0:
+        book_mid = (best_bid + best_ask) / 2.0
+        bid_ask_pressure = _clamp(last_trade - book_mid, -0.010, 0.010)
+
+    # Tail mean-reversion: very extreme prices (< 10% or > 90%) tend to be
+    # overfit to recency; apply a gentle pull back toward the distribution mean.
+    tail_reversion = 0.0
+    if p_yes_market < 0.10:
+        tail_reversion = _clamp((0.10 - p_yes_market) * 0.30, 0.0, 0.015)
+    elif p_yes_market > 0.90:
+        tail_reversion = _clamp((p_yes_market - 0.90) * -0.30, -0.015, 0.0)
+
+    # Quality nudge: minimal directional contribution; wide spread keeps model neutral
+    quality_nudge = (
+        0.004 * liquidity_score
+        + 0.003 * volume_score
+        - 0.006 * spread_penalty
     )
 
-    adjustment = _clamp(quality_boost + micro_signal, -0.02, 0.02)
+    adjustment = _clamp(micro_signal + bid_ask_pressure + tail_reversion + quality_nudge, -0.05, 0.05)
     p_yes_model = _clamp(p_yes_market + adjustment, 0.01, 0.99)
 
     confidence = _clamp(
-        0.20
-        + 0.30 * liquidity_score
-        + 0.20 * volume_score
-        + 0.15 * time_score
-        - 0.20 * spread_penalty,
+        0.25
+        + 0.28 * liquidity_score
+        + 0.18 * volume_score
+        + 0.12 * time_score
+        - 0.18 * spread_penalty,
         0.05,
         0.95,
     )
@@ -224,9 +235,10 @@ def score_market(market: Dict[str, Any]) -> BaselineScore:
             "volume_score": volume_score,
             "time_score": time_score,
             "spread_penalty": spread_penalty,
-            "extremity_penalty": extremity_penalty,
             "micro_signal": micro_signal,
-            "quality_boost": quality_boost,
+            "bid_ask_pressure": bid_ask_pressure,
+            "tail_reversion": tail_reversion,
+            "quality_nudge": quality_nudge,
             "adjustment": adjustment,
         },
     )
