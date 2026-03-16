@@ -15,7 +15,7 @@ Not a demo. Not a prototype. <b>A live autonomous trading intelligence — evolv
 </p>
 
 <p style=”max-width: 720px; font-size: 13px; opacity: 0.8; margin: 0 auto 16px;”>
-<b>Polymarket</b> is the first arena. &nbsp;·&nbsp; <b>Kalshi</b> is next. &nbsp;·&nbsp; <b>Real capital</b> is the endgame.
+<b>Polymarket</b> is the first arena. &nbsp;·&nbsp; <b>Kalshi</b> in Development. &nbsp;·&nbsp; <b>Profitability</b> is the endgame.
 </p>
 
 <p>
@@ -139,7 +139,7 @@ EACH RUN:
 
 ## 💻 DEPLOY THE SWARM
 
-> ⚠️ **WSL / Ubuntu only.** This project lives at `~/blackglasslab`. Never run from the Windows copy.
+> ⚠️ **WSL / Ubuntu only.** This project lives at `~/blackglasslab`. Never run from the Windows.
 
 ```bash
 cd ~/blackglasslab
@@ -222,7 +222,7 @@ bash scripts/ship_check.sh   # output must contain: SHIP_CHECK PASS
 <p style=”font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, ‘Courier New’, monospace;
           font-size: 11px; letter-spacing: 3px; color: #39ff14; opacity: 0.6; margin: 0;”>
 ⚗️ &nbsp; SWARM &nbsp;·&nbsp; PHASE 2.2 &nbsp;·&nbsp; AUTOMATED TRADING LIVE SINCE FEB 2026<br/>
-REAL CAPITAL IS THE ENDGAME
+REAL CAPITAL AND PROFITABILITY IS THE ENDGAME
 </p>
 
 </div>
