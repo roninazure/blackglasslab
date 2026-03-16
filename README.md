@@ -15,7 +15,7 @@ Not a demo. Not a prototype. <b>A live autonomous trading intelligence — evolv
 </p>
 
 <p style=”max-width: 720px; font-size: 13px; opacity: 0.8; margin: 0 auto 16px;”>
-<b>Polymarket</b> is the first arena. &nbsp;·&nbsp; <b>Kalshi</b> in Development. &nbsp;·&nbsp; <b>Profitability</b> is the endgame.
+<b>Polymarket</b> is the first arena. &nbsp;·&nbsp; <b>Kalshi</b> is planned. &nbsp;·&nbsp; <b>Profitability</b> is the endgame.
 </p>
 
 <p>
