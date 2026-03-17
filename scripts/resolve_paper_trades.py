@@ -150,6 +150,40 @@ def brier(p_yes_model: float, resolved_outcome: str) -> float:
     return (float(p_yes_model) - y) ** 2
 
 
+def compute_profit_usd(
+    side: str,
+    size_usd: float,
+    outcome: str,
+    p_yes_market_entry: Optional[float],
+) -> float:
+    """
+    Compute paper trade profit/loss in USD.
+
+    YES bet wins when outcome=YES:  profit = size * (1/p_yes_entry - 1)
+    NO  bet wins when outcome=NO:   profit = size * (p_yes_entry / (1 - p_yes_entry))
+    Either bet loses:               profit = -size
+
+    Falls back to binary +size / -size if no entry price is stored.
+    """
+    side_up = side.upper()
+    outcome_up = outcome.upper()
+    correct = (side_up == "YES" and outcome_up == "YES") or (
+        side_up == "NO" and outcome_up == "NO"
+    )
+    if not correct:
+        return -float(size_usd)
+
+    if p_yes_market_entry is not None:
+        p = max(0.001, min(0.999, float(p_yes_market_entry)))
+        if side_up == "YES":
+            return round(float(size_usd) * (1.0 / p - 1.0), 4)
+        else:  # NO
+            return round(float(size_usd) * (p / (1.0 - p)), 4)
+
+    # No entry price — simple binary
+    return float(size_usd)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Phase 1.4: resolve/close OPEN paper_trades and compute Brier.")
     ap.add_argument("--db", default=DB_PATH, help="Path to SQLite DB (default: memory/runs.sqlite)")
@@ -165,7 +199,7 @@ def main() -> int:
     # Only resolve Polymarket real slugs, status OPEN
     cur.execute(
         """
-        SELECT id, market_id, consensus_p_yes, p_yes, notes
+        SELECT id, market_id, consensus_p_yes, p_yes, side, size_usd, notes
         FROM paper_trades
         WHERE status='OPEN'
           AND venue='polymarket'
@@ -185,7 +219,7 @@ def main() -> int:
     changed = 0
     checked = 0
 
-    for (trade_id, slug, consensus_p_yes, p_yes, notes) in rows:
+    for (trade_id, slug, consensus_p_yes, p_yes, side, size_usd, notes) in rows:
         checked += 1
 
         try:
@@ -217,11 +251,29 @@ def main() -> int:
 
         b = brier(float(p_model), outcome)
 
+        # Compute profit_usd using entry market price from notes
+        notes_dict: Dict[str, Any] = {}
+        if notes:
+            try:
+                parsed = json.loads(notes) if isinstance(notes, str) else {}
+                if isinstance(parsed, dict):
+                    notes_dict = parsed
+            except Exception:
+                pass
+        p_yes_entry = notes_dict.get("p_yes_market")
+        profit_usd = compute_profit_usd(
+            side=str(side or "YES"),
+            size_usd=float(size_usd or 100.0),
+            outcome=outcome,
+            p_yes_market_entry=float(p_yes_entry) if p_yes_entry is not None else None,
+        )
+
         # Append minimal resolution metadata into notes (keep existing notes as prefix)
         meta = {
             "resolved_at_utc": utc_now_iso(),
             "resolved_outcome": outcome,
-            "resolver": "phase_1.4",
+            "profit_usd": profit_usd,
+            "resolver": "phase_2.4",
             "resolver_reason": why,
             "market_closed": bool(snap.get("closed")),
             "market_active": snap.get("active"),
@@ -234,10 +286,9 @@ def main() -> int:
             new_notes = json.dumps({"resolution": meta}, separators=(",", ":"))
         else:
             # Preserve existing notes verbatim; append a JSON line.
-            # (Keeps it safe without assuming structure.)
             new_notes = str(notes).rstrip() + "\n" + json.dumps({"resolution": meta}, separators=(",", ":"))
 
-        print(f"RESOLVER: id={trade_id} slug={slug} CLOSED outcome={outcome} brier={b:.6f}")
+        print(f"RESOLVER: id={trade_id} slug={slug} CLOSED outcome={outcome} brier={b:.6f} profit_usd={profit_usd:+.2f}")
 
         if not args.dry_run:
             conn.execute(

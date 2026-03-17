@@ -268,7 +268,7 @@ def main() -> int:
         tier_counts[tier(q)] += 1
 
     # Print
-    print(f"BLACK GLASS SWARM — PAPER DASHBOARD (Phase 1.6C)")
+    print(f"BLACK GLASS SWARM — PAPER DASHBOARD (Phase 2.4)")
     print(f"- generated_at_utc: {utc_now_iso()}")
     print(f"- db: {args.db}")
     print(f"- venue: {args.venue}")
