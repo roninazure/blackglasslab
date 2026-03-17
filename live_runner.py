@@ -172,7 +172,11 @@ def _latest_arbiter_for_run(conn: sqlite3.Connection, run_id: str) -> Optional[D
 
 def _insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> str:
     cur = conn.cursor()
-    cur.execute("SELECT 1 FROM paper_trades WHERE run_id=? LIMIT 1;", (cand["run_id"],))
+    # One open position per market+side+venue — prevents the 50x duplicate problem
+    cur.execute(
+        "SELECT 1 FROM paper_trades WHERE market_id=? AND side=? AND venue=? AND status='OPEN' LIMIT 1;",
+        (cand["market_id"], cand["side"], cand["venue"]),
+    )
     if cur.fetchone() is not None:
         return "skipped_duplicate"
 
@@ -416,8 +420,10 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             components = baseline.components
 
         edge_vs_market = float(p_yes_model - p_yes_market)
-        edge_abs = abs(p_yes_model - 0.5)
-        side = "YES" if p_yes_model >= 0.5 else "NO"
+        # Fix: use edge vs market price, not vs 0.5
+        # abs(model - 0.5) was always huge (e.g. 0.46) so BGL_MIN_EDGE_ABS never blocked anything
+        edge_abs = abs(edge_vs_market)
+        side = "YES" if edge_vs_market > 0 else "NO"
 
         infer_diag_counts["evaluated"] += 1
         reason = _infer_rejection_reason(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement)
