@@ -116,23 +116,31 @@ def forecast_yes_probability(
 
     p_yes_market = float(context.get("p_yes_market", 0.5))
     snap = context.get("market_snapshot", {})
-    volume = snap.get("volume")
-    liquidity = snap.get("liquidity")
     updated = snap.get("updatedAt", "")
     venue = str(context.get("venue", "polymarket"))
 
-    # Build the market context block
+    # Build enriched context block (crypto prices, time-to-resolution, category notes)
+    try:
+        from context.market_context import build_context_block
+        enriched = build_context_block(
+            question=question,
+            market_snapshot=snap,
+            p_yes_market=p_yes_market,
+            venue=venue,
+        )
+    except Exception:
+        enriched = ""
+
     ctx_lines = [
         f"Question: {question}",
         f"Venue: {venue}",
         f"Current crowd price (P_YES): {p_yes_market:.4f}  ({p_yes_market * 100:.1f}%)",
     ]
-    if volume:
-        ctx_lines.append(f"Total volume: ${float(volume):,.0f}")
-    if liquidity:
-        ctx_lines.append(f"Liquidity: ${float(liquidity):,.0f}")
     if updated:
         ctx_lines.append(f"Last updated: {updated}")
+    if enriched:
+        ctx_lines.append("")
+        ctx_lines.append(enriched)
 
     user_prompt = "\n".join(ctx_lines) + (
         "\n\nEstimate the true probability this market resolves YES. "
