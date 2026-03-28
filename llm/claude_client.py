@@ -113,6 +113,8 @@ def forecast_yes_probability(
     """
     client = _get_client()
     model = os.environ.get("BGL_LLM_MODEL", "claude-haiku-4-5-20251001").strip()
+    if not model.startswith("claude-"):
+        model = "claude-haiku-4-5-20251001"  # ignore non-Claude model names (e.g. leftover o3-mini)
 
     p_yes_market = float(context.get("p_yes_market", 0.5))
     snap = context.get("market_snapshot", {})
@@ -149,12 +151,18 @@ def forecast_yes_probability(
         "Return JSON only."
     )
 
-    resp = client.messages.create(
-        model=model,
-        max_tokens=350,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
+    try:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=350,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except Exception as api_err:
+        err_str = str(api_err)
+        if "credit balance" in err_str or "402" in err_str or "payment" in err_str.lower():
+            raise RuntimeError(f"Anthropic billing error — add credits at console.anthropic.com: {api_err}") from api_err
+        raise
 
     raw = resp.content[0].text.strip()
     # Strip markdown fences if model wraps output despite instructions

@@ -387,6 +387,7 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             })
             continue
 
+        llm_used = False
         if use_llm:
             ctx = {
                 "venue": venue,
@@ -406,13 +407,25 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
                 },
                 "policy": {"return_json_only": True, "paper_only": True},
             }
-            p_yes_model, llm_conf, llm_rationale = forecast_yes_probability(
-                question=str(m.get("question") or slug),
-                context=ctx,
-            )
-            p_yes_model = float(min(0.99, max(0.01, p_yes_model)))
-            disagreement = float(max(0.0, min(1.0, 1.0 - float(llm_conf))))
-            components = {}
+            try:
+                p_yes_model, llm_conf, llm_rationale = forecast_yes_probability(
+                    question=str(m.get("question") or slug),
+                    context=ctx,
+                )
+                p_yes_model = float(min(0.99, max(0.01, p_yes_model)))
+                disagreement = float(max(0.0, min(1.0, 1.0 - float(llm_conf))))
+                components = {}
+                llm_used = True
+            except Exception as llm_err:
+                err_msg = str(llm_err)
+                print(f"[WARN] LLM call failed, falling back to baseline: {err_msg[:120]}", flush=True)
+                if "billing" in err_msg.lower() or "credit" in err_msg.lower():
+                    # Disable LLM for rest of this run to avoid spamming API errors
+                    use_llm = False
+                p_yes_model = float(baseline.p_yes_model)
+                llm_conf = float(baseline.confidence)
+                disagreement = float(max(0.0, min(1.0, 1.0 - baseline.confidence)))
+                components = baseline.components
         else:
             p_yes_model = float(baseline.p_yes_model)
             llm_conf = float(baseline.confidence)
@@ -435,6 +448,9 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             "edge_vs_market": float(edge_vs_market),
             "edge_abs": float(edge_abs),
             "disagreement": float(disagreement),
+            "llm_confidence": float(llm_conf),
+            "llm_rationale": llm_rationale,
+            "llm_used": llm_used,
             "side": side,
             "decision": "PASS" if reason == "pass" else "REJECT",
             "reason": reason,

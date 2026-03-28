@@ -131,7 +131,7 @@ def score_market(market: Dict[str, Any]) -> BaselineScore:
             reject_reason="closed_market",
             components={},
         )
-    if liquidity < 10000:
+    if liquidity < 1000:
         return BaselineScore(
             p_yes_market=p_yes_market,
             p_yes_model=p_yes_market,
@@ -141,7 +141,7 @@ def score_market(market: Dict[str, Any]) -> BaselineScore:
             reject_reason="low_liquidity",
             components={},
         )
-    if volume < 50000:
+    if volume < 10000:
         return BaselineScore(
             p_yes_market=p_yes_market,
             p_yes_model=p_yes_market,
