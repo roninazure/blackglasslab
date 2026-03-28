@@ -26,6 +26,7 @@ while true; do
   BGL_INFER_COOLDOWN="${BGL_INFER_COOLDOWN:-15}" \
   BGL_MIN_EDGE_ABS="${BGL_MIN_EDGE_ABS:-0.040}" \
   BGL_MIN_EDGE_VS_MARKET="${BGL_MIN_EDGE_VS_MARKET:-0.040}" \
+  BGL_MAX_DISAGREEMENT="${BGL_MAX_DISAGREEMENT:-0.45}" \
   BGL_MAX_DISAGREE="${BGL_MAX_DISAGREE:-0.45}" \
   python3 live_runner.py --mode infer --source polymarket --paper --loops 1
 
