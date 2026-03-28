@@ -37,5 +37,14 @@
   {"market_id": "us-x-iran-ceasefire-before-oil-hits-120"},
   {"market_id": "iran-leadership-change-or-us-x-iran-ceasefire-first"},
   {"market_id": "what-price-will-wti-hit-in-april-2026"},
-  {"market_id": "sp-500-breaks-its-losing-streak-this-week"}
+  {"market_id": "sp-500-breaks-its-losing-streak-this-week"},
+
+  {"market_id": "will-arizona-win-the-ncaa-tournament"},
+  {"market_id": "will-duke-win-the-ncaa-tournament"},
+  {"market_id": "will-michigan-win-the-ncaa-tournament"},
+  {"market_id": "will-illinois-win-the-ncaa-tournament"},
+  {"market_id": "will-purdue-win-the-ncaa-tournament"},
+  {"market_id": "will-connecticut-win-the-ncaa-tournament"},
+  {"market_id": "east-region-winner-march-madness"},
+  {"market_id": "west-region-winner-march-madness"}
 ]
