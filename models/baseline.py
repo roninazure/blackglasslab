@@ -189,13 +189,11 @@ def score_market(market: Dict[str, Any]) -> BaselineScore:
         book_mid = (best_bid + best_ask) / 2.0
         bid_ask_pressure = _clamp(last_trade - book_mid, -0.010, 0.010)
 
-    # Tail mean-reversion: very extreme prices (< 10% or > 90%) tend to be
-    # overfit to recency; apply a gentle pull back toward the distribution mean.
+    # Tail mean-reversion: REMOVED (Phase 3).
+    # This heuristic was pulling extreme markets (1%) toward centre (+1.5%),
+    # generating phantom Tier-A edges on near-certain markets. The market price
+    # at extremes is usually correct — LLM reasoning handles the exceptions.
     tail_reversion = 0.0
-    if p_yes_market < 0.10:
-        tail_reversion = _clamp((0.10 - p_yes_market) * 0.30, 0.0, 0.015)
-    elif p_yes_market > 0.90:
-        tail_reversion = _clamp((p_yes_market - 0.90) * -0.30, -0.015, 0.0)
 
     # Quality nudge: minimal directional contribution; wide spread keeps model neutral
     quality_nudge = (

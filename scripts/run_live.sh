@@ -21,12 +21,12 @@ while true; do
   fi
 
   echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) : infer loop =="
-  BGL_INFER_USE_LLM="${BGL_INFER_USE_LLM:-0}" \
+  BGL_INFER_USE_LLM="${BGL_INFER_USE_LLM:-1}" \
   BGL_INFER_BATCH="${BGL_INFER_BATCH:-10}" \
-  BGL_INFER_COOLDOWN="${BGL_INFER_COOLDOWN:-43}" \
-  BGL_MIN_EDGE_ABS="${BGL_MIN_EDGE_ABS:-0.030}" \
-  BGL_MIN_EDGE_VS_MARKET="${BGL_MIN_EDGE_VS_MARKET:-0.030}" \
-  BGL_MAX_DISAGREE="${BGL_MAX_DISAGREE:-0.45}" \
+  BGL_INFER_COOLDOWN="${BGL_INFER_COOLDOWN:-15}" \
+  BGL_MIN_EDGE_ABS="${BGL_MIN_EDGE_ABS:-0.060}" \
+  BGL_MIN_EDGE_VS_MARKET="${BGL_MIN_EDGE_VS_MARKET:-0.060}" \
+  BGL_MAX_DISAGREE="${BGL_MAX_DISAGREE:-0.40}" \
   python3 live_runner.py --mode infer --source polymarket --paper --loops 1
 
   COUNT=$((COUNT + 1))
