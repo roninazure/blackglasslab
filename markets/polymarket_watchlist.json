@@ -1,38 +1,21 @@
 [
-  {"market_id": "will-tim-walz-win-the-2028-us-presidential-election"},
-  {"market_id": "will-bernie-sanders-win-the-2028-democratic-presidential-nomination-879"},
-  {"market_id": "will-hillary-clinton-win-the-2028-democratic-presidential-nomination"},
-  {"market_id": "will-phil-murphy-win-the-2028-democratic-presidential-nomination-611"},
-  {"market_id": "will-vivek-ramaswamy-win-the-2028-us-presidential-election"},
-  {"market_id": "will-greg-abbott-win-the-2028-us-presidential-election"},
-
-  {"market_id": "will-the-indiana-pacers-win-the-2026-nba-finals"},
-  {"market_id": "will-the-memphis-grizzlies-win-the-2026-nba-finals"},
-  {"market_id": "will-uzbekistan-win-the-2026-fifa-world-cup-773"},
-  {"market_id": "will-the-chicago-bulls-win-the-2026-nba-finals"},
-
-  {"market_id": "will-china-invades-taiwan-before-gta-vi-716"},
-  {"market_id": "russia-ukraine-ceasefire-before-gta-vi-554"},
-  {"market_id": "trump-out-as-president-before-gta-vi-846"},
-  {"market_id": "will-bitcoin-hit-1m-before-gta-vi-872"},
-  {"market_id": "gta-vi-released-before-june-2026"},
-
-  {"market_id": "will-the-next-prime-minister-of-hungary-be-klra-dobrev"},
-  {"market_id": "will-the-next-prime-minister-of-hungary-be-istvn-kapitny"},
-
   {"market_id": "will-rory-mcilroy-win-the-2026-masters-tournament"},
   {"market_id": "will-scottie-scheffler-win-the-2026-masters-tournament"},
   {"market_id": "will-bryson-dechambeau-win-the-2026-masters-tournament"},
-  {"market_id": "will-jason-day-win-the-2026-masters-tournament"},
   {"market_id": "will-jon-rahm-win-the-2026-masters-tournament"},
   {"market_id": "will-brooks-koepka-win-the-2026-masters-tournament"},
+  {"market_id": "will-jason-day-win-the-2026-masters-tournament"},
 
-  {"market_id": "netanyahu-out-before-2027-684"},
+  {"market_id": "will-the-oklahoma-city-thunder-win-the-2026-nba-finals"},
+  {"market_id": "will-the-cleveland-cavaliers-win-the-2026-nba-finals"},
+  {"market_id": "will-the-boston-celtics-win-the-2026-nba-finals"},
+  {"market_id": "will-the-golden-state-warriors-win-the-2026-nba-finals"},
+  {"market_id": "will-the-houston-rockets-win-the-2026-nba-finals"},
+  {"market_id": "will-the-denver-nuggets-win-the-2026-nba-finals"},
 
   {"market_id": "will-the-chicago-bulls-make-the-nba-playoffs-388"},
   {"market_id": "will-the-milwaukee-bucks-make-the-nba-playoffs-572"},
   {"market_id": "will-the-denver-nuggets-make-the-nba-playoffs-427"},
-  {"market_id": "will-the-next-prime-minister-of-hungary-be-jnos-lzr"},
 
   {"market_id": "will-no-fed-rate-cuts-happen-in-2026"},
   {"market_id": "will-1-fed-rate-cut-happen-in-2026"},
@@ -40,7 +23,13 @@
   {"market_id": "will-3-fed-rate-cuts-happen-in-2026"},
   {"market_id": "will-4-fed-rate-cuts-happen-in-2026"},
   {"market_id": "will-5-fed-rate-cuts-happen-in-2026"},
-
   {"market_id": "us-recession-by-end-of-2026"},
-  {"market_id": "will-bitcoin-hit-150k-by-june-30-2026"}
+
+  {"market_id": "will-bitcoin-hit-150k-by-june-30-2026"},
+  {"market_id": "will-bitcoin-hit-100k-before-april-2026"},
+  {"market_id": "will-ethereum-hit-5000-in-2026"},
+
+  {"market_id": "netanyahu-out-before-2027-684"},
+  {"market_id": "russia-ukraine-ceasefire-agreement-before-july-2026"},
+  {"market_id": "will-us-impose-additional-tariffs-on-china-in-2026"}
 ]
