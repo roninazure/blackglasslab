@@ -113,6 +113,8 @@ def forecast_yes_probability(
     """
     client = _get_client()
     model = os.environ.get("BGL_LLM_MODEL", "claude-haiku-4-5-20251001").strip()
+    if not model.startswith("claude-"):
+        model = "claude-haiku-4-5-20251001"  # ignore non-Claude model names (e.g. leftover o3-mini)
 
     p_yes_market = float(context.get("p_yes_market", 0.5))
     snap = context.get("market_snapshot", {})
