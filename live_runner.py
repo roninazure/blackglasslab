@@ -435,6 +435,8 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             "edge_vs_market": float(edge_vs_market),
             "edge_abs": float(edge_abs),
             "disagreement": float(disagreement),
+            "llm_confidence": float(llm_conf),
+            "llm_rationale": llm_rationale,
             "side": side,
             "decision": "PASS" if reason == "pass" else "REJECT",
             "reason": reason,
