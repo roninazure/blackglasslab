@@ -31,5 +31,17 @@
 
   {"market_id": "netanyahu-out-before-2027-684"},
   {"market_id": "russia-ukraine-ceasefire-agreement-before-july-2026"},
-  {"market_id": "will-us-impose-additional-tariffs-on-china-in-2026"}
+  {"market_id": "will-us-impose-additional-tariffs-on-china-in-2026"},
+
+  {"market_id": "will-the-us-military-strike-iran-in-2026"},
+  {"market_id": "will-iran-reach-a-nuclear-deal-in-2026"},
+  {"market_id": "will-israel-attack-iran-in-2026"},
+
+  {"market_id": "will-wti-crude-oil-reach-100-per-barrel-in-2026"},
+  {"market_id": "will-oil-price-fall-below-60-per-barrel-in-2026"},
+  {"market_id": "will-opec-cut-oil-production-in-2026"},
+
+  {"market_id": "will-china-enter-a-recession-in-2026"},
+  {"market_id": "will-the-eurozone-enter-recession-in-2026"},
+  {"market_id": "will-global-gdp-growth-fall-below-2-percent-in-2026"}
 ]
