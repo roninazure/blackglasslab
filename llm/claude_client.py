@@ -149,12 +149,18 @@ def forecast_yes_probability(
         "Return JSON only."
     )
 
-    resp = client.messages.create(
-        model=model,
-        max_tokens=350,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
+    try:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=350,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except Exception as api_err:
+        err_str = str(api_err)
+        if "credit balance" in err_str or "402" in err_str or "payment" in err_str.lower():
+            raise RuntimeError(f"Anthropic billing error — add credits at console.anthropic.com: {api_err}") from api_err
+        raise
 
     raw = resp.content[0].text.strip()
     # Strip markdown fences if model wraps output despite instructions
