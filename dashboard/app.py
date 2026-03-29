@@ -22,13 +22,13 @@ st.set_page_config(page_title="SWARM · BlackGlassLab", page_icon="⚡", layout=
 st.markdown("""
 <style>
   /* SWARM Trading Terminal Theme */
-  .stApp { background-color: #0f1923; color: #ffffff; font-family: 'Courier New', monospace; }
-  .stApp header { background-color: #0f1923; }
+  .stApp { background-color: #1e2d3d; color: #ffffff; font-family: 'Courier New', monospace; }
+  .stApp header { background-color: #1e2d3d; }
   .block-container { padding-top: 1rem; }
 
   /* Metric cards */
   div[data-testid="metric-container"] {
-    background: #1a2535; border: 1px solid #00ff88;
+    background: #2a3f55; border: 1px solid #00ff88;
     border-radius: 6px; padding: 14px; margin: 4px;
   }
   div[data-testid="metric-container"] label { color: #aaccbb !important; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
@@ -36,8 +36,8 @@ st.markdown("""
   div[data-testid="stMetricDelta"] { color: #ffdd44 !important; }
 
   /* Tabs */
-  .stTabs [data-baseweb="tab"] { background: #1a2535; color: #aaccbb; border: 1px solid #2a3f55; font-size: 13px; }
-  .stTabs [aria-selected="true"] { background: #0d2a1a !important; color: #00ff88 !important; border-color: #00ff88 !important; font-weight: bold; }
+  .stTabs [data-baseweb="tab"] { background: #2a3f55; color: #ffffff; border: 1px solid #3a5570; font-size: 13px; }
+  .stTabs [aria-selected="true"] { background: #1a4a2a !important; color: #00ff88 !important; border-color: #00ff88 !important; font-weight: bold; }
 
   /* Tables */
   .stDataFrame { border: 1px solid #2a3f55; border-radius: 4px; }
@@ -49,7 +49,7 @@ st.markdown("""
   .stButton>button:hover { background: #00ff88; color: #000; }
 
   /* Sidebar */
-  .stSidebar { background: #0a1520; border-right: 1px solid #2a3f55; }
+  .stSidebar { background: #162433; border-right: 1px solid #3a5570; }
   .stSidebar .stMarkdown p { color: #aaccbb; }
 
   /* Headings */
@@ -58,7 +58,7 @@ st.markdown("""
 
   /* Expander */
   .streamlit-expanderHeader { background: #1a2535 !important; color: #00ff88 !important; border: 1px solid #2a3f55; }
-  .streamlit-expanderContent { background: #111d2b !important; color: #ffffff; }
+  .streamlit-expanderContent { background: #1e3045 !important; color: #ffffff; }
 
   /* Info/warning boxes */
   .stInfo { background: #0d2a3a !important; color: #88ddff !important; border-left: 3px solid #0088cc; }
