@@ -21,25 +21,65 @@ st.set_page_config(page_title="SWARM · BlackGlassLab", page_icon="⚡", layout=
 
 st.markdown("""
 <style>
-  /* Bloomberg terminal theme */
-  .stApp { background-color: #0a0a0a; color: #e0e0e0; font-family: 'Courier New', monospace; }
-  .stApp header { background-color: #0a0a0a; }
+  /* SWARM Trading Terminal Theme */
+  .stApp { background-color: #0f1923; color: #ffffff; font-family: 'Courier New', monospace; }
+  .stApp header { background-color: #0f1923; }
   .block-container { padding-top: 1rem; }
+
+  /* Metric cards */
   div[data-testid="metric-container"] {
-    background: #111; border: 1px solid #00ff88;
-    border-radius: 4px; padding: 12px; margin: 4px;
+    background: #1a2535; border: 1px solid #00ff88;
+    border-radius: 6px; padding: 14px; margin: 4px;
   }
-  div[data-testid="metric-container"] label { color: #888 !important; font-size: 11px; }
-  div[data-testid="metric-container"] div[data-testid="metric-value"] { color: #00ff88 !important; font-size: 22px; font-weight: bold; }
-  .stTabs [data-baseweb="tab"] { background: #111; color: #888; border: 1px solid #222; }
-  .stTabs [aria-selected="true"] { background: #001a0d !important; color: #00ff88 !important; border-color: #00ff88 !important; }
-  .stDataFrame { border: 1px solid #00ff88; }
-  .stButton>button { background: #001a0d; color: #00ff88; border: 1px solid #00ff88; }
+  div[data-testid="metric-container"] label { color: #aaccbb !important; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  div[data-testid="metric-container"] div[data-testid="metric-value"] { color: #00ff88 !important; font-size: 24px; font-weight: bold; }
+  div[data-testid="stMetricDelta"] { color: #ffdd44 !important; }
+
+  /* Tabs */
+  .stTabs [data-baseweb="tab"] { background: #1a2535; color: #aaccbb; border: 1px solid #2a3f55; font-size: 13px; }
+  .stTabs [aria-selected="true"] { background: #0d2a1a !important; color: #00ff88 !important; border-color: #00ff88 !important; font-weight: bold; }
+
+  /* Tables */
+  .stDataFrame { border: 1px solid #2a3f55; border-radius: 4px; }
+  .stDataFrame thead { background: #1a2535; color: #00ff88; }
+  .stDataFrame td { color: #ffffff !important; background: #0f1923; }
+
+  /* Buttons */
+  .stButton>button { background: #0d2a1a; color: #00ff88; border: 1px solid #00ff88; font-family: 'Courier New'; font-weight: bold; }
   .stButton>button:hover { background: #00ff88; color: #000; }
-  .stSidebar { background: #060606; border-right: 1px solid #222; }
-  h1, h2, h3 { color: #00ff88 !important; }
-  .trade-card { background: #111; border-left: 3px solid #00ff88; padding: 10px; margin: 8px 0; border-radius: 2px; }
-  .alert-banner { background: #001a0d; border: 1px solid #00ff88; padding: 8px 12px; color: #00ff88; font-weight: bold; margin-bottom: 10px; }
+
+  /* Sidebar */
+  .stSidebar { background: #0a1520; border-right: 1px solid #2a3f55; }
+  .stSidebar .stMarkdown p { color: #aaccbb; }
+
+  /* Headings */
+  h1, h2, h3 { color: #00ff88 !important; letter-spacing: 1px; }
+  p, li, label { color: #ddeedd !important; }
+
+  /* Expander */
+  .streamlit-expanderHeader { background: #1a2535 !important; color: #00ff88 !important; border: 1px solid #2a3f55; }
+  .streamlit-expanderContent { background: #111d2b !important; color: #ffffff; }
+
+  /* Info/warning boxes */
+  .stInfo { background: #0d2a3a !important; color: #88ddff !important; border-left: 3px solid #0088cc; }
+  .stSuccess { background: #0d2a1a !important; color: #00ff88 !important; }
+
+  /* Divider */
+  hr { border-color: #2a3f55; }
+
+  /* Slider */
+  .stSlider label { color: #aaccbb !important; }
+
+  /* Number input */
+  .stNumberInput label { color: #aaccbb !important; }
+
+  /* Alert banner */
+  .alert-banner {
+    background: linear-gradient(90deg, #0d2a1a, #0a1520);
+    border: 1px solid #00ff88; border-left: 4px solid #00ff88;
+    padding: 10px 16px; color: #00ff88; font-weight: bold;
+    margin-bottom: 12px; letter-spacing: 2px; font-size: 13px;
+  }
 </style>
 """, unsafe_allow_html=True)
 
