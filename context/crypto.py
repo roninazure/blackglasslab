@@ -77,12 +77,15 @@ def get_crypto_context(question: str) -> str:
     q = question.lower()
     lines = []
 
-    if "bitcoin" in q or "btc" in q:
+    # ETH/BTC flip markets need both prices even if only one coin is named
+    is_flip_market = "flip" in q or "overtake" in q or "flipped" in q
+
+    if "bitcoin" in q or "btc" in q or is_flip_market:
         price = get_price("btc")
         if price:
             lines.append(f"Current BTC price: ${price:,.0f} USD")
 
-    if "ethereum" in q or " eth " in q:
+    if "ethereum" in q or " eth " in q or "eth-" in q or is_flip_market:
         price = get_price("eth")
         if price:
             lines.append(f"Current ETH price: ${price:,.0f} USD")
