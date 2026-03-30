@@ -10,7 +10,7 @@ if [[ -f KILL ]]; then
 fi
 
 LOOPS="${LOOPS:-0}"          # 0 = forever
-SLEEP_SECS="${SLEEP_SECS:-300}"
+SLEEP_SECS="${SLEEP_SECS:-3600}"
 
 COUNT=0
 
@@ -22,7 +22,7 @@ while true; do
 
   echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) : infer loop =="
   BGL_INFER_USE_LLM="${BGL_INFER_USE_LLM:-1}" \
-  BGL_INFER_BATCH="${BGL_INFER_BATCH:-10}" \
+  BGL_INFER_BATCH="${BGL_INFER_BATCH:-5}" \
   BGL_INFER_COOLDOWN="${BGL_INFER_COOLDOWN:-15}" \
   BGL_MIN_EDGE_ABS="${BGL_MIN_EDGE_ABS:-0.040}" \
   BGL_MIN_EDGE_VS_MARKET="${BGL_MIN_EDGE_VS_MARKET:-0.040}" \
