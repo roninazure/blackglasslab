@@ -114,12 +114,18 @@ MARKET_EXPIRY = {
 # ---------------------------------------------------------------------------
 @st.cache_data(ttl=20)
 def load_trades() -> pd.DataFrame:
-    if not DB_PATH.exists():
-        return pd.DataFrame()
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query(
-        f"SELECT * FROM paper_trades WHERE ts_utc > '{CUTOFF}' ORDER BY ts_utc DESC", conn)
-    conn.close()
+    # Try local SQLite first, fall back to committed JSON for Streamlit Cloud
+    if DB_PATH.exists():
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql_query(
+            f"SELECT * FROM paper_trades WHERE ts_utc > '{CUTOFF}' ORDER BY ts_utc DESC", conn)
+        conn.close()
+    else:
+        json_path = ROOT / "data" / "paper_trades.json"
+        if not json_path.exists():
+            return pd.DataFrame()
+        records = json.loads(json_path.read_text())
+        df = pd.DataFrame(records)
     if df.empty:
         return df
     def parse_notes(n):
