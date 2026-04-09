@@ -6,7 +6,7 @@
 </h1>
 
 <p style=”font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 3px; color: #ff4d6d; margin-top: 0; margin-bottom: 14px;”>
-◈ &nbsp; A N &nbsp; A I &nbsp; P R E D I C T I O N &nbsp; S W A R M &nbsp; · &nbsp; B U I L T &nbsp; I N &nbsp; T H E &nbsp; L A B &nbsp; · &nbsp; R U N N I N G &nbsp; I N &nbsp; T H E &nbsp; W I L D &nbsp; ◈
+◈ &nbsp; A N &nbsp; A I &nbsp; P R E D I C T I O N &nbsp; S W A R M - E D G E &nbsp; · &nbsp; B U I L T &nbsp; I N &nbsp; T H E &nbsp; L A B &nbsp; · &nbsp; R U N N I N G &nbsp; I N &nbsp; T H E &nbsp; W I L D &nbsp; ◈
 </p>
 
 <p style=”max-width: 820px; font-size: 16px; line-height: 1.6; margin: 0 auto 10px;”>
