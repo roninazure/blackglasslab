@@ -221,27 +221,42 @@ def _arbiter_candidate_from_db(*, conn: sqlite3.Connection, venue: str, paper_si
 
     p_yes = float(arb.get("consensus_p_yes"))
     disagreement = float(arb.get("disagreement"))
-    side = "YES" if p_yes >= 0.5 else "NO"
-    edge_abs = abs(p_yes - 0.5)
+    market_id = str(run.get("market_id"))
 
-    # Fetch live market price so dashboard can display market_yes and edge_vs_market
-    p_yes_market: Optional[float] = None
-    edge_vs_market: Optional[float] = None
+    if get_adapter is None:
+        print(
+            f"[WARN] arbiter candidate skipped for market_id={market_id}: adapter registry unavailable",
+            flush=True,
+        )
+        return None
+
     try:
-        if get_adapter is not None:
-            adapter = get_adapter(venue)
-            market_id = str(run.get("market_id"))
-            m = adapter.get_market(market_id)  # type: ignore[attr-defined]
-            p_mkt, _spread, _src = market_yes_price(m)
-            p_yes_market = float(p_mkt)
-            edge_vs_market = float(p_yes - p_yes_market)
-    except Exception:
-        pass
+        adapter = get_adapter(venue)
+        m = adapter.get_market(market_id)  # type: ignore[attr-defined]
+        p_mkt, spread, pricing_source = market_yes_price(m)
+    except Exception as e:
+        print(
+            f"[WARN] arbiter candidate skipped for market_id={market_id}: market snapshot fetch failed: {str(e)[:500]}",
+            flush=True,
+        )
+        return None
+
+    if pricing_source == "fallback":
+        print(
+            f"[WARN] arbiter candidate skipped for market_id={market_id}: market price unavailable (pricing_source=fallback)",
+            flush=True,
+        )
+        return None
+
+    p_yes_market = float(p_mkt)
+    edge_vs_market = float(p_yes - p_yes_market)
+    edge_abs = abs(edge_vs_market)
+    side = "YES" if edge_vs_market > 0 else "NO"
 
     cand = {
         "ts_utc": utc_now_iso(),
         "run_id": run_id,
-        "market_id": str(run.get("market_id")),
+        "market_id": market_id,
         "question": str(run.get("question")),
         "venue": venue,
         "side": side,
@@ -254,9 +269,11 @@ def _arbiter_candidate_from_db(*, conn: sqlite3.Connection, venue: str, paper_si
         "status": "OPEN",
         "notes": {
             "mode": "arbiter",
-            "edge_abs": edge_abs,
-            "p_yes_market": p_yes_market,
-            "edge_vs_market": edge_vs_market,
+            "p_yes_market": float(p_yes_market),
+            "edge_vs_market": float(edge_vs_market),
+            "edge_abs": float(edge_abs),
+            "pricing_source": pricing_source,
+            "spread": float(spread),
             "filters": {
                 "min_edge_abs": _filters()[0],
                 "min_edge_vs_market": _filters()[1],
@@ -265,7 +282,7 @@ def _arbiter_candidate_from_db(*, conn: sqlite3.Connection, venue: str, paper_si
         },
     }
 
-    if not _passes_filters(edge_abs=edge_abs, edge_vs_market=None, disagreement=disagreement):
+    if not _passes_filters(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement):
         return None
 
     return cand
