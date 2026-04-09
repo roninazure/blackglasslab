@@ -173,6 +173,7 @@ Current paper-trading pilot policy:
 - Maximum disagreement: `BGL_MAX_DISAGREEMENT=0.25`
 - Ambiguous event slugs must not trade
 - Unpriced markets must not trade
+- Standard validation path: `python scripts/validate_arbiter_watchlist.py --reset-db`
 
 Current pilot watchlist:
 
@@ -182,7 +183,7 @@ Current pilot watchlist:
 - `fed-emergency-rate-cut-before-2027`
 - `us-recession-by-end-of-2026`
 
-Suggested batch validation command:
+Standard batch validation command:
 
 ```bash
 BGL_MIN_EDGE_ABS=0.05 \
