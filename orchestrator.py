@@ -122,7 +122,57 @@ def ensure_db() -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_runs_agent ON agent_runs(agent_name);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_runs_runid_agent ON agent_runs(run_id, agent_name);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_runs_fitness ON agent_runs(fitness);")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_runs_agent_id ON agent_runs(agent_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_runs_agent_id ON agent_runs(agent_id);")    # agent_population table (required by agents.evolver.ensure_seed_population)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS agent_population (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      seed INTEGER NOT NULL,
+      generation INTEGER NOT NULL DEFAULT 0,
+      parent_agent_id TEXT,
+      mutation TEXT NOT NULL DEFAULT '{}',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      fitness REAL NOT NULL DEFAULT 0.0,
+      notes TEXT NOT NULL DEFAULT '{}',
+      created_ts_utc TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_ts_utc TEXT NOT NULL DEFAULT (datetime('now')),
+      last_used_ts_utc TEXT
+    );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_population_role ON agent_population(role);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_population_active ON agent_population(is_active);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_population_role_active ON agent_population(role, is_active);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_population_generation ON agent_population(generation);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_agent_population_agent_id ON agent_population(agent_id);")
+
+
+    # paper_trades table (used by live_runner --paper)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS paper_trades (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      ts_utc TEXT NOT NULL,
+      market_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      venue TEXT NOT NULL,
+      side TEXT NOT NULL,
+      consensus_p_yes REAL NOT NULL,
+      disagreement REAL NOT NULL,
+      size_usd REAL NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL,
+      resolved_outcome TEXT,
+      p_yes REAL NOT NULL,
+      edge REAL NOT NULL,
+      brier REAL,
+      notes TEXT NOT NULL
+    );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_run_id ON paper_trades(run_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_market_id ON paper_trades(market_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);")
 
     # arbiter_runs table (v0.6+) — used by live_runner consensus mode
     cur.execute("""

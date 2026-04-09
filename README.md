@@ -163,6 +163,35 @@ bash scripts/ship_check.sh
 
 ---
 
+## 🧪 POLYMARKET PILOT BASELINE
+
+Current paper-trading pilot policy:
+
+- Watchlist: exact tradable slugs only from `markets/polymarket_watchlist.json`
+- Paper size: `$100` per candidate
+- Minimum edge: `BGL_MIN_EDGE_ABS=0.05`
+- Maximum disagreement: `BGL_MAX_DISAGREEMENT=0.25`
+- Ambiguous event slugs must not trade
+- Unpriced markets must not trade
+- Standard validation path: `python scripts/validate_arbiter_watchlist.py --reset-db`
+
+Frozen pilot watchlist:
+
+- `iran-leadership-change-or-us-x-iran-ceasefire-first`
+- `blue-wave-in-2026`
+- `fed-emergency-rate-cut-before-2027`
+- `us-recession-by-end-of-2026`
+
+Standard batch validation command:
+
+```bash
+BGL_MIN_EDGE_ABS=0.05 \
+BGL_MAX_DISAGREEMENT=0.25 \
+python scripts/validate_arbiter_watchlist.py --reset-db
+```
+
+---
+
 ## 🚀 MISSION ROADMAP
 
 <div align=”center”>
