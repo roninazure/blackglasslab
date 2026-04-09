@@ -3,6 +3,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Load .env if present
+if [[ -f .env ]]; then
+  set -o allexport
+  source .env
+  set +o allexport
+fi
+
 # Safety kill switch
 if [[ -f KILL ]]; then
   echo "KILL switch present. Exiting."
