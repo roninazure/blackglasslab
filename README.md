@@ -1,121 +1,108 @@
-<div align=”center”>
+<div align="center">
 
-<h1 style=”font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, ‘Liberation Mono’, ‘Courier New’, monospace;
-           font-size: 64px; font-weight: 900; letter-spacing: 4px; margin-bottom: 4px; margin-top: 4px;”>
-⚗️ <span style=”color:#39ff14;”>S</span><span style=”color:#00e5ff;”>W</span><span style=”color:#a855f7;”>A</span><span style=”color:#ff4d6d;”>R</span><span style=”color:#ffbe0b;”>M</span>
+<p>
+  <img src="https://img.shields.io/badge/STATUS-LIVE_24%2F7-39ff14?style=for-the-badge&labelColor=0b0f0b" />
+  <img src="https://img.shields.io/badge/VENUE-POLYMARKET-ff4d6d?style=for-the-badge&labelColor=0b0f0b" />
+  <img src="https://img.shields.io/badge/MODE-PAPER_TRADING-00e5ff?style=for-the-badge&labelColor=0b0f0b" />
+  <img src="https://img.shields.io/badge/PHASE-PILOT_BASELINE-ffbe0b?style=for-the-badge&labelColor=0b0f0b" />
+</p>
+
+<h1 style="margin: 14px 0 6px 0; font-size: 66px; font-weight: 900; letter-spacing: 3px; line-height: 1;">
+  SWARM <span style="color:#00e5ff;">EDGE</span>
 </h1>
 
-<p style=”font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 3px; color: #ff4d6d; margin-top: 0; margin-bottom: 14px;”>
-◈ &nbsp; A N &nbsp; A I &nbsp; P R E D I C T I O N &nbsp; S W A R M - E D G E &nbsp; · &nbsp; B U I L T &nbsp; I N &nbsp; T H E &nbsp; L A B &nbsp; · &nbsp; R U N N I N G &nbsp; I N &nbsp; T H E &nbsp; W I L D &nbsp; ◈
+<p style="margin: 0 auto 16px auto; max-width: 920px; font-size: 13px; letter-spacing: 0.42em; text-transform: uppercase; color: #9bf6ff;">
+  Market intelligence system • built in the lab • executed against live probability markets
 </p>
 
-<p style=”max-width: 820px; font-size: 16px; line-height: 1.6; margin: 0 auto 10px;”>
-<b>168 AI agents</b> run 24/7, debate the future, and paper trade prediction markets when they find mispriced odds.<br/>
-Not a demo. Not a prototype. <b>A live autonomous trading intelligence — evolving every 5 minutes.</b>
+<p style="margin: 0 auto 16px auto; max-width: 900px; font-size: 20px; line-height: 1.55;">
+  <strong>168 agents</strong> forecast, challenge, arbitrate, and paper trade live prediction markets around the clock.
+  <br />
+  Not a demo surface. Not a toy automation.
+  <strong>A continuously running edge engine built to convert market disagreement into disciplined trading decisions.</strong>
 </p>
 
-<p style=”max-width: 720px; font-size: 13px; opacity: 0.8; margin: 0 auto 16px;”>
-<b>Polymarket</b> is the first arena. &nbsp;·&nbsp; <b>Kalshi</b> is planned. &nbsp;·&nbsp; <b>Profitability</b> is the endgame.
+<table>
+  <tr>
+    <td align="center"><strong>168</strong><br />agents</td>
+    <td align="center"><strong>24/7</strong><br />runtime</td>
+    <td align="center"><strong>5 min</strong><br />infer cadence</td>
+    <td align="center"><strong>30 min</strong><br />arbiter cadence</td>
+    <td align="center"><strong>$100</strong><br />paper size</td>
+  </tr>
+</table>
+
+<p style="margin: 18px auto 14px auto; max-width: 780px; font-size: 15px; line-height: 1.6;">
+  <strong>Polymarket</strong> is the first arena. <strong>Kalshi</strong> is next.
+  The mandate is simple: discover repeatable edge, prove it under pressure, then scale capital with discipline.
 </p>
 
 <p>
-  <img src=”https://img.shields.io/badge/STATUS-LIVE_24%2F7-39ff14?style=for-the-badge&labelColor=0b0f0b” />
-  <img src=”https://img.shields.io/badge/PHASE-2.3_ACTIVE-a855f7?style=for-the-badge&labelColor=0b0f0b” />
-  <img src=”https://img.shields.io/badge/VENUE-POLYMARKET-ff4d6d?style=for-the-badge&labelColor=0b0f0b” />
-  <img src=”https://img.shields.io/badge/MODE-PAPER_TRADING-00e5ff?style=for-the-badge&labelColor=0b0f0b” />
-</p>
-<p>
-  <img src=”https://img.shields.io/badge/TRADES-545_PLACED-9bf6ff?style=for-the-badge&labelColor=0b0f0b” />
-  <img src=”https://img.shields.io/badge/MARKETS-43_TRACKED-ffbe0b?style=for-the-badge&labelColor=0b0f0b” />
-  <img src=”https://img.shields.io/badge/AGENTS-168_IN_POPULATION-39ff14?style=for-the-badge&labelColor=0b0f0b” />
-  <img src=”https://img.shields.io/badge/RUNS-590_TOTAL-a855f7?style=for-the-badge&labelColor=0b0f0b” />
+  <img src="https://img.shields.io/badge/TRADES-LIVE_PIPELINE-9bf6ff?style=for-the-badge&labelColor=0b0f0b" />
+  <img src="https://img.shields.io/badge/FILTERS-EDGE_%E2%89%A5_0.05-39ff14?style=for-the-badge&labelColor=0b0f0b" />
+  <img src="https://img.shields.io/badge/DISAGREEMENT-%E2%89%A4_0.25-a855f7?style=for-the-badge&labelColor=0b0f0b" />
+  <img src="https://img.shields.io/badge/BASKET-4_MARKETS-ff4d6d?style=for-the-badge&labelColor=0b0f0b" />
 </p>
 
-<hr style=”border:none;height:3px;background:linear-gradient(90deg,#39ff14,#00e5ff,#a855f7,#ff4d6d,#39ff14); margin: 18px auto; max-width: 980px;” />
+<p style="margin-top: 14px;">
+  <code>forecast → challenge → arbitrate → filter → paper trade → resolve → learn</code>
+</p>
+
+<hr style="border:none;height:3px;background:linear-gradient(90deg,#39ff14,#00e5ff,#ff4d6d,#ffbe0b,#39ff14); margin: 24px auto; max-width: 980px;" />
 
 </div>
 
-## ⚡ THE CONCEPT
+## Thesis
 
 > *”If you can model the future better than the crowd, you can trade the difference.”*
 
 Prediction markets are **probability exchanges**. Every market is a binary question with a price — *Will X happen?* The price IS the crowd’s probability estimate.
 
-Swarm runs a committee of AI agents — Operators and Skeptics — that independently forecast each market, debate the outcome, and reach a consensus probability. When the swarm’s consensus **diverges from the market price** by a sufficient edge, it places a trade.
-
-When enough edge is proven, it trades **real capital**.
+Swarm Edge treats every market as a contest between internal judgment and external pricing. Operators make the case. Skeptics attack it. The arbiter resolves the dispute into a final probability. When that internal view **meaningfully diverges from the live market**, and disagreement stays contained, the system emits a paper trade.
 
 ---
 
-## 🧬 SIGNAL PIPELINE
+## Flow
 
 ```
-                     SWARM — SIGNAL PIPELINE
-  ──────────────────────────────────────────────────────────────────
+                 SWARM EDGE — CURRENT PILOT FLOW
+  ───────────────────────────────────────────────────────────────
 
-  polymarket_watchlist.json  ──▶  43 markets · 5 categories
-               │
-        ┌──────┴──────┐
-        │             │
-   [INFER LOOP]  [ARBITER LOOP]
-    every 5 min   every 30 min
-    lightweight   full consensus · tighter filters
-        │             │
-        └──────┬──────┘
-               │
-               ▼
-  ┌── OPERATORS  (3 sampled)  ──▶  independent p_yes + rationale
-  ├── SKEPTICS   (3 sampled)  ──▶  challenge every assumption
-  └── ARBITER                 ──▶  consensus_p_yes + disagreement
-               │
-               ▼
-  edge_vs_market > threshold?  ──  YES  ──▶  paper_trade (SQLite)
-                                                     │
-  [AUTO-RESOLVER]  every 6h  ──▶  Polymarket API     │
-      p_yes ≥ 0.999  ──▶  resolved YES               ▼
-      p_no  ≥ 0.999  ──▶  resolved NO        Brier score + P&L
+  markets/polymarket_watchlist.json  ──▶  4 exact tradable slugs
+                    │
+                    ▼
+          sample operators + skeptics
+                    │
+                    ▼
+         arbiter consensus_p_yes + disagreement
+                    │
+                    ▼
+   compare against live Polymarket market probability
+                    │
+                    ▼
+   edge >= 0.05 and disagreement <= 0.25 ?
+             │
+      YES ───┴───▶ paper trade ($100)
+             │
+       NO ───────▶ skip cleanly
 ```
 
 ---
 
-## 📡 LIVE TELEMETRY — March 2026
+## Pilot Basket
 
-<div align=”center”>
+These are the active Polymarket pilot markets. The basket is intentionally narrow, liquid enough to matter, and strict enough to keep the system honest:
 
-| 🔴 METRIC | VALUE |
-|-----------|-------|
-| Paper trades placed | **545** |
-| Open positions | **371** |
-| Markets tracked | **43** |
-| Agent population | **168** (32 active per run) |
-| Total swarm runs | **590+** |
-| Operational since | **Mar 1, 2026** |
-| Infer loop cadence | **Every 5 min** |
-| Arbiter loop cadence | **Every 30 min** |
-| Auto-resolution | **Every 6 hrs via cron** |
-| Min signal tier | **Tier C (edge ≥ 0.030)** |
-
-</div>
+- `iran-leadership-change-or-us-x-iran-ceasefire-first`
+- `blue-wave-in-2026`
+- `fed-emergency-rate-cut-before-2027`
+- `us-recession-by-end-of-2026`
 
 ---
 
-## 🎯 TARGET MARKETS — 43 ACTIVE
+## Decision Model
 
-Weighted toward near-term resolution for maximum Brier score feedback velocity:
-
-| CATEGORY | MARKETS | RESOLVES |
-|----------|---------|----------|
-| 🏈 **Sports** | NBA Playoffs · Masters Golf · Arsenal Carabao Cup | 11–64 days |
-| 💰 **Crypto** | BTC $150k (Mar 31) · BTC $1M · BTC $100k (Jun) | 17–108 days |
-| 🌍 **Geopolitical** | Ukraine ceasefire · NATO/Russia clash · Netanyahu | 17–291 days |
-| 🏛️ **US Politics** | Trump removal · 2028 Democratic primary | Indefinite |
-| 📉 **Macro / Fed** | 0–5+ rate cuts 2026 · US Recession 2026 | ~90–300 days |
-
----
-
-## 🔬 HOW THE SWARM THINKS
-
-Not one model. Not a single LLM call. A **living committee of 168 agents** — sampled, debated, and arbitered on every run.
+Swarm Edge is not a single-model predictor and not a blind price-follower. It is a **committee process** designed to force conflict before conviction:
 
 ```
 EACH RUN:
@@ -127,43 +114,30 @@ EACH RUN:
   HIGH disagreement ──▶  swarm uncertain   ──▶  position filtered out
 ```
 
-### Signal Tiers — Edge Classification
-
-| TIER | THRESHOLD | CLASSIFICATION |
-|------|-----------|----------------|
-| 🔴 **A** | edge_abs ≥ 0.070 | Maximum conviction — act immediately |
-| 🟠 **B** | edge_abs ≥ 0.040 | Strong signal — monitor closely |
-| 🟡 **C** | edge_abs ≥ 0.030 | Minimum tradeable — entry floor (Phase 2.3) |
-| ⚪ **D** | edge_abs < 0.030 | Noise floor — **blocked from trading** |
-
 ---
 
-## 💻 DEPLOY THE SWARM
+## Operate
 
-> ⚠️ **WSL / Ubuntu only.** This project lives at `~/blackglasslab`. Never run from the Windows.
+> ⚠️ **WSL / Ubuntu only.** This project lives at `~/blackglasslab`. Never run from Windows.
 
 ```bash
 cd ~/blackglasslab
 
-# ── LAUNCH INFER LOOP  (every 5 min · runs forever) ───────────────
-nohup bash scripts/run_live.sh > logs/infer_loop.log 2>&1 &
+# strict batch validation for the active pilot basket
+BGL_MIN_EDGE_ABS=0.05 \
+BGL_MAX_DISAGREEMENT=0.25 \
+python scripts/validate_arbiter_watchlist.py --reset-db
 
-# ── LAUNCH ARBITER LOOP  (every 30 min · runs forever) ────────────
-nohup bash scripts/run_arbiter.sh > logs/arbiter_loop.log 2>&1 &
-
-# ── VERIFY BOTH LOOPS ARE ALIVE ───────────────────────────────────
-ps aux | grep -E ‘run_live|run_arbiter’ | grep -v grep
-
-# ── LIVE P&L + SIGNAL DASHBOARD ──────────────────────────────────
-python3 reporting/paper_dashboard.py --venue polymarket --limit 20
-
-# ── END-TO-END HEALTH CERTIFICATION ──────────────────────────────
-bash scripts/ship_check.sh
+# one-market arbiter run
+export BGL_MARKET_ID='us-recession-by-end-of-2026'
+unset BGL_MARKET_QUESTION
+python orchestrator.py
+python live_runner.py --mode arbiter --source polymarket --paper
 ```
 
 ---
 
-## 🧪 POLYMARKET PILOT BASELINE
+## Policy
 
 Current paper-trading pilot policy:
 
@@ -175,14 +149,14 @@ Current paper-trading pilot policy:
 - Unpriced markets must not trade
 - Standard validation path: `python scripts/validate_arbiter_watchlist.py --reset-db`
 
-Frozen pilot watchlist:
+Frozen basket:
 
 - `iran-leadership-change-or-us-x-iran-ceasefire-first`
 - `blue-wave-in-2026`
 - `fed-emergency-rate-cut-before-2027`
 - `us-recession-by-end-of-2026`
 
-Standard batch validation command:
+Operator-grade validation command:
 
 ```bash
 BGL_MIN_EDGE_ABS=0.05 \
@@ -192,68 +166,13 @@ python scripts/validate_arbiter_watchlist.py --reset-db
 
 ---
 
-## 🚀 MISSION ROADMAP
-
-<div align=”center”>
-<p style=”font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 3px; color: #a855f7; opacity: 0.8;”>
-◈ PHASE PROGRESSION · THE ENDGAME IS REAL CAPITAL ◈
-</p>
-</div>
-
-| PHASE | STATUS | MISSION OBJECTIVE |
-|-------|--------|-------------------|
-| **① Baseline** | ✅ **COMPLETE** | Swarm built · paper trading live · Brier scoring · ship_check certified |
-| **② Live Loops** | ✅ **COMPLETE** | Infer + Arbiter running 24/7 · auto-resolver on cron · 590+ runs |
-| **② Optimized** | ✅ **ACTIVE NOW** | Stronger signals · Tier C+ floor · cooldown dedup · Phase 2.3 |
-| **③ LLM Layer** | 🔬 **IN THE LAB** | Wire LLM reasoning into every agent — news, geopolitics, sports form |
-| **④ Kalshi** | 📡 **PLANNED** | Second venue · larger market universe · cross-venue signals |
-| **⑤ Real Money** | 💰 **PENDING PROOF** | Proven Brier edge → live capital allocation → real P&L |
-| **⑥ Command Center** | 🖥️ **THE VISION** | 3D holographic trade dashboard · live swarm visualization · real-time everything |
-
----
-
-## 🔒 SHIP CHECK CONTRACT
-
-```bash
-bash scripts/ship_check.sh   # output must contain: SHIP_CHECK PASS
-```
-
-**On PASS, the following are guaranteed:**
-- `runs` → latest `run_id` written
-- `arbiter_runs` → row exists for that `run_id`
-- `signals/trade_candidates.json` → `candidate[0].run_id` matches latest run
-- `paper_trades` → valid row inserted when `--paper` is passed
-- `model_forecasts` → UPSERT succeeded for `(venue=’swarm’, market_id=<slug>)`
-
-**Not guaranteed:** Profitability · A candidate on every run · Market closure before deadline
-
-> *Version discipline: any change to schema, edge semantics, or publish logic requires a version bump and contract update.*
-
----
-
-## 📁 SYSTEM FILES
+## Core Files
 
 | FILE | ROLE |
 |------|------|
-| `live_runner.py` | Core engine — infer and arbiter execution |
-| `scripts/run_live.sh` | Infer loop daemon (5 min) |
-| `scripts/run_arbiter.sh` | Arbiter loop daemon (30 min) |
-| `scripts/resolve_paper_trades.py` | Auto-resolver via Polymarket Gamma API |
-| `scripts/ship_check.sh` | End-to-end health certification |
-| `markets/polymarket_watchlist.json` | 43-market target watchlist |
-| `reporting/paper_dashboard.py` | Live P&L + signal tier dashboard |
-| `memory/runs.sqlite` | All data — trades, runs, agents, forecasts |
-
----
-
-<div align=”center”>
-
-<hr style=”border:none;height:3px;background:linear-gradient(90deg,#39ff14,#00e5ff,#a855f7,#ff4d6d,#39ff14); margin: 16px auto; max-width: 980px;” />
-
-<p style=”font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, ‘Courier New’, monospace;
-          font-size: 11px; letter-spacing: 3px; color: #39ff14; opacity: 0.6; margin: 0;”>
-⚗️ &nbsp; SWARM &nbsp;·&nbsp; PHASE 2.3 &nbsp;·&nbsp; AUTOMATED TRADING LIVE SINCE MAR 2026<br/>
-REAL CAPITAL AND PROFITABILITY IS THE ENDGAME
-</p>
-
-</div>
+| `orchestrator.py` | Writes a forecast run for the current market |
+| `live_runner.py` | Arbiter paper-trade execution against live Polymarket pricing |
+| `markets/polymarket_watchlist.json` | Frozen 4-market Polymarket pilot basket |
+| `scripts/validate_arbiter_watchlist.py` | Standard batch validation path for the pilot basket |
+| `scripts/discover_polymarket_markets.py` | Discovery funnel for review-only Polymarket market intake |
+| `memory/runs.sqlite` | Runs, arbiter outputs, and paper trades |
