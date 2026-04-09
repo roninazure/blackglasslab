@@ -175,10 +175,9 @@ Current paper-trading pilot policy:
 - Unpriced markets must not trade
 - Standard validation path: `python scripts/validate_arbiter_watchlist.py --reset-db`
 
-Current pilot watchlist:
+Frozen pilot watchlist:
 
 - `iran-leadership-change-or-us-x-iran-ceasefire-first`
-- `will-rory-mcilroy-win-the-2026-masters-tournament`
 - `blue-wave-in-2026`
 - `fed-emergency-rate-cut-before-2027`
 - `us-recession-by-end-of-2026`
