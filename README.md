@@ -2,32 +2,36 @@
 
 <br/>
 
-<sub>AUTONOMOUS PREDICTION MARKET ENGINE</sub>
+```
+╔═══════════════════════════════════════════════════════════════════════╗
+║                                                                       ║
+║    ███████╗██╗    ██╗ █████╗ ██████╗ ███╗   ███╗                     ║
+║    ██╔════╝██║    ██║██╔══██╗██╔══██╗████╗ ████║                     ║
+║    ███████╗██║ █╗ ██║███████║██████╔╝██╔████╔██║                     ║
+║    ╚════██║██║███╗██║██╔══██║██╔══██╗██║╚██╔╝██║                     ║
+║    ███████║╚███╔███╔╝██║  ██║██║  ██║██║ ╚═╝ ██║                     ║
+║    ╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝  EDGE              ║
+║                                                                       ║
+║    AI PREDICTION MARKET ENGINE          STATUS: LIVE ●               ║
+║    VENUE: POLYMARKET                    MODE:   PAPER TRADING        ║
+║    PHASE: 3 — LLM REASONING             CYCLE:  60 MIN               ║
+║                                                                       ║
+║    ┌─────────────┬─────────────┬─────────────┬─────────────┐         ║
+║    │  MARKETS    │   TRADES    │    EDGE      │  BET SIZE   │         ║
+║    │     20      │      4      │   ≥ 5.0%     │    $100     │         ║
+║    └─────────────┴─────────────┴─────────────┴─────────────┘         ║
+║                                                                       ║
+╚═══════════════════════════════════════════════════════════════════════╝
+```
 
-# Swarm Edge
-
-<p>An AI committee that debates the future, finds mispriced odds, and trades the difference.</p>
+[![](https://img.shields.io/badge/●_LIVE-00ff88?style=flat-square&labelColor=0d1117)](.)
+[![](https://img.shields.io/badge/POLYMARKET-0d1117?style=flat-square&labelColor=0d1117&color=334155)](.)
+[![](https://img.shields.io/badge/PAPER_TRADING-0d1117?style=flat-square&labelColor=0d1117&color=334155)](.)
+[![](https://img.shields.io/badge/PHASE_3-0d1117?style=flat-square&labelColor=0d1117&color=6366f1)](.)
 
 <br/>
 
-<img src="https://img.shields.io/badge/live-polymarket-000?style=flat-square&labelColor=000&color=00ff88&logoColor=white" />
-&nbsp;
-<img src="https://img.shields.io/badge/phase_3-llm_reasoning-000?style=flat-square&labelColor=000&color=6366f1" />
-&nbsp;
-<img src="https://img.shields.io/badge/mode-paper_trading-000?style=flat-square&labelColor=000&color=334155" />
-&nbsp;
-<img src="https://img.shields.io/badge/edge_threshold-≥_5%25-000?style=flat-square&labelColor=000&color=334155" />
-
-<br/><br/>
-
-<table>
-<tr>
-<td align="center" width="140"><strong>20</strong><br/><sub>markets tracked</sub></td>
-<td align="center" width="140"><strong>4</strong><br/><sub>open positions</sub></td>
-<td align="center" width="140"><strong>60 min</strong><br/><sub>cycle time</sub></td>
-<td align="center" width="140"><strong>$100</strong><br/><sub>per trade</sub></td>
-</tr>
-</table>
+> *"If you can model the future better than the crowd, you can trade the difference."*
 
 <br/>
 
@@ -35,74 +39,74 @@
 
 ---
 
-Prediction markets are probability exchanges. Every market is a binary question with a price — *Will X happen?* That price is the crowd's estimate.
+## SYSTEM
 
-Swarm Edge runs an adversarial AI committee against those prices. Operators make the case. Skeptics attack it. An arbiter resolves the dispute into a consensus probability. When that view diverges from the live market by enough edge — and agents agree — a trade fires.
+Swarm Edge deploys an adversarial AI committee against live prediction markets. Operators forecast. Skeptics attack. An arbiter resolves. When the swarm's consensus diverges from the live market price by sufficient edge — and agents agree — it fires a paper trade.
 
-The endgame is real capital. Paper trading earns it.
-
----
-
-## Signal Pipeline
-
-```
-  WATCHLIST (20 verified Polymarket slugs)
-       │
-       ▼
-  INFER LOOP  ·  every 60 min
-       │
-       ├─  fetch live prices  ·  Polymarket Gamma API
-       ├─  Operators   →  independent p_yes per market
-       ├─  Skeptics    →  challenge every assumption
-       └─  Arbiter     →  consensus_p_yes  +  disagreement
-                │
-                ├─  edge < 0.05          →  skip
-                ├─  disagreement > 0.45  →  skip
-                └─  edge ≥ 0.05          →  paper trade  [$100]
-                         │
-                         ▼
-                RESOLVER  ·  on demand
-                fetch outcome  →  Brier score  +  P&L
-```
+Every evaluation is logged. Every trade is scored. The endgame is real capital.
 
 ---
 
-## Filters
-
-| | THRESHOLD | PURPOSE |
-|-|-----------|---------|
-| `min_edge_abs` | ≥ 0.05 | Model must diverge from market by 5%+ |
-| `max_disagreement` | ≤ 0.45 | Agents must agree — no split decisions |
-| `min_hours_to_resolution` | ≥ 24h | Skip markets closing imminently |
-| `paper_size` | $100 | Fixed sizing for clean scoring |
-
----
-
-## Markets
+## SIGNAL FLOW
 
 ```
-  US POLITICS    blue wave 2026  ·  tariff refund ruling
-  MACRO / FED    recession 2026  ·  0–5 rate cut scenarios
-  CRYPTO         eth flips btc   ·  btc $150k by june
-  SPORTS         masters 2026    ·  nba finals 2026
+  polymarket_watchlist.json  [20 verified slugs]
+             │
+             ▼
+      INFER LOOP  ──  every 60 min
+             │
+             ├─  live price fetch  ──  Gamma API
+             ├─  OPERATORS  ──  independent p_yes
+             ├─  SKEPTICS   ──  challenge assumptions
+             └─  ARBITER    ──  consensus + disagreement
+                    │
+                    ├──  edge < 0.05          →  SKIP
+                    ├──  disagreement > 0.45  →  SKIP
+                    └──  edge ≥ 0.05          →  TRADE [$100]
+                                │
+                                ▼
+                         RESOLVER  [on demand]
+                    outcome  →  brier score  →  P&L
 ```
 
 ---
 
-## Roadmap
+## FILTERS
 
-| | PHASE | STATUS |
-|-|-------|--------|
-| ① | Engine core | ✅ complete |
-| ② | Polymarket live pricing | ✅ complete |
-| ③ | LLM reasoning layer | ✅ active |
-| ④ | Brier scoring + resolution | 🔄 in progress |
-| ⑤ | Kalshi expansion | planned |
-| ⑥ | Real capital allocation | pending proof of edge |
+```
+  min_edge_abs              ≥  0.05    model must beat market by 5%+
+  max_disagreement          ≤  0.45    agents must align
+  min_hours_to_resolution   ≥  24h     no expiring markets
+  paper_size                =  $100    fixed for clean scoring
+```
 
 ---
 
-## Run It
+## MARKETS
+
+```
+  US POLITICS ──  blue wave 2026  ·  tariff refund ruling
+  MACRO / FED ──  recession 2026  ·  0 / 1 / 2 / 3 / 4 / 5 rate cuts
+  CRYPTO      ──  eth flips btc   ·  btc $150k by june 2026
+  SPORTS      ──  masters 2026    ·  nba finals 2026
+```
+
+---
+
+## ROADMAP
+
+```
+  [✓]  ENGINE CORE         complete
+  [✓]  POLYMARKET LIVE     complete
+  [✓]  LLM REASONING       active  ●
+  [~]  BRIER SCORING       in progress
+  [ ]  KALSHI              planned
+  [ ]  REAL CAPITAL        pending proof of edge
+```
+
+---
+
+## OPERATE
 
 ```bash
 cd ~/blackglasslab
@@ -131,24 +135,30 @@ print(len(rows), 'trades'); [print(r) for r in rows]
 "
 
 # resolve + score
-python3 scripts/resolve_paper_trades.py && python3 scripts/watch_resolutions.py
+python3 scripts/resolve_paper_trades.py
+python3 scripts/watch_resolutions.py
 ```
 
 ---
 
-## Files
+## FILES
 
-| FILE | PURPOSE |
-|------|---------|
-| `live_runner.py` | Core engine |
-| `scripts/run_live.sh` | Infer loop daemon |
-| `scripts/resolve_paper_trades.py` | Resolve closed trades · Brier score |
-| `scripts/watch_resolutions.py` | P&L summary |
-| `markets/polymarket_watchlist.json` | 20 verified active slugs |
-| `memory/runs.sqlite` | Trades · runs · forecasts |
+```
+  live_runner.py                     core engine
+  scripts/run_live.sh                infer loop daemon
+  scripts/resolve_paper_trades.py    resolve closed trades · brier score
+  scripts/watch_resolutions.py       P&L summary
+  markets/polymarket_watchlist.json  20 verified active slugs
+  memory/runs.sqlite                 trades · runs · forecasts
+```
 
 ---
 
 <div align="center">
-<sub>Swarm Edge · Phase 3 · Paper Trading · April 2026</sub>
+
+```
+  SWARM EDGE  ·  PHASE 3  ·  PAPER TRADING LIVE  ·  APRIL 2026
+  REAL CAPITAL IS THE ENDGAME
+```
+
 </div>
