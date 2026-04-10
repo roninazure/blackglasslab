@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
@@ -35,7 +35,8 @@ while true; do
   BGL_MIN_EDGE_VS_MARKET="${BGL_MIN_EDGE_VS_MARKET:-0.040}" \
   BGL_MAX_DISAGREEMENT="${BGL_MAX_DISAGREEMENT:-0.45}" \
   BGL_MAX_DISAGREE="${BGL_MAX_DISAGREE:-0.45}" \
-  python3 live_runner.py --mode infer --source polymarket --paper --loops 1
+  python3 live_runner.py --mode infer --source polymarket --paper --loops 1 \
+  || echo "== [WARN] live_runner.py exited non-zero — continuing loop =="
 
   COUNT=$((COUNT + 1))
   if [[ "$LOOPS" -gt 0 && "$COUNT" -ge "$LOOPS" ]]; then
