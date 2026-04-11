@@ -286,7 +286,7 @@ with tab1:
 
         st.divider()
         st.subheader("Positions")
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
         # Countdown timers
         st.divider()
@@ -325,7 +325,7 @@ with tab1:
             ))
             fig_g.update_layout(height=180, margin=dict(t=30, b=0, l=10, r=10),
                                  paper_bgcolor="#0a0a0a", font_color="#e0e0e0")
-            gauge_cols[i % 4].plotly_chart(fig_g, use_container_width=True)
+            gauge_cols[i % 4].plotly_chart(fig_g)
 
         # Rationales
         st.divider()
@@ -387,8 +387,8 @@ with tab2:
                          line_color="yellow", annotation_text="Threshold")
             fig.update_layout(template="plotly_dark", height=380,
                              paper_bgcolor="#0a0a0a", plot_bgcolor="#111")
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(scan_df, use_container_width=True, hide_index=True)
+            st.plotly_chart(fig)
+            st.dataframe(scan_df, hide_index=True)
 
         rej = {k:v for k,v in sm.get("rejected",{}).items() if v > 0}
         if rej:
@@ -397,7 +397,7 @@ with tab2:
                 names="Reason", values="Count", title="Rejection Reasons",
                 color_discrete_sequence=px.colors.qualitative.Dark24)
             fig2.update_layout(template="plotly_dark", paper_bgcolor="#0a0a0a")
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2)
 
         st.divider()
         st.subheader("Loop Log")
@@ -429,7 +429,7 @@ with tab3:
             fig.add_vline(x=0, line_color="white", line_dash="dash")
             fig.update_layout(template="plotly_dark", paper_bgcolor="#0a0a0a",
                              plot_bgcolor="#111", height=320)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
         # Claude vs Crowd
         with col2:
@@ -449,7 +449,7 @@ with tab3:
                               paper_bgcolor="#0a0a0a", plot_bgcolor="#111",
                               xaxis_tickangle=-30, height=320,
                               title="Where Claude Diverges From Crowd")
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2)
 
         st.divider()
 
@@ -469,7 +469,7 @@ with tab3:
             color_discrete_map={"Qtr":"#224488","Half":"#4488ff","Full":"#00ddff"})
         fig3.update_layout(template="plotly_dark", paper_bgcolor="#0a0a0a",
                           plot_bgcolor="#111", xaxis_tickangle=-30)
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3)
 
         st.divider()
 
@@ -490,7 +490,7 @@ with tab3:
                       annotation_text="Break even")
         fig4.update_layout(template="plotly_dark", paper_bgcolor="#0a0a0a",
                           plot_bgcolor="#111", height=320)
-        st.plotly_chart(fig4, use_container_width=True)
+        st.plotly_chart(fig4)
 
 
 # ===========================================================================
@@ -539,7 +539,7 @@ with tab4:
                 title=f"Distribution of Portfolio Outcomes ({n_sims:,} simulations, ${bet_size}/trade)",
                 template="plotly_dark", paper_bgcolor="#0a0a0a", plot_bgcolor="#111",
                 xaxis_title="P&L ($)", yaxis_title="Frequency", height=420)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
             st.divider()
             st.subheader("Per-Trade Win Probabilities")
@@ -554,7 +554,7 @@ with tab4:
                     "Payout if Win": f"${payout:.0f}",
                     "EV": f"${expected_value(p_win,bet,crowd,side):+.0f}",
                 })
-            st.dataframe(pd.DataFrame(prob_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(prob_rows), hide_index=True)
 
 
 # ===========================================================================
@@ -590,7 +590,7 @@ with tab5:
                     "Market": mkt[:42],
                     "Side": r["side"],
                     "Expires": exp,
-                    "Days Left": d if d is not None else "—",
+                    "Days Left": str(d) if d is not None else "N/A",
                     "EV": f"${ev:+.0f}",
                     "Edge": f"{r['edge']*100:.1f}%",
                 })
@@ -598,7 +598,7 @@ with tab5:
             if "Days Left" in sched_df.columns:
                 sched_df = sched_df.sort_values("Days Left",
                     key=lambda x: pd.to_numeric(x, errors="coerce"))
-            st.dataframe(sched_df, use_container_width=True, hide_index=True)
+            st.dataframe(sched_df, hide_index=True)
 
         st.divider()
         st.subheader("What you'll see here once trades resolve:")
