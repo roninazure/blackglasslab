@@ -90,19 +90,38 @@ def check_positions():
     closed = [r for r in rows if r["status"] == "CLOSED"]
     void = [r for r in rows if r["status"] == "VOID"]
 
-    print(f"POSITIONS  [{len(open_trades)} open  {len(closed)} closed  {len(void)} void]")
+    total_exposure = sum(float(r["size_usd"] or 100) for r in open_trades)
 
+    print(f"POSITIONS  [{len(open_trades)} open  {len(closed)} closed  {len(void)} void]")
+    print(f"  {'MARKET':<38}  {'SIDE':<3}  {'ENTRY':<6}  {'BET':>6}  {'WIN PAYOUT':>11}  {'EDGE':>6}  HELD")
+
+    total_win = 0.0
     for r in open_trades:
         slug = (r["market_id"] or "")[:38]
-        side = r["side"] or "?"
+        side = (r["side"] or "?").upper()
         edge = float(r["edge"] or 0)
+        size = float(r["size_usd"] or 100)
+        p_yes = float(r["p_yes"] or 0.5)
         ts = r["ts_utc"] or ""
         try:
             entry_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             days_held = (now_utc() - entry_dt).days
         except Exception:
             days_held = "?"
-        print(f"  {slug:<38}  {side:<3}  edge={edge:.3f}  held {days_held}d")
+
+        # Compute win payout
+        try:
+            p = max(0.001, min(0.999, p_yes if side == "YES" else 1 - p_yes))
+            win_payout = round(size * (1.0 / p - 1.0), 2)
+        except Exception:
+            win_payout = 0.0
+        total_win += win_payout
+
+        print(f"  {slug:<38}  {side:<3}  {p_yes:>5.1%}  ${size:>5.0f}  ${win_payout:>10.2f}  {edge:>5.1%}  {days_held}d")
+
+    print()
+    print(f"  {'TOTAL EXPOSURE':<38}                 ${total_exposure:>6.0f}")
+    print(f"  {'TOTAL IF ALL WIN':<38}                        ${total_win:>10.2f}")
 
     if closed:
         print()
