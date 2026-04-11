@@ -38,17 +38,16 @@ def check_loop():
     print("LOOP")
     try:
         result = subprocess.run(
-            ["pgrep", "-af", "run_live.sh"],
+            ["ps", "aux"],
             capture_output=True, text=True
         )
-        # Filter out the pgrep call itself and this script
         pids = [l for l in result.stdout.strip().splitlines()
-                if "run_live.sh" in l and "morning_status" not in l and "pgrep" not in l]
+                if "run_live.sh" in l and "morning_status" not in l and "grep" not in l]
         if len(pids) == 1:
-            pid = pids[0].split()[0]
+            pid = pids[0].split()[1]
             print(f"  status   RUNNING  (pid {pid})")
         elif len(pids) > 1:
-            pid_list = " ".join(l.split()[0] for l in pids)
+            pid_list = " ".join(l.split()[1] for l in pids)
             print(f"  WARNING  {len(pids)} instances running (pids {pid_list})")
             print(f"           fix: pkill -f run_live.sh && pkill -f live_runner.py && nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
         else:
