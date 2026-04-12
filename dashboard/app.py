@@ -142,9 +142,11 @@ def load_trades() -> pd.DataFrame:
 
 @st.cache_data(ttl=15)
 def load_diagnostics() -> dict:
-    if not DIAG_PATH.exists(): return {}
-    try: return json.loads(DIAG_PATH.read_text())
-    except: return {}
+    for p in [DIAG_PATH, ROOT / "data" / "infer_diagnostics.json"]:
+        if p.exists():
+            try: return json.loads(p.read_text())
+            except: pass
+    return {}
 
 @st.cache_data(ttl=15)
 def load_log(n=10) -> list:
@@ -204,10 +206,15 @@ st.sidebar.divider()
 log = load_log(5)
 last_run = next((l for l in reversed(log) if "infer loop" in l), None)
 if last_run:
-    ts = last_run.replace("== ", "").replace(" : infer loop ==", "")
+    ts = last_run.replace("== ", "").replace(" : infer loop ==", "").split(" (")[0]
     st.sidebar.markdown(f'<div style="color:#00ff88;font-size:12px;">🟢 LOOP ALIVE<br><span style="color:#888">{ts}</span></div>', unsafe_allow_html=True)
 else:
-    st.sidebar.markdown('<div style="color:#ff4444;">🔴 LOOP NOT DETECTED</div>', unsafe_allow_html=True)
+    # On Streamlit Cloud the log isn't available — show last diagnostics ts instead
+    diag_ts = load_diagnostics().get("ts_utc", "")
+    if diag_ts:
+        st.sidebar.markdown(f'<div style="color:#ffaa00;font-size:12px;">☁️ CLOUD MODE<br><span style="color:#888">last sync: {diag_ts[11:19]} UTC</span></div>', unsafe_allow_html=True)
+    else:
+        st.sidebar.markdown('<div style="color:#ff4444;">🔴 LOOP NOT DETECTED</div>', unsafe_allow_html=True)
 
 st.sidebar.divider()
 if st.sidebar.button("⟳ Refresh Now"):

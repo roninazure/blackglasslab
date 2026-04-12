@@ -19,6 +19,7 @@ fi
 LOOPS="${LOOPS:-0}"           # 0 = forever
 SLEEP_SECS="${SLEEP_SECS:-3600}"
 RESOLVE_EVERY="${RESOLVE_EVERY:-6}"    # resolve closed trades every N cycles
+EXPORT_EVERY="${EXPORT_EVERY:-6}"      # export data to JSON + push every N cycles
 DISCOVER_EVERY="${DISCOVER_EVERY:-24}" # refresh watchlist every N cycles
 
 COUNT=0
@@ -49,6 +50,13 @@ while true; do
     echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) : auto-resolve (cycle $COUNT) =="
     python3 scripts/resolve_paper_trades.py \
     || echo "== [WARN] resolve_paper_trades.py exited non-zero =="
+  fi
+
+  # --- AUTO-EXPORT every EXPORT_EVERY cycles ---
+  if (( COUNT % EXPORT_EVERY == 0 )); then
+    echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) : auto-export data (cycle $COUNT) =="
+    python3 scripts/export_data.py \
+    || echo "== [WARN] export_data.py exited non-zero =="
   fi
 
   # --- AUTO-DISCOVER every DISCOVER_EVERY cycles ---
