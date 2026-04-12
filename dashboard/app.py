@@ -1,5 +1,5 @@
 """
-SWARM — BlackGlassLab Trading Dashboard
+Swarm Edge — Swarm Axis Trading Dashboard
 Bloomberg-style dark theme with live auto-refresh
 """
 import json
@@ -17,7 +17,7 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 # Page config + Bloomberg CSS
 # ---------------------------------------------------------------------------
-st.set_page_config(page_title="SWARM · BlackGlassLab", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Swarm Edge · Swarm Axis", page_icon="⚡", layout="wide")
 
 st.markdown("""
 <style>
@@ -190,8 +190,8 @@ def monte_carlo(trades_data, bankroll, n_sim=2000):
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
-st.sidebar.markdown('<h2 style="color:#00ff88;letter-spacing:3px;">⚡ SWARM</h2>', unsafe_allow_html=True)
-st.sidebar.markdown('<p style="color:#444;font-size:11px;">BlackGlassLab · AI Prediction Markets</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<h2 style="color:#00ff88;letter-spacing:3px;">⚡ SWARM EDGE</h2>', unsafe_allow_html=True)
+st.sidebar.markdown('<p style="color:#444;font-size:11px;">Swarm Axis · AI Prediction Markets</p>', unsafe_allow_html=True)
 st.sidebar.divider()
 
 bankroll = st.sidebar.number_input("Bankroll ($)", 100, 1_000_000, 10_000, 500)
@@ -225,7 +225,7 @@ if auto_refresh:
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
-st.markdown('<div class="alert-banner">⚡ SWARM TRADING TERMINAL &nbsp;·&nbsp; PAPER MODE &nbsp;·&nbsp; CLAUDE HAIKU REASONING ENGINE</div>', unsafe_allow_html=True)
+st.markdown('<div class="alert-banner">⚡ SWARM EDGE TRADING TERMINAL &nbsp;·&nbsp; PAPER MODE &nbsp;·&nbsp; CLAUDE HAIKU REASONING ENGINE</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Tabs
