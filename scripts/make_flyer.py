@@ -8,10 +8,61 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import HexColor
+import json
 import math
+import sqlite3
 from pathlib import Path
 
-OUT = Path(__file__).parent.parent / "swarm_edge_flyer.pdf"
+ROOT = Path(__file__).parent.parent
+OUT  = ROOT / "swarm_edge_flyer.pdf"
+DB_PATH   = ROOT / "memory" / "runs.sqlite"
+CUTOFF    = "2026-03-28T21:00"
+
+# ---------------------------------------------------------------------------
+# Pull live stats from DB
+# ---------------------------------------------------------------------------
+def live_stats() -> dict:
+    defaults = {"n_trades": 6, "deployed": 600, "total_payout": 8971, "n_markets": 15}
+    try:
+        wl = ROOT / "markets" / "polymarket_watchlist.json"
+        n_markets = len(json.loads(wl.read_text())) if wl.exists() else 15
+
+        if not DB_PATH.exists():
+            return {**defaults, "n_markets": n_markets}
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"SELECT * FROM paper_trades WHERE ts_utc > '{CUTOFF}' AND status = 'OPEN'"
+        ).fetchall()
+        conn.close()
+
+        total_payout = 0.0
+        for r in rows:
+            notes = {}
+            try:
+                notes = json.loads(r["notes"] or "{}")
+            except Exception:
+                pass
+            crowd = notes.get("p_yes_market") or float(r["p_yes"] or 0.5)
+            side  = r["side"]
+            sp    = (1 - crowd) if side == "NO" else crowd
+            if sp > 0:
+                total_payout += 100.0 / sp
+
+        if not rows:
+            # No live data — use sensible defaults
+            return {**defaults, "n_markets": n_markets}
+
+        deployed = len(rows) * 100
+        return {
+            "n_trades":     len(rows),
+            "deployed":     deployed,
+            "total_payout": round(total_payout),
+            "n_markets":    n_markets,
+        }
+    except Exception:
+        return defaults
 
 # Brand colors
 BLACK       = HexColor("#080e14")
@@ -116,7 +167,7 @@ def pill(c, x, y, text, bg=GREEN_DARK, fg=GREEN):
     return pw + 6
 
 
-def draw_page(c):
+def draw_page(c, stats: dict):
     # ── Full background ──────────────────────────────────────────────
     c.setFillColor(BLACK)
     c.rect(0, 0, W, H, fill=1, stroke=0)
@@ -216,13 +267,18 @@ def draw_page(c):
     # ── STAT CARDS ──────────────────────────────────────────────────
     y_cards = H - 390
     card_w = (W - 80 - 3 * 10) / 4
-    stats = [
-        ("Markets Monitored", "15",      "Politics · Macro · Crypto",    GREEN),
-        ("Open Positions",    "6",       "$600 deployed",                 CYAN),
-        ("Max Payout",        "$2,249",  "If all positions win",          YELLOW),
-        ("API Cost / Mo",     "~$0",     "Intelligence is the edge",      GREEN),
+    profit = stats["total_payout"] - stats["deployed"]
+    stat_data = [
+        ("Markets Monitored", str(stats["n_markets"]),
+         "Politics · Macro · Crypto",                         GREEN),
+        ("Open Positions",    str(stats["n_trades"]),
+         f"${stats['deployed']:,} deployed",                  CYAN),
+        ("Max Payout",        f"${stats['total_payout']:,}",
+         f"+${profit:,} profit if all win",                   YELLOW),
+        ("API Cost / Mo",     "~$0",
+         "Intelligence is the edge",                          GREEN),
     ]
-    for i, (label, value, sub, accent) in enumerate(stats):
+    for i, (label, value, sub, accent) in enumerate(stat_data):
         stat_card(c, 40 + i * (card_w + 10), y_cards, card_w, 78, label, value, sub, accent)
 
     # ── HOW IT WORKS ────────────────────────────────────────────────
@@ -419,13 +475,16 @@ def draw_page(c):
 
 
 def main():
+    stats = live_stats()
     c = canvas.Canvas(str(OUT), pagesize=letter)
     c.setTitle("Swarm Edge — AI Prediction Market Engine")
     c.setAuthor("Swarm Axis")
     c.setSubject("Promotional flyer — April 2026")
-    draw_page(c)
+    draw_page(c, stats)
     c.save()
     print(f"Generated: {OUT}")
+    print(f"  Markets: {stats['n_markets']}  Trades: {stats['n_trades']}  "
+          f"Deployed: ${stats['deployed']:,}  Max Payout: ${stats['total_payout']:,}")
 
 
 if __name__ == "__main__":
