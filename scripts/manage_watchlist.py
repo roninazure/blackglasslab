@@ -3,8 +3,8 @@
 manage_watchlist.py — Autonomous Polymarket watchlist manager.
 
 Runs daily. Fetches all active Polymarket markets, scores them by
-liquidity and resolution timeline, verifies slugs are priceable,
-and writes a clean watchlist with the best short + long term markets.
+liquidity, resolution timeline, and topic relevance (LLM-edge markets
+like politics/macro/crypto rank higher; sports lotteries rank lower).
 
 Usage:
     python3 scripts/manage_watchlist.py           # dry run — show what would change
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 import urllib.request
 import urllib.parse
@@ -36,11 +37,91 @@ LONG_TERM_DAYS  = (30, 365)  # resolves within a year
 SHORT_TERM_CAP  = 10         # max short-term slots
 LONG_TERM_CAP   = 15         # max long-term slots
 MIN_VOLUME      = 10_000     # minimum $ volume to qualify
-PAGES_TO_SCAN   = 15         # 100 markets per page = 1500 markets scanned
+MIN_PRICE       = 0.05       # skip extreme long-shots (YES < 5%)
+PAGES_TO_SCAN   = 20         # 100 markets per page = 2000 markets scanned
 
+# ---------------------------------------------------------------------------
+# Topic scoring — where LLM reasoning produces real edge
+# ---------------------------------------------------------------------------
+
+# (keyword_list, score_multiplier)  — first match wins (ordered by priority)
+TOPIC_BOOSTS: list[tuple[list[str], float]] = [
+    # Elections / governance — highest edge
+    (["election", "elected", "ballot", "referendum", "primary", "vote for", "polling"], 4.0),
+    (["president", "congress", "senate", "parliament", "prime minister", "governor",
+      "chancellor", "premier"], 3.5),
+    (["trump", "harris", "biden", "executive order", "impeach", "indict",
+      "convicted", "pardon"], 3.0),
+    # Macro / Fed
+    (["federal reserve", "rate cut", "rate hike", "fomc", "interest rate",
+      "fed funds", "basis point"], 3.5),
+    (["recession", "inflation", "gdp", "unemployment", "tariff", "cpi",
+      "trade war", "default"], 3.0),
+    # Geopolitics / conflict
+    (["war", "ceasefire", "invasion", "nuclear", "missile", "conflict",
+      "sanction", "coup", "assassination"], 3.0),
+    (["supreme court", "scotus", "court ruling", "verdict", "ruling",
+      "lawsuit", "indictment"], 3.0),
+    # Crypto / tech
+    (["bitcoin", " btc ", "ethereum", " eth ", "crypto", "solana", "ipo",
+      "acquisition", "merger", "bankruptcy", "stock price"], 2.5),
+    # Sports with reasoning value (playoff outcome — not individual team lottery)
+    (["nfl season", "super bowl winner", "nba champion", "world series winner",
+      "stanley cup winner", "masters winner", "world cup winner"], 1.5),
+]
+
+# Regex patterns → heavy penalty (sports lotteries — individual team long-shots)
+PENALTY_PATTERNS = [
+    r"will .{3,40} win the \d{4} fifa world cup",
+    r"will .{3,40} win the \d{4}[-–]\d{2,4} (champions league|la liga|premier league|bundesliga|serie a|ligue 1|eredivisie)",
+    r"will .{3,40} win the \d{4} nba (finals|championship)",
+    r"will .{3,40} win the \d{4} (world series|super bowl|stanley cup|grey cup)",
+    r"will .{3,40} win the .{3,30} division",
+    r"(be|become) the (1st|first|2nd|second|third|3rd) (overall )?pick",
+    r"win the \d{4}[-–]\d{2,4} (fa cup|league cup|copa del rey)",
+]
+PENALTY_FACTOR = 0.04   # reduce score to 4% — effectively buried
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def topic_multiplier(question: str) -> float:
+    q = question.lower()
+    for pattern in PENALTY_PATTERNS:
+        if re.search(pattern, q):
+            return PENALTY_FACTOR
+    for keywords, mult in TOPIC_BOOSTS:
+        if any(kw.lower() in q for kw in keywords):
+            return mult
+    return 1.0   # neutral
+
+
+def topic_label(question: str) -> str:
+    q = question.lower()
+    for pattern in PENALTY_PATTERNS:
+        if re.search(pattern, q):
+            return "sports-lottery"
+    labels = [
+        (["election", "ballot", "referendum", "primary"], "politics"),
+        (["president", "congress", "senate", "parliament", "prime minister"], "politics"),
+        (["trump", "harris", "biden", "executive order", "impeach"], "politics"),
+        (["federal reserve", "rate cut", "fomc", "interest rate"], "macro/fed"),
+        (["recession", "inflation", "gdp", "tariff", "cpi"], "macro/econ"),
+        (["war", "ceasefire", "invasion", "nuclear", "conflict", "sanction"], "geopolitics"),
+        (["supreme court", "scotus", "verdict", "indictment"], "legal"),
+        (["bitcoin", "btc", "ethereum", "eth", "crypto", "solana"], "crypto"),
+        (["ipo", "acquisition", "merger", "bankruptcy"], "corporate"),
+    ]
+    for keywords, label in labels:
+        if any(kw in q for kw in keywords):
+            return label
+    return "other"
 
 
 def fetch_page(offset: int) -> list:
@@ -71,6 +152,19 @@ def parse_end_date(m: dict) -> datetime | None:
     return None
 
 
+def best_price(m: dict) -> float | None:
+    """Return the highest outcome price (the market's most-likely side)."""
+    prices = m.get("outcomePrices")
+    try:
+        if isinstance(prices, str):
+            prices = json.loads(prices)
+        if isinstance(prices, list) and prices:
+            return max(float(p) for p in prices)
+    except Exception:
+        pass
+    return None
+
+
 def verify_slug(slug: str) -> bool:
     """Confirm slug returns real binary pricing from Gamma API."""
     qs = urllib.parse.urlencode({"slug": slug, "limit": 1})
@@ -97,10 +191,10 @@ def verify_slug(slug: str) -> bool:
         return False
 
 
-def score_market(volume: float, days: int) -> float:
-    """Score a market. Higher volume + sooner resolution = higher score."""
+def score_market(volume: float, days: int, question: str) -> float:
+    """Score = volume × recency × topic_multiplier."""
     recency = max(0.1, 1.0 - (days / 365))
-    return volume * recency
+    return volume * recency * topic_multiplier(question)
 
 
 def load_watchlist() -> list[dict]:
@@ -112,6 +206,10 @@ def load_watchlist() -> list[dict]:
 def save_watchlist(markets: list[dict]) -> None:
     WATCHLIST_PATH.write_text(json.dumps(markets, indent=2))
 
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Autonomous Polymarket watchlist manager")
@@ -130,6 +228,7 @@ def main() -> None:
     short_candidates = []
     long_candidates  = []
     seen_slugs = set()
+    skipped_price = 0
 
     for page in range(PAGES_TO_SCAN):
         markets = fetch_page(page * 100)
@@ -155,12 +254,20 @@ def main() -> None:
             if volume < MIN_VOLUME:
                 continue
 
+            # Skip extreme long-shots (price < MIN_PRICE on best side)
+            bp = best_price(m)
+            if bp is not None and bp < MIN_PRICE:
+                skipped_price += 1
+                continue
+
+            question = (m.get("question") or "")[:120]
             entry = {
                 "slug": slug,
-                "question": (m.get("question") or "")[:80],
+                "question": question[:80],
                 "days": days,
                 "volume": volume,
-                "score": score_market(volume, days),
+                "score": score_market(volume, days, question),
+                "topic": topic_label(question),
                 "end_date": end_dt.strftime("%Y-%m-%d"),
             }
 
@@ -171,11 +278,12 @@ def main() -> None:
 
         time.sleep(0.1)
 
+    print(f"Filtered {skipped_price} extreme long-shots (price < {MIN_PRICE:.0%})")
+
     # Sort by score descending
     short_candidates.sort(key=lambda x: x["score"], reverse=True)
     long_candidates.sort(key=lambda x: x["score"], reverse=True)
 
-    # Take top N, verify slugs
     print(f"Found {len(short_candidates)} short-term candidates, {len(long_candidates)} long-term candidates")
     print("Verifying slugs...")
     print()
@@ -204,14 +312,14 @@ def main() -> None:
     print(f"SHORT-TERM  ({SHORT_TERM_DAYS[0]}–{SHORT_TERM_DAYS[1]}d)  [{len(short_picks)} selected]")
     for c in short_picks:
         tag = "NEW" if c["slug"] not in current_slugs else "   "
-        print(f"  {tag}  {c['days']:3}d  ${c['volume']:>12,.0f}  {c['slug'][:52]}")
+        print(f"  {tag}  {c['days']:3}d  ${c['volume']:>12,.0f}  [{c['topic']:<14}]  {c['slug'][:45]}")
         print(f"           {c['question']}")
     print()
 
     print(f"LONG-TERM   ({LONG_TERM_DAYS[0]}–{LONG_TERM_DAYS[1]}d)  [{len(long_picks)} selected]")
     for c in long_picks:
         tag = "NEW" if c["slug"] not in current_slugs else "   "
-        print(f"  {tag}  {c['days']:3}d  ${c['volume']:>12,.0f}  {c['slug'][:52]}")
+        print(f"  {tag}  {c['days']:3}d  ${c['volume']:>12,.0f}  [{c['topic']:<14}]  {c['slug'][:45]}")
         print(f"           {c['question']}")
     print()
 
