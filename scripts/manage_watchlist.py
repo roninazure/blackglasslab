@@ -70,17 +70,21 @@ TOPIC_BOOSTS: list[tuple[list[str], float]] = [
       "stanley cup winner", "masters winner", "world cup winner"], 1.5),
 ]
 
-# Regex patterns → heavy penalty (sports lotteries — individual team long-shots)
-PENALTY_PATTERNS = [
+# Regex patterns → hard exclude (sports lotteries — individual team/player long-shots)
+# Any market matching these is skipped entirely during scanning.
+EXCLUDE_PATTERNS = [
     r"will .{3,40} win the \d{4} fifa world cup",
     r"will .{3,40} win the \d{4}[-–]\d{2,4} (champions league|la liga|premier league|bundesliga|serie a|ligue 1|eredivisie)",
     r"will .{3,40} win the \d{4} nba (finals|championship)",
     r"will .{3,40} win the \d{4} (world series|super bowl|stanley cup|grey cup)",
-    r"will .{3,40} win the .{3,30} division",
+    r"will .{3,40} win the .{3,30} (division|conference)",
     r"(be|become) the (1st|first|2nd|second|third|3rd) (overall )?pick",
     r"win the \d{4}[-–]\d{2,4} (fa cup|league cup|copa del rey)",
+    # Individual sports awards / trophies (scoring title, MVP races, etc.)
+    r"will .{3,50} win the .{3,50} (trophy|award|title|golden boot|ballon d.or|mvp)",
+    # League winner per-team markets (e.g. "Will Liverpool win the Premier League?")
+    r"win the .{3,50} (premier league|la liga|bundesliga|serie a|ligue 1)",
 ]
-PENALTY_FACTOR = 0.04   # reduce score to 4% — effectively buried
 
 
 # ---------------------------------------------------------------------------
@@ -91,11 +95,14 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def is_excluded(question: str) -> bool:
+    """Return True if the market matches a sports-lottery exclusion pattern."""
+    q = question.lower()
+    return any(re.search(p, q) for p in EXCLUDE_PATTERNS)
+
+
 def topic_multiplier(question: str) -> float:
     q = question.lower()
-    for pattern in PENALTY_PATTERNS:
-        if re.search(pattern, q):
-            return PENALTY_FACTOR
     for keywords, mult in TOPIC_BOOSTS:
         if any(kw.lower() in q for kw in keywords):
             return mult
@@ -104,23 +111,21 @@ def topic_multiplier(question: str) -> float:
 
 def topic_label(question: str) -> str:
     q = question.lower()
-    for pattern in PENALTY_PATTERNS:
-        if re.search(pattern, q):
-            return "sports-lottery"
     labels = [
         (["election", "ballot", "referendum", "primary"], "politics"),
         (["president", "congress", "senate", "parliament", "prime minister"], "politics"),
         (["trump", "harris", "biden", "executive order", "impeach"], "politics"),
         (["federal reserve", "rate cut", "fomc", "interest rate"], "macro/fed"),
         (["recession", "inflation", "gdp", "tariff", "cpi"], "macro/econ"),
-        (["war", "ceasefire", "invasion", "nuclear", "conflict", "sanction"], "geopolitics"),
+        ([r"\bwar\b", "ceasefire", "invasion", "nuclear", "conflict", "sanction"], "geopolitics"),
         (["supreme court", "scotus", "verdict", "indictment"], "legal"),
         (["bitcoin", "btc", "ethereum", "eth", "crypto", "solana"], "crypto"),
         (["ipo", "acquisition", "merger", "bankruptcy"], "corporate"),
     ]
     for keywords, label in labels:
-        if any(kw in q for kw in keywords):
-            return label
+        for kw in keywords:
+            if re.search(kw, q):
+                return label
     return "other"
 
 
@@ -229,6 +234,7 @@ def main() -> None:
     long_candidates  = []
     seen_slugs = set()
     skipped_price = 0
+    skipped_excluded = 0
 
     for page in range(PAGES_TO_SCAN):
         markets = fetch_page(page * 100)
@@ -261,6 +267,11 @@ def main() -> None:
                 continue
 
             question = (m.get("question") or "")[:120]
+
+            if is_excluded(question):
+                skipped_excluded += 1
+                continue
+
             entry = {
                 "slug": slug,
                 "question": question[:80],
@@ -279,6 +290,7 @@ def main() -> None:
         time.sleep(0.1)
 
     print(f"Filtered {skipped_price} extreme long-shots (price < {MIN_PRICE:.0%})")
+    print(f"Filtered {skipped_excluded} sports-lottery / individual-pick markets")
 
     # Sort by score descending
     short_candidates.sort(key=lambda x: x["score"], reverse=True)
