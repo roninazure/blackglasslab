@@ -2,13 +2,19 @@
 """
 manage_watchlist.py — Autonomous Polymarket watchlist manager.
 
-Runs daily. Fetches all active Polymarket markets, scores them by
-liquidity, resolution timeline, and topic relevance (LLM-edge markets
-like politics/macro/crypto rank higher; sports lotteries rank lower).
+Runs daily. Validates existing watchlist markets, keeps good ones,
+and fills empty slots with fresh high-edge candidates from a scan
+of 2000 Polymarket markets.
+
+Strategy:
+  • Existing markets stay until they expire or close (sticky)
+  • New picks only fill open slots (up to cap)
+  • Sports lotteries / individual-pick markets are hard-excluded
+  • LLM-edge topics (politics, macro, crypto, geopolitics) score higher
 
 Usage:
-    python3 scripts/manage_watchlist.py           # dry run — show what would change
-    python3 scripts/manage_watchlist.py --apply   # apply changes to watchlist
+    python3 scripts/manage_watchlist.py           # dry run
+    python3 scripts/manage_watchlist.py --apply   # apply changes
 """
 from __future__ import annotations
 
@@ -31,64 +37,59 @@ HEADERS = {
     "Referer": "https://polymarket.com/",
 }
 
-# Targets
-SHORT_TERM_DAYS = (2, 30)    # resolves within 30 days
-LONG_TERM_DAYS  = (30, 365)  # resolves within a year
-SHORT_TERM_CAP  = 10         # max short-term slots
-LONG_TERM_CAP   = 15         # max long-term slots
-MIN_VOLUME      = 10_000     # minimum $ volume to qualify
-MIN_PRICE       = 0.05       # skip extreme long-shots (YES < 5%)
-PAGES_TO_SCAN   = 20         # 100 markets per page = 2000 markets scanned
+SHORT_TERM_DAYS = (2, 30)
+LONG_TERM_DAYS  = (30, 365)
+SHORT_TERM_CAP  = 10
+LONG_TERM_CAP   = 15
+MIN_VOLUME      = 10_000
+MIN_PRICE       = 0.05
+PAGES_TO_SCAN   = 20
 
 # ---------------------------------------------------------------------------
-# Topic scoring — where LLM reasoning produces real edge
+# Topic scoring
 # ---------------------------------------------------------------------------
 
-# (keyword_list, score_multiplier)  — first match wins (ordered by priority)
 TOPIC_BOOSTS: list[tuple[list[str], float]] = [
-    # Elections / governance — highest edge
-    (["election", "elected", "ballot", "referendum", "primary", "vote for", "polling"], 4.0),
-    (["president", "congress", "senate", "parliament", "prime minister", "governor",
-      "chancellor", "premier"], 3.5),
+    (["election", "elected", "ballot", "referendum", "primary", "vote for"], 4.0),
+    (["president", "congress", "senate", "parliament", "prime minister",
+      "governor", "chancellor", "premier"], 3.5),
     (["trump", "harris", "biden", "executive order", "impeach", "indict",
       "convicted", "pardon"], 3.0),
-    # Macro / Fed
     (["federal reserve", "rate cut", "rate hike", "fomc", "interest rate",
       "fed funds", "basis point"], 3.5),
     (["recession", "inflation", "gdp", "unemployment", "tariff", "cpi",
       "trade war", "default"], 3.0),
-    # Geopolitics / conflict
-    (["war", "ceasefire", "invasion", "nuclear", "missile", "conflict",
+    (["ceasefire", "invasion", "nuclear", "missile", "conflict",
       "sanction", "coup", "assassination"], 3.0),
-    (["supreme court", "scotus", "court ruling", "verdict", "ruling",
+    (["supreme court", "scotus", "court ruling", "verdict",
       "lawsuit", "indictment"], 3.0),
-    # Crypto / tech
-    (["bitcoin", " btc ", "ethereum", " eth ", "crypto", "solana", "ipo",
-      "acquisition", "merger", "bankruptcy", "stock price"], 2.5),
-    # Sports with reasoning value (playoff outcome — not individual team lottery)
-    (["nfl season", "super bowl winner", "nba champion", "world series winner",
-      "stanley cup winner", "masters winner", "world cup winner"], 1.5),
+    (["bitcoin", " btc ", "ethereum", " eth ", "crypto", "solana"], 2.5),
+    (["ipo", "acquisition", "merger", "bankruptcy"], 2.0),
 ]
 
-# Regex patterns → hard exclude (sports lotteries — individual team/player long-shots)
-# Any market matching these is skipped entirely during scanning.
+# Hard-exclude patterns — these markets are never picked
 EXCLUDE_PATTERNS = [
+    # Team wins a specific tournament
     r"will .{3,40} win the \d{4} fifa world cup",
-    r"will .{3,40} win the \d{4}[-–]\d{2,4} (champions league|la liga|premier league|bundesliga|serie a|ligue 1|eredivisie)",
+    r"will .{3,40} win the \d{4}.{0,12}(stanley cup|grey cup|world series|super bowl)",
     r"will .{3,40} win the \d{4} nba (finals|championship)",
-    r"will .{3,40} win the \d{4} (world series|super bowl|stanley cup|grey cup)",
+    r"will .{3,40} win the \d{4}[-–]\d{2,4}.{0,20}(champions league|la liga|premier league|bundesliga|serie a|ligue 1|eredivisie)",
+    r"win the .{3,60}(premier league|la liga|bundesliga|serie a|ligue 1)",
+    # Division / conference winner
     r"will .{3,40} win the .{3,30} (division|conference)",
+    # Individual draft picks
     r"(be|become) the (1st|first|2nd|second|third|3rd) (overall )?pick",
-    r"win the \d{4}[-–]\d{2,4} (fa cup|league cup|copa del rey)",
-    # Individual sports awards / trophies (scoring title, MVP races, etc.)
-    r"will .{3,50} win the .{3,50} (trophy|award|title|golden boot|ballon d.or|mvp)",
-    # League winner per-team markets (e.g. "Will Liverpool win the Premier League?")
-    r"win the .{3,50} (premier league|la liga|bundesliga|serie a|ligue 1)",
+    # Individual sports awards and trophies
+    r"will .{3,60} win the .{3,60}(trophy|award|golden boot|ballon d.or|\bmvp\b)",
+    # Cup/domestic competitions per-team
+    r"win the \d{4}[-–]\d{2,4}.{0,10}(fa cup|league cup|copa del rey|dfb-pokal)",
+    # Meme / novelty markets
+    r"(jesus christ|second coming|rapture|will god|will aliens|flat earth|lizard people)",
 ]
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Core helpers
 # ---------------------------------------------------------------------------
 
 def now_utc() -> datetime:
@@ -96,7 +97,6 @@ def now_utc() -> datetime:
 
 
 def is_excluded(question: str) -> bool:
-    """Return True if the market matches a sports-lottery exclusion pattern."""
     q = question.lower()
     return any(re.search(p, q) for p in EXCLUDE_PATTERNS)
 
@@ -106,23 +106,24 @@ def topic_multiplier(question: str) -> float:
     for keywords, mult in TOPIC_BOOSTS:
         if any(kw.lower() in q for kw in keywords):
             return mult
-    return 1.0   # neutral
+    return 1.0
 
 
 def topic_label(question: str) -> str:
     q = question.lower()
-    labels = [
-        (["election", "ballot", "referendum", "primary"], "politics"),
+    checks = [
+        (["election", "ballot", "referendum", "primary"],               "politics"),
         (["president", "congress", "senate", "parliament", "prime minister"], "politics"),
-        (["trump", "harris", "biden", "executive order", "impeach"], "politics"),
-        (["federal reserve", "rate cut", "fomc", "interest rate"], "macro/fed"),
-        (["recession", "inflation", "gdp", "tariff", "cpi"], "macro/econ"),
-        ([r"\bwar\b", "ceasefire", "invasion", "nuclear", "conflict", "sanction"], "geopolitics"),
-        (["supreme court", "scotus", "verdict", "indictment"], "legal"),
-        (["bitcoin", "btc", "ethereum", "eth", "crypto", "solana"], "crypto"),
-        (["ipo", "acquisition", "merger", "bankruptcy"], "corporate"),
+        (["trump", "harris", "biden", "executive order", "impeach"],    "politics"),
+        (["federal reserve", "rate cut", "fomc", "interest rate"],      "macro/fed"),
+        (["recession", "inflation", "gdp", "tariff", "cpi"],            "macro/econ"),
+        ([r"\bceasefire\b", r"\binvasion\b", r"\bnuclear\b",
+          r"\bconflict\b", r"\bsanction\b"],                            "geopolitics"),
+        (["supreme court", "scotus", "verdict", "indictment"],          "legal"),
+        (["bitcoin", "btc", "ethereum", "eth", "crypto", "solana"],     "crypto"),
+        (["ipo", "acquisition", "merger", "bankruptcy"],                "corporate"),
     ]
-    for keywords, label in labels:
+    for keywords, label in checks:
         for kw in keywords:
             if re.search(kw, q):
                 return label
@@ -158,7 +159,6 @@ def parse_end_date(m: dict) -> datetime | None:
 
 
 def best_price(m: dict) -> float | None:
-    """Return the highest outcome price (the market's most-likely side)."""
     prices = m.get("outcomePrices")
     try:
         if isinstance(prices, str):
@@ -171,7 +171,6 @@ def best_price(m: dict) -> float | None:
 
 
 def verify_slug(slug: str) -> bool:
-    """Confirm slug returns real binary pricing from Gamma API."""
     qs = urllib.parse.urlencode({"slug": slug, "limit": 1})
     req = urllib.request.Request(f"{GAMMA_BASE}/markets?{qs}", headers=HEADERS)
     try:
@@ -181,23 +180,55 @@ def verify_slug(slug: str) -> bool:
             return False
         m = data[0]
         outcomes = m.get("outcomes")
-        prices = m.get("outcomePrices")
+        prices   = m.get("outcomePrices")
         if isinstance(outcomes, str):
             outcomes = json.loads(outcomes)
         if isinstance(prices, str):
             prices = json.loads(prices)
         return (
-            isinstance(outcomes, list) and
-            isinstance(prices, list) and
-            len(outcomes) >= 2 and
-            len(prices) >= 2
+            isinstance(outcomes, list) and isinstance(prices, list) and
+            len(outcomes) >= 2 and len(prices) >= 2
         )
     except Exception:
         return False
 
 
+def check_existing(slug: str, now: datetime) -> dict | None:
+    """
+    Validate an existing watchlist slug.
+    Returns a status dict if still valid, None if expired/closed/gone.
+    """
+    qs = urllib.parse.urlencode({"slug": slug, "limit": 1})
+    req = urllib.request.Request(f"{GAMMA_BASE}/markets?{qs}", headers=HEADERS)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+        if not isinstance(data, list) or not data:
+            return None
+        m = data[0]
+        if not m.get("active") or m.get("closed"):
+            return None
+        end_dt = parse_end_date(m)
+        if not end_dt:
+            return None
+        days = (end_dt - now).days
+        if days < SHORT_TERM_DAYS[0]:
+            return None   # resolving imminently — let it expire
+        volume   = float(m.get("volume") or 0)
+        question = (m.get("question") or "")[:80]
+        return {
+            "slug":     slug,
+            "question": question,
+            "days":     days,
+            "volume":   volume,
+            "topic":    topic_label(question),
+            "end_date": end_dt.strftime("%Y-%m-%d"),
+        }
+    except Exception:
+        return None
+
+
 def score_market(volume: float, days: int, question: str) -> float:
-    """Score = volume × recency × topic_multiplier."""
     recency = max(0.1, 1.0 - (days / 365))
     return volume * recency * topic_multiplier(question)
 
@@ -217,87 +248,119 @@ def save_watchlist(markets: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Autonomous Polymarket watchlist manager")
-    ap.add_argument("--apply", action="store_true", help="Apply changes (default: dry run)")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true")
     args = ap.parse_args()
 
-    now = now_utc()
+    now     = now_utc()
     current = load_watchlist()
-    current_slugs = {m["market_id"] for m in current}
 
     print(f"WATCHLIST MANAGER — {now.strftime('%Y-%m-%d %H:%M UTC')}")
     print(f"Current watchlist: {len(current)} markets")
-    print(f"Scanning {PAGES_TO_SCAN * 100} markets from Polymarket...")
     print()
 
-    short_candidates = []
-    long_candidates  = []
-    seen_slugs = set()
-    skipped_price = 0
+    # ------------------------------------------------------------------
+    # Step 1: validate existing markets — keep what's still good
+    # ------------------------------------------------------------------
+    print("Validating existing watchlist...")
+    valid_short: list[dict] = []
+    valid_long:  list[dict] = []
+    expired:     list[str]  = []
+
+    for entry in current:
+        slug = entry["market_id"]
+        info = check_existing(slug, now)
+        if info is None:
+            expired.append(slug)
+        elif SHORT_TERM_DAYS[0] <= info["days"] <= SHORT_TERM_DAYS[1]:
+            valid_short.append(info)
+        else:
+            valid_long.append(info)
+        time.sleep(0.15)
+
+    valid_slugs  = {m["slug"] for m in valid_short + valid_long}
+    short_slots  = SHORT_TERM_CAP - len(valid_short)
+    long_slots   = LONG_TERM_CAP  - len(valid_long)
+
+    print(f"  kept   {len(valid_short)} short-term  {len(valid_long)} long-term")
+    if expired:
+        print(f"  expired/closed: {len(expired)}")
+        for s in expired:
+            print(f"    - {s}")
+    print(f"  open slots: {short_slots} short  {long_slots} long")
+    print()
+
+    # ------------------------------------------------------------------
+    # Step 2: scan for new candidates to fill open slots
+    # ------------------------------------------------------------------
+    if short_slots <= 0 and long_slots <= 0:
+        print("All slots filled by existing markets. Nothing to scan.")
+    else:
+        print(f"Scanning {PAGES_TO_SCAN * 100} markets from Polymarket...")
+
+    short_candidates: list[dict] = []
+    long_candidates:  list[dict] = []
+    seen_slugs = set(valid_slugs)
     skipped_excluded = 0
 
-    for page in range(PAGES_TO_SCAN):
-        markets = fetch_page(page * 100)
-        if not markets:
-            break
+    if short_slots > 0 or long_slots > 0:
+        for page in range(PAGES_TO_SCAN):
+            markets = fetch_page(page * 100)
+            if not markets:
+                break
 
-        for m in markets:
-            slug = m.get("slug", "").strip()
-            if not slug or slug in seen_slugs:
-                continue
-            seen_slugs.add(slug)
+            for m in markets:
+                slug = m.get("slug", "").strip()
+                if not slug or slug in seen_slugs:
+                    continue
+                seen_slugs.add(slug)
 
-            if not m.get("active") or m.get("closed"):
-                continue
+                if not m.get("active") or m.get("closed"):
+                    continue
 
-            end_dt = parse_end_date(m)
-            if not end_dt:
-                continue
+                end_dt = parse_end_date(m)
+                if not end_dt:
+                    continue
 
-            days = (end_dt - now).days
-            volume = float(m.get("volume") or 0)
+                days   = (end_dt - now).days
+                volume = float(m.get("volume") or 0)
 
-            if volume < MIN_VOLUME:
-                continue
+                if volume < MIN_VOLUME:
+                    continue
 
-            # Skip extreme long-shots (price < MIN_PRICE on best side)
-            bp = best_price(m)
-            if bp is not None and bp < MIN_PRICE:
-                skipped_price += 1
-                continue
+                bp = best_price(m)
+                if bp is not None and bp < MIN_PRICE:
+                    continue
 
-            question = (m.get("question") or "")[:120]
+                question = (m.get("question") or "")[:120]
 
-            if is_excluded(question):
-                skipped_excluded += 1
-                continue
+                if is_excluded(question):
+                    skipped_excluded += 1
+                    continue
 
-            entry = {
-                "slug": slug,
-                "question": question[:80],
-                "days": days,
-                "volume": volume,
-                "score": score_market(volume, days, question),
-                "topic": topic_label(question),
-                "end_date": end_dt.strftime("%Y-%m-%d"),
-            }
+                entry = {
+                    "slug":     slug,
+                    "question": question[:80],
+                    "days":     days,
+                    "volume":   volume,
+                    "score":    score_market(volume, days, question),
+                    "topic":    topic_label(question),
+                    "end_date": end_dt.strftime("%Y-%m-%d"),
+                }
 
-            if SHORT_TERM_DAYS[0] <= days <= SHORT_TERM_DAYS[1]:
-                short_candidates.append(entry)
-            elif LONG_TERM_DAYS[0] < days <= LONG_TERM_DAYS[1]:
-                long_candidates.append(entry)
+                if SHORT_TERM_DAYS[0] <= days <= SHORT_TERM_DAYS[1]:
+                    short_candidates.append(entry)
+                elif LONG_TERM_DAYS[0] < days <= LONG_TERM_DAYS[1]:
+                    long_candidates.append(entry)
 
-        time.sleep(0.1)
+            time.sleep(0.1)
 
-    print(f"Filtered {skipped_price} extreme long-shots (price < {MIN_PRICE:.0%})")
-    print(f"Filtered {skipped_excluded} sports-lottery / individual-pick markets")
+        short_candidates.sort(key=lambda x: x["score"], reverse=True)
+        long_candidates.sort(key=lambda x: x["score"], reverse=True)
+        print(f"Filtered {skipped_excluded} sports-lottery / individual-pick markets")
+        print(f"Found {len(short_candidates)} short-term candidates, {len(long_candidates)} long-term candidates")
 
-    # Sort by score descending
-    short_candidates.sort(key=lambda x: x["score"], reverse=True)
-    long_candidates.sort(key=lambda x: x["score"], reverse=True)
-
-    print(f"Found {len(short_candidates)} short-term candidates, {len(long_candidates)} long-term candidates")
-    print("Verifying slugs...")
+    print("Verifying new candidates...")
     print()
 
     def pick_verified(candidates: list, cap: int) -> list:
@@ -310,49 +373,54 @@ def main() -> None:
             time.sleep(0.15)
         return verified
 
-    short_picks = pick_verified(short_candidates, SHORT_TERM_CAP)
-    long_picks  = pick_verified(long_candidates,  LONG_TERM_CAP)
-    all_picks   = short_picks + long_picks
-    new_slugs   = {c["slug"] for c in all_picks}
+    short_new = pick_verified(short_candidates, max(0, short_slots))
+    long_new  = pick_verified(long_candidates,  max(0, long_slots))
 
-    # Determine changes
-    to_add    = [c for c in all_picks if c["slug"] not in current_slugs]
-    to_remove = [m for m in current if m["market_id"] not in new_slugs]
-    to_keep   = [m for m in current if m["market_id"] in new_slugs]
+    # ------------------------------------------------------------------
+    # Step 3: report
+    # ------------------------------------------------------------------
+    final_short = valid_short + short_new
+    final_long  = valid_long  + long_new
+    new_pick_slugs = {c["slug"] for c in short_new + long_new}
 
-    # Report
-    print(f"SHORT-TERM  ({SHORT_TERM_DAYS[0]}–{SHORT_TERM_DAYS[1]}d)  [{len(short_picks)} selected]")
-    for c in short_picks:
-        tag = "NEW" if c["slug"] not in current_slugs else "   "
+    print(f"SHORT-TERM  ({SHORT_TERM_DAYS[0]}–{SHORT_TERM_DAYS[1]}d)  [{len(final_short)} / {SHORT_TERM_CAP} slots]")
+    for c in final_short:
+        tag = "NEW" if c["slug"] in new_pick_slugs else "   "
+        print(f"  {tag}  {c['days']:3}d  ${c['volume']:>12,.0f}  [{c['topic']:<14}]  {c['slug'][:45]}")
+        print(f"           {c['question']}")
+    if not final_short:
+        print("  (no qualifying short-term markets found)")
+    print()
+
+    print(f"LONG-TERM   ({LONG_TERM_DAYS[0]}–{LONG_TERM_DAYS[1]}d)  [{len(final_long)} / {LONG_TERM_CAP} slots]")
+    for c in final_long:
+        tag = "NEW" if c["slug"] in new_pick_slugs else "   "
         print(f"  {tag}  {c['days']:3}d  ${c['volume']:>12,.0f}  [{c['topic']:<14}]  {c['slug'][:45]}")
         print(f"           {c['question']}")
     print()
 
-    print(f"LONG-TERM   ({LONG_TERM_DAYS[0]}–{LONG_TERM_DAYS[1]}d)  [{len(long_picks)} selected]")
-    for c in long_picks:
-        tag = "NEW" if c["slug"] not in current_slugs else "   "
-        print(f"  {tag}  {c['days']:3}d  ${c['volume']:>12,.0f}  [{c['topic']:<14}]  {c['slug'][:45]}")
-        print(f"           {c['question']}")
-    print()
+    to_add    = short_new + long_new
+    to_remove = expired
+    to_keep   = valid_short + valid_long
 
     print(f"CHANGES:  +{len(to_add)} add  -{len(to_remove)} remove  ={len(to_keep)} keep")
     if to_remove:
-        print("REMOVING:")
-        for m in to_remove:
-            print(f"  - {m['market_id']}")
+        print("REMOVING (expired/closed):")
+        for s in to_remove:
+            print(f"  - {s}")
     print()
 
     if not args.apply:
         print("DRY RUN — no changes made. Run with --apply to update watchlist.")
         return
 
-    # Build new watchlist
     new_watchlist = (
-        [{"market_id": c["slug"]} for c in short_picks] +
-        [{"market_id": c["slug"]} for c in long_picks]
+        [{"market_id": c["slug"]} for c in final_short] +
+        [{"market_id": c["slug"]} for c in final_long]
     )
     save_watchlist(new_watchlist)
-    print(f"Watchlist updated: {len(new_watchlist)} markets ({len(short_picks)} short + {len(long_picks)} long)")
+    print(f"Watchlist updated: {len(new_watchlist)} markets "
+          f"({len(final_short)} short + {len(final_long)} long)")
 
 
 if __name__ == "__main__":
