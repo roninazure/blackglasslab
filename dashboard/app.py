@@ -118,7 +118,7 @@ def load_trades() -> pd.DataFrame:
     if DB_PATH.exists():
         conn = sqlite3.connect(DB_PATH)
         df = pd.read_sql_query(
-            f"SELECT * FROM paper_trades WHERE ts_utc > '{CUTOFF}' ORDER BY ts_utc DESC", conn)
+            f"SELECT * FROM paper_trades WHERE ts_utc > '{CUTOFF}' AND status = 'OPEN' ORDER BY ts_utc DESC", conn)
         conn.close()
     else:
         json_path = ROOT / "data" / "paper_trades.json"
@@ -132,7 +132,9 @@ def load_trades() -> pd.DataFrame:
         try: return json.loads(n) if isinstance(n, str) else (n or {})
         except: return {}
     df["_notes"] = df["notes"].apply(parse_notes)
-    df["crowd_p_yes"] = df["_notes"].apply(lambda n: n.get("p_yes_market"))
+    df["crowd_p_yes"] = df["_notes"].apply(lambda n: n.get("p_yes_market")).apply(
+        lambda x: x if (x is not None and not (isinstance(x, float) and math.isnan(x))) else None
+    )
     df["llm_confidence"] = df["_notes"].apply(lambda n: n.get("llm", {}).get("confidence", 0.7))
     df["rationale"] = df["_notes"].apply(lambda n: n.get("llm", {}).get("rationale", ""))
     df["ts_utc"] = pd.to_datetime(df["ts_utc"], utc=True)
