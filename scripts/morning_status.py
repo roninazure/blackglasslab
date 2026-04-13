@@ -93,7 +93,7 @@ def check_positions():
     total_exposure = sum(float(r["size_usd"] or 100) for r in open_trades)
 
     print(f"POSITIONS  [{len(open_trades)} open  {len(closed)} closed  {len(void)} void]")
-    print(f"  {'MARKET':<38}  {'SIDE':<3}  {'ENTRY':<6}  {'BET':>6}  {'WIN PAYOUT':>11}  {'EDGE':>6}  HELD")
+    print(f"  {'MARKET':<38}  {'SIDE':<3}  {'CROWD':<6}  {'BET':>6}  {'WIN PAYOUT':>11}  {'EDGE':>6}  HELD")
 
     total_win = 0.0
     for r in open_trades:
@@ -101,7 +101,7 @@ def check_positions():
         side = (r["side"] or "?").upper()
         edge = float(r["edge"] or 0)
         size = float(r["size_usd"] or 100)
-        p_yes = float(r["p_yes"] or 0.5)
+        p_yes_claude = float(r["p_yes"] or 0.5)
         ts = r["ts_utc"] or ""
         try:
             entry_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
@@ -109,19 +109,35 @@ def check_positions():
         except Exception:
             days_held = "?"
 
-        # Compute win payout
+        # Crowd price from notes (same source as dashboard)
+        notes = {}
         try:
-            p = max(0.001, min(0.999, p_yes if side == "YES" else 1 - p_yes))
-            win_payout = round(size * (1.0 / p - 1.0), 2)
+            notes = json.loads(r["notes"] or "{}")
+        except Exception:
+            pass
+        crowd_raw = notes.get("crowd_p_yes")
+        try:
+            crowd_p_yes = float(crowd_raw) if crowd_raw is not None else p_yes_claude
+            if crowd_p_yes != crowd_p_yes:  # NaN check
+                crowd_p_yes = p_yes_claude
+        except Exception:
+            crowd_p_yes = p_yes_claude
+
+        # Win payout = total return (stake ÷ crowd price), matching dashboard
+        try:
+            p_win = crowd_p_yes if side == "YES" else (1.0 - crowd_p_yes)
+            p_win = max(0.001, min(0.999, p_win))
+            win_payout = round(size / p_win, 2)
         except Exception:
             win_payout = 0.0
         total_win += win_payout
 
-        print(f"  {slug:<38}  {side:<3}  {p_yes:>5.1%}  ${size:>5.0f}  ${win_payout:>10.2f}  {edge:>5.1%}  {days_held}d")
+        print(f"  {slug:<38}  {side:<3}  {crowd_p_yes:>5.1%}  ${size:>5.0f}  ${win_payout:>10.2f}  {edge:>5.1%}  {days_held}d")
 
     print()
     print(f"  {'TOTAL EXPOSURE':<38}                 ${total_exposure:>6.0f}")
     print(f"  {'TOTAL IF ALL WIN':<38}                        ${total_win:>10.2f}")
+    print(f"  {'PROFIT IF ALL WIN':<38}                        ${total_win - total_exposure:>+10.2f}")
 
     if closed:
         print()
