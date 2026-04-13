@@ -1,5 +1,5 @@
 """
-SWARM — BlackGlassLab Trading Dashboard
+Swarm Edge — Swarm Axis Trading Dashboard
 Bloomberg-style dark theme with live auto-refresh
 """
 import json
@@ -17,7 +17,7 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 # Page config + Bloomberg CSS
 # ---------------------------------------------------------------------------
-st.set_page_config(page_title="SWARM · BlackGlassLab", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Swarm Edge · Swarm Axis", page_icon="⚡", layout="wide")
 
 st.markdown("""
 <style>
@@ -118,7 +118,7 @@ def load_trades() -> pd.DataFrame:
     if DB_PATH.exists():
         conn = sqlite3.connect(DB_PATH)
         df = pd.read_sql_query(
-            f"SELECT * FROM paper_trades WHERE ts_utc > '{CUTOFF}' ORDER BY ts_utc DESC", conn)
+            f"SELECT * FROM paper_trades WHERE ts_utc > '{CUTOFF}' AND status = 'OPEN' ORDER BY ts_utc DESC", conn)
         conn.close()
     else:
         json_path = ROOT / "data" / "paper_trades.json"
@@ -132,7 +132,9 @@ def load_trades() -> pd.DataFrame:
         try: return json.loads(n) if isinstance(n, str) else (n or {})
         except: return {}
     df["_notes"] = df["notes"].apply(parse_notes)
-    df["crowd_p_yes"] = df["_notes"].apply(lambda n: n.get("p_yes_market"))
+    df["crowd_p_yes"] = df["_notes"].apply(lambda n: n.get("p_yes_market")).apply(
+        lambda x: x if (x is not None and not (isinstance(x, float) and math.isnan(x))) else None
+    )
     df["llm_confidence"] = df["_notes"].apply(lambda n: n.get("llm", {}).get("confidence", 0.7))
     df["rationale"] = df["_notes"].apply(lambda n: n.get("llm", {}).get("rationale", ""))
     df["ts_utc"] = pd.to_datetime(df["ts_utc"], utc=True)
@@ -140,9 +142,11 @@ def load_trades() -> pd.DataFrame:
 
 @st.cache_data(ttl=15)
 def load_diagnostics() -> dict:
-    if not DIAG_PATH.exists(): return {}
-    try: return json.loads(DIAG_PATH.read_text())
-    except: return {}
+    for p in [DIAG_PATH, ROOT / "data" / "infer_diagnostics.json"]:
+        if p.exists():
+            try: return json.loads(p.read_text())
+            except: pass
+    return {}
 
 @st.cache_data(ttl=15)
 def load_log(n=10) -> list:
@@ -188,8 +192,8 @@ def monte_carlo(trades_data, bankroll, n_sim=2000):
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
-st.sidebar.markdown('<h2 style="color:#00ff88;letter-spacing:3px;">⚡ SWARM</h2>', unsafe_allow_html=True)
-st.sidebar.markdown('<p style="color:#444;font-size:11px;">BlackGlassLab · AI Prediction Markets</p>', unsafe_allow_html=True)
+st.sidebar.markdown('<h2 style="color:#00ff88;letter-spacing:3px;">⚡ SWARM EDGE</h2>', unsafe_allow_html=True)
+st.sidebar.markdown('<p style="color:#444;font-size:11px;">Swarm Axis · AI Prediction Markets</p>', unsafe_allow_html=True)
 st.sidebar.divider()
 
 bankroll = st.sidebar.number_input("Bankroll ($)", 100, 1_000_000, 10_000, 500)
@@ -202,10 +206,15 @@ st.sidebar.divider()
 log = load_log(5)
 last_run = next((l for l in reversed(log) if "infer loop" in l), None)
 if last_run:
-    ts = last_run.replace("== ", "").replace(" : infer loop ==", "")
+    ts = last_run.replace("== ", "").replace(" : infer loop ==", "").split(" (")[0]
     st.sidebar.markdown(f'<div style="color:#00ff88;font-size:12px;">🟢 LOOP ALIVE<br><span style="color:#888">{ts}</span></div>', unsafe_allow_html=True)
 else:
-    st.sidebar.markdown('<div style="color:#ff4444;">🔴 LOOP NOT DETECTED</div>', unsafe_allow_html=True)
+    # On Streamlit Cloud the log isn't available — show last diagnostics ts instead
+    diag_ts = load_diagnostics().get("ts_utc", "")
+    if diag_ts:
+        st.sidebar.markdown(f'<div style="color:#ffaa00;font-size:12px;">☁️ CLOUD MODE<br><span style="color:#888">last sync: {diag_ts[11:19]} UTC</span></div>', unsafe_allow_html=True)
+    else:
+        st.sidebar.markdown('<div style="color:#ff4444;">🔴 LOOP NOT DETECTED</div>', unsafe_allow_html=True)
 
 st.sidebar.divider()
 if st.sidebar.button("⟳ Refresh Now"):
@@ -223,7 +232,7 @@ if auto_refresh:
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
-st.markdown('<div class="alert-banner">⚡ SWARM TRADING TERMINAL &nbsp;·&nbsp; PAPER MODE &nbsp;·&nbsp; CLAUDE HAIKU REASONING ENGINE</div>', unsafe_allow_html=True)
+st.markdown('<div class="alert-banner">⚡ SWARM EDGE TRADING TERMINAL &nbsp;·&nbsp; PAPER MODE &nbsp;·&nbsp; CLAUDE HAIKU REASONING ENGINE</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Tabs
@@ -286,7 +295,7 @@ with tab1:
 
         st.divider()
         st.subheader("Positions")
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
         # Countdown timers
         st.divider()
@@ -325,7 +334,7 @@ with tab1:
             ))
             fig_g.update_layout(height=180, margin=dict(t=30, b=0, l=10, r=10),
                                  paper_bgcolor="#0a0a0a", font_color="#e0e0e0")
-            gauge_cols[i % 4].plotly_chart(fig_g, use_container_width=True)
+            gauge_cols[i % 4].plotly_chart(fig_g)
 
         # Rationales
         st.divider()
@@ -387,8 +396,8 @@ with tab2:
                          line_color="yellow", annotation_text="Threshold")
             fig.update_layout(template="plotly_dark", height=380,
                              paper_bgcolor="#0a0a0a", plot_bgcolor="#111")
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(scan_df, use_container_width=True, hide_index=True)
+            st.plotly_chart(fig)
+            st.dataframe(scan_df, hide_index=True)
 
         rej = {k:v for k,v in sm.get("rejected",{}).items() if v > 0}
         if rej:
@@ -397,7 +406,7 @@ with tab2:
                 names="Reason", values="Count", title="Rejection Reasons",
                 color_discrete_sequence=px.colors.qualitative.Dark24)
             fig2.update_layout(template="plotly_dark", paper_bgcolor="#0a0a0a")
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2)
 
         st.divider()
         st.subheader("Loop Log")
@@ -429,7 +438,7 @@ with tab3:
             fig.add_vline(x=0, line_color="white", line_dash="dash")
             fig.update_layout(template="plotly_dark", paper_bgcolor="#0a0a0a",
                              plot_bgcolor="#111", height=320)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
         # Claude vs Crowd
         with col2:
@@ -449,7 +458,7 @@ with tab3:
                               paper_bgcolor="#0a0a0a", plot_bgcolor="#111",
                               xaxis_tickangle=-30, height=320,
                               title="Where Claude Diverges From Crowd")
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2)
 
         st.divider()
 
@@ -469,7 +478,7 @@ with tab3:
             color_discrete_map={"Qtr":"#224488","Half":"#4488ff","Full":"#00ddff"})
         fig3.update_layout(template="plotly_dark", paper_bgcolor="#0a0a0a",
                           plot_bgcolor="#111", xaxis_tickangle=-30)
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3)
 
         st.divider()
 
@@ -490,7 +499,7 @@ with tab3:
                       annotation_text="Break even")
         fig4.update_layout(template="plotly_dark", paper_bgcolor="#0a0a0a",
                           plot_bgcolor="#111", height=320)
-        st.plotly_chart(fig4, use_container_width=True)
+        st.plotly_chart(fig4)
 
 
 # ===========================================================================
@@ -539,7 +548,7 @@ with tab4:
                 title=f"Distribution of Portfolio Outcomes ({n_sims:,} simulations, ${bet_size}/trade)",
                 template="plotly_dark", paper_bgcolor="#0a0a0a", plot_bgcolor="#111",
                 xaxis_title="P&L ($)", yaxis_title="Frequency", height=420)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig)
 
             st.divider()
             st.subheader("Per-Trade Win Probabilities")
@@ -554,7 +563,7 @@ with tab4:
                     "Payout if Win": f"${payout:.0f}",
                     "EV": f"${expected_value(p_win,bet,crowd,side):+.0f}",
                 })
-            st.dataframe(pd.DataFrame(prob_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(prob_rows), hide_index=True)
 
 
 # ===========================================================================
@@ -590,7 +599,7 @@ with tab5:
                     "Market": mkt[:42],
                     "Side": r["side"],
                     "Expires": exp,
-                    "Days Left": d if d is not None else "—",
+                    "Days Left": str(d) if d is not None else "N/A",
                     "EV": f"${ev:+.0f}",
                     "Edge": f"{r['edge']*100:.1f}%",
                 })
@@ -598,7 +607,7 @@ with tab5:
             if "Days Left" in sched_df.columns:
                 sched_df = sched_df.sort_values("Days Left",
                     key=lambda x: pd.to_numeric(x, errors="coerce"))
-            st.dataframe(sched_df, use_container_width=True, hide_index=True)
+            st.dataframe(sched_df, hide_index=True)
 
         st.divider()
         st.subheader("What you'll see here once trades resolve:")

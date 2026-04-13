@@ -14,11 +14,11 @@
 ║                                                                       ║
 ║    AI PREDICTION MARKET ENGINE          STATUS: LIVE ●               ║
 ║    VENUE: POLYMARKET                    MODE:   PAPER TRADING        ║
-║    PHASE: 3 — LLM REASONING             CYCLE:  60 MIN               ║
+║    COMPANY: SWARM AXIS                  CYCLE:  60 MIN               ║
 ║                                                                       ║
 ║    ┌─────────────┬─────────────┬─────────────┬─────────────┐         ║
 ║    │  MARKETS    │   TRADES    │    EDGE      │  BET SIZE   │         ║
-║    │     20      │      4      │   ≥ 5.0%     │    $100     │         ║
+║    │     15      │      6      │   ≥ 5.0%     │    $100     │         ║
 ║    └─────────────┴─────────────┴─────────────┴─────────────┘         ║
 ║                                                                       ║
 ╚═══════════════════════════════════════════════════════════════════════╝
@@ -157,7 +157,7 @@ python3 scripts/watch_resolutions.py
 <div align="center">
 
 ```
-  SWARM EDGE  ·  PHASE 3  ·  PAPER TRADING LIVE  ·  APRIL 2026
+  SWARM EDGE  ·  SWARM AXIS  ·  PAPER TRADING LIVE  ·  APRIL 2026
   REAL CAPITAL IS THE ENDGAME
 ```
 
