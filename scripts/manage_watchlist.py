@@ -77,6 +77,10 @@ EXCLUDE_PATTERNS = [
     r"win the .{3,60}(premier league|la liga|bundesliga|serie a|ligue 1)",
     # Division / conference winner
     r"will .{3,40} win the .{3,30} (division|conference)",
+    # Playoff / postseason qualification (any sport)
+    r"will .{3,50} (make|reach|qualify for) the .{0,20}(nhl|nba|nfl|mlb|mls|wnba).{0,15}(playoff|post.?season)",
+    r"will .{3,50} (make|reach|qualify for) the .{0,10}playoff",
+    r"(nhl|nba|nfl|mlb|mls|wnba) .{0,30}(playoff|postseason) .{0,20}(berth|spot|seed|qualifier)",
     # Individual draft picks
     r"(be|become) the (1st|first|2nd|second|third|3rd) (overall )?pick",
     # Individual sports awards and trophies
@@ -216,6 +220,8 @@ def check_existing(slug: str, now: datetime) -> dict | None:
             return None   # resolving imminently — let it expire
         volume   = float(m.get("volume") or 0)
         question = (m.get("question") or "")[:80]
+        if is_excluded(question):
+            return None   # evict sports/noise markets even if still active
         return {
             "slug":     slug,
             "question": question,
