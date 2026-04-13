@@ -1,8 +1,18 @@
 from __future__ import annotations
 
 import json
-import subprocess
+import urllib.request
+import urllib.error
 from typing import Any, Dict, List, Optional
+
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Accept": "application/json",
+    "Referer": "https://polymarket.com/",
+}
+
+# Bypass system proxies (VPN/corporate proxies cause CONNECT tunnel 403 with curl)
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class PolymarketAdapter:
@@ -20,13 +30,17 @@ class PolymarketAdapter:
         return self.VENUE
 
     def _fetch_json(self, url: str, *, context: str) -> Dict[str, Any]:
-        cmd = ["curl", "-sS", url]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if res.returncode != 0:
-            raise RuntimeError(f"curl failed rc={res.returncode} for {context}: {res.stderr.strip()[:300]}")
+        req = urllib.request.Request(url, headers=_HEADERS)
+        try:
+            with _OPENER.open(req, timeout=20) as r:
+                raw = r.read()
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"HTTP {e.code} fetching {context}: {e.reason}")
+        except Exception as e:
+            raise RuntimeError(f"fetch failed for {context}: {str(e)[:300]}")
 
         try:
-            data = json.loads(res.stdout)
+            data = json.loads(raw)
         except Exception as e:
             raise RuntimeError(f"gamma-api returned non-json for {context}: {str(e)}")
 
