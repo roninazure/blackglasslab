@@ -172,10 +172,10 @@ def _latest_arbiter_for_run(conn: sqlite3.Connection, run_id: str) -> Optional[D
 
 def _insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> str:
     cur = conn.cursor()
-    # One open position per market+side+venue — prevents the 50x duplicate problem
+    # One open position per market+venue (any side) — prevents YES+NO double-entry
     cur.execute(
-        "SELECT 1 FROM paper_trades WHERE market_id=? AND side=? AND venue=? AND status='OPEN' LIMIT 1;",
-        (cand["market_id"], cand["side"], cand["venue"]),
+        "SELECT 1 FROM paper_trades WHERE market_id=? AND venue=? AND status='OPEN' LIMIT 1;",
+        (cand["market_id"], cand["venue"]),
     )
     if cur.fetchone() is not None:
         return "skipped_duplicate"
@@ -323,7 +323,43 @@ def _infer_pick_slugs_batch(conn: sqlite3.Connection, watchlist: list[str], batc
     return (slugs, next_cursor)
 
 
-def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Optional[Dict[str, Any]]:
+def _topic_label(question: str) -> str:
+    """Classify market question into a broad category for concentration tracking."""
+    q = question.lower()
+    checks = [
+        (["election", "ballot", "referendum", "primary", "vote"],      "politics"),
+        (["president", "congress", "senate", "parliament", "prime minister"], "politics"),
+        (["trump", "harris", "biden", "executive order", "impeach"],   "politics"),
+        (["federal reserve", "rate cut", "rate hike", "fomc",
+          "interest rate", "fed funds"],                                "macro/fed"),
+        (["recession", "inflation", "gdp", "tariff", "cpi",
+          "unemployment"],                                              "macro/econ"),
+        (["ceasefire", "invasion", "nuclear", "conflict",
+          "sanction", "coup"],                                          "geopolitics"),
+        (["supreme court", "scotus", "verdict", "indictment",
+          "lawsuit"],                                                   "legal"),
+        (["bitcoin", "btc", "ethereum", "eth", "crypto",
+          "solana"],                                                    "crypto"),
+        (["ipo", "acquisition", "merger", "bankruptcy"],               "corporate"),
+    ]
+    for keywords, label in checks:
+        if any(kw in q for kw in keywords):
+            return label
+    return "other"
+
+
+def _category_cap_ok(conn: sqlite3.Connection, category: str) -> bool:
+    """Return True if opening another position in this category is within the cap."""
+    max_per = int(os.environ.get("BGL_MAX_PER_CATEGORY", "3") or "3")
+    cur = conn.execute(
+        "SELECT COUNT(*) FROM paper_trades WHERE status='OPEN' AND notes LIKE ?",
+        (f'%"category": "{category}"%',),
+    )
+    count = cur.fetchone()[0]
+    return count < max_per
+
+
+
     watchlist = _load_watchlist()
     if not watchlist or get_adapter is None:
         return None
@@ -493,6 +529,7 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             "reason": "infer",
             "status": "OPEN",
             "notes": {
+                "category": _topic_label(str(m.get("question") or slug)),
                 "adapter_venue": venue,
                 "p_yes_market": float(p_yes_market),
                 "edge_vs_market": float(edge_vs_market),
@@ -520,6 +557,11 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
         }
 
         if _passes_filters(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement):
+            category = _topic_label(str(m.get("question") or slug))
+            if not _category_cap_ok(conn, category):
+                infer_diag_counts["rejected"]["max_disagree"] += 0  # count as filtered
+                print(f"  [infer] category cap reached for '{category}' — skipping {slug}", flush=True)
+                continue
             infer_diag_counts["passed"] += 1
             _write_infer_diagnostics({
                 "ts_utc": utc_now_iso(),
