@@ -40,3 +40,9 @@ signals/trade_candidates_*.json
 live_runner.py.BROKEN.*
 live_runner.py.bak.*
 markets/_pm_search/
+
+*.bak
+*.bak_*
+bgl.db
+*.db
+.DS_Store
