@@ -115,7 +115,7 @@ def check_positions():
             notes = json.loads(r["notes"] or "{}")
         except Exception:
             pass
-        crowd_raw = notes.get("crowd_p_yes")
+        crowd_raw = notes.get("p_yes_market") or notes.get("crowd_p_yes")
         try:
             crowd_p_yes = float(crowd_raw) if crowd_raw is not None else p_yes_claude
             if crowd_p_yes != crowd_p_yes:  # NaN check
