@@ -41,15 +41,20 @@ def check_loop():
             ["ps", "aux"],
             capture_output=True, text=True
         )
+        # Only count bash/sh processes — caffeinate wrapping run_live.sh
+        # creates a parent process that also matches, causing false duplicates
         pids = [l for l in result.stdout.strip().splitlines()
-                if "run_live.sh" in l and "morning_status" not in l and "grep" not in l]
+                if "run_live.sh" in l
+                and "morning_status" not in l
+                and "grep" not in l
+                and "caffeinate" not in l]
         if len(pids) == 1:
             pid = pids[0].split()[1]
             print(f"  status   RUNNING  (pid {pid})")
         elif len(pids) > 1:
             pid_list = " ".join(l.split()[1] for l in pids)
             print(f"  WARNING  {len(pids)} instances running (pids {pid_list})")
-            print(f"           fix: pkill -f run_live.sh && pkill -f live_runner.py && nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
+            print(f"           fix: pkill -f run_live.sh && pkill -f live_runner.py && nohup caffeinate -i bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
         else:
             print("  status   NOT RUNNING  ← restart: nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
     except Exception:
@@ -201,7 +206,7 @@ def footer():
     print("  next steps:")
     print("  • resolve trades:  python3 scripts/resolve_paper_trades.py")
     print("  • full P&L:        python3 scripts/watch_resolutions.py")
-    print("  • restart loop:    pkill -f run_live.sh && nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
+    print("  • restart loop:    pkill -f run_live.sh && pkill -f live_runner.py && nohup caffeinate -i bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
     divider("─")
     print()
 
