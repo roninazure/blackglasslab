@@ -359,7 +359,7 @@ def _category_cap_ok(conn: sqlite3.Connection, category: str) -> bool:
     return count < max_per
 
 
-
+def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Optional[Dict[str, Any]]:
     watchlist = _load_watchlist()
     if not watchlist or get_adapter is None:
         return None
