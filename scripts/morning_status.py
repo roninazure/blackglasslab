@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
 """
-morning_status.py — Swarm Edge daily briefing.
+morning_status.py — Swarm Edge daily briefing + integrity check.
 Run each morning: python3 scripts/morning_status.py
 """
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-DB_PATH = ROOT / "memory" / "runs.sqlite"
-LOG_PATH = ROOT / "logs" / "infer_loop.log"
+ROOT      = Path(__file__).parent.parent
+DB_PATH   = ROOT / "memory" / "runs.sqlite"
+LOG_PATH  = ROOT / "logs" / "infer_loop.log"
 DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
+WATCH_PATH= ROOT / "markets" / "polymarket_watchlist.json"
+DATA_DIR  = ROOT / "data"
+
+PASS = "✓"
+WARN = "~"
+FAIL = "✗"
 
 
 def now_utc() -> datetime:
@@ -33,6 +41,92 @@ def header():
     divider()
 
 
+# ── SYSTEM HEALTH ─────────────────────────────────────────────────────────────
+
+def check_health():
+    checks: list[tuple[str, str, str]] = []
+
+    # SDK installed
+    try:
+        import anthropic
+        checks.append((PASS, "SDK", f"anthropic {anthropic.__version__}"))
+    except ImportError:
+        checks.append((FAIL, "SDK", "MISSING — pip install anthropic"))
+
+    # API key + claude_enabled
+    env_file = ROOT / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+    try:
+        from llm.claude_client import claude_enabled
+        if claude_enabled():
+            checks.append((PASS, "Claude", "enabled"))
+        else:
+            checks.append((FAIL, "Claude", "claude_enabled()=False — SDK or key missing"))
+    except Exception as e:
+        checks.append((WARN, "Claude", f"could not verify: {e}"))
+
+    # LLM actually called in last batch
+    try:
+        d = json.loads(DIAG_PATH.read_text())
+        rows = d.get("rows", [])
+        diag_ts = d.get("ts_utc", "")
+        try:
+            diag_dt = datetime.fromisoformat(diag_ts.replace("Z", "+00:00"))
+            hours_old = (now_utc() - diag_dt).total_seconds() / 3600
+            if hours_old > 3:
+                checks.append((WARN, "Diagnostics", f"{hours_old:.0f}h stale"))
+            else:
+                pass  # fresh, no need to surface
+        except Exception:
+            pass
+        llm_used = [r for r in rows if r.get("llm_used") is True]
+        llm_off  = [r for r in rows if r.get("llm_used") is False]
+        if llm_used:
+            checks.append((PASS, "LLM calls", f"{len(llm_used)}/{len(rows)} in last batch"))
+        elif llm_off:
+            checks.append((FAIL, "LLM calls", "0 — Claude not being called, check SDK+key"))
+        # all None = rejected pre-LLM, not a failure
+    except FileNotFoundError:
+        checks.append((WARN, "LLM calls", "no diagnostics yet"))
+    except Exception as e:
+        checks.append((WARN, "LLM calls", f"could not check: {e}"))
+
+    # Watchlist sports leak
+    try:
+        wl = json.loads(WATCH_PATH.read_text())
+        sports_patterns = [
+            r"nba.finals", r"stanley.cup", r"super.bowl", r"world.series",
+            r"nhl.playoff", r"nba.playoff", r"make.the.playoff",
+        ]
+        sports = [e["market_id"] for e in wl
+                  if any(re.search(p, e["market_id"].lower()) for p in sports_patterns)]
+        if sports:
+            checks.append((WARN, "Watchlist", f"{len(sports)} sports market(s) leaked in"))
+        else:
+            checks.append((PASS, "Watchlist", f"{len(wl)} markets, clean"))
+    except Exception:
+        checks.append((WARN, "Watchlist", "could not read"))
+
+    # Print health section
+    print()
+    print("SYSTEM HEALTH")
+    for status, label, detail in checks:
+        print(f"  {status}  {label:<14}  {detail}")
+
+    # Surface any failures prominently
+    failures = [c for c in checks if c[0] == FAIL]
+    if failures:
+        print()
+        print("  !! ACTION REQUIRED !!")
+        for _, label, detail in failures:
+            print(f"     {label}: {detail}")
+
+
 def check_loop():
     print()
     print("LOOP")
@@ -41,15 +135,20 @@ def check_loop():
             ["ps", "aux"],
             capture_output=True, text=True
         )
+        # Only count bash/sh processes — caffeinate wrapping run_live.sh
+        # creates a parent process that also matches, causing false duplicates
         pids = [l for l in result.stdout.strip().splitlines()
-                if "run_live.sh" in l and "morning_status" not in l and "grep" not in l]
+                if "run_live.sh" in l
+                and "morning_status" not in l
+                and "grep" not in l
+                and "caffeinate" not in l]
         if len(pids) == 1:
             pid = pids[0].split()[1]
             print(f"  status   RUNNING  (pid {pid})")
         elif len(pids) > 1:
             pid_list = " ".join(l.split()[1] for l in pids)
             print(f"  WARNING  {len(pids)} instances running (pids {pid_list})")
-            print(f"           fix: pkill -f run_live.sh && pkill -f live_runner.py && nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
+            print(f"           fix: pkill -f run_live.sh && pkill -f live_runner.py && nohup caffeinate -i bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
         else:
             print("  status   NOT RUNNING  ← restart: nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
     except Exception:
@@ -201,13 +300,14 @@ def footer():
     print("  next steps:")
     print("  • resolve trades:  python3 scripts/resolve_paper_trades.py")
     print("  • full P&L:        python3 scripts/watch_resolutions.py")
-    print("  • restart loop:    pkill -f run_live.sh && nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
+    print("  • restart loop:    pkill -f run_live.sh && pkill -f live_runner.py && nohup caffeinate -i bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
     divider("─")
     print()
 
 
 def main():
     header()
+    check_health()
     check_loop()
     check_positions()
     check_last_eval()
