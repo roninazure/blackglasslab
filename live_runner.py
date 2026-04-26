@@ -172,13 +172,17 @@ def _latest_arbiter_for_run(conn: sqlite3.Connection, run_id: str) -> Optional[D
 
 def _insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> str:
     cur = conn.cursor()
-    # One open position per market+venue (any side) — prevents YES+NO double-entry
+    # Block if any open OR pending position exists for this market
     cur.execute(
-        "SELECT 1 FROM paper_trades WHERE market_id=? AND venue=? AND status='OPEN' LIMIT 1;",
+        "SELECT 1 FROM paper_trades WHERE market_id=? AND venue=? AND status IN ('OPEN','PENDING') LIMIT 1;",
         (cand["market_id"], cand["venue"]),
     )
     if cur.fetchone() is not None:
         return "skipped_duplicate"
+
+    # Use PENDING status when approval gate is enabled
+    require_approval = os.environ.get("BGL_REQUIRE_APPROVAL", "1").strip() in ("1", "true", "yes")
+    status = "PENDING" if require_approval else "OPEN"
 
     conn.execute(
         """
@@ -199,14 +203,14 @@ def _insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> str:
             float(cand["disagreement"]),
             float(cand["size_usd"]),
             cand["reason"],
-            cand["status"],
+            status,
             float(cand.get("p_yes") or cand["consensus_p_yes"]),
             float(cand.get("edge") or 0.0),
             json.dumps(cand.get("notes") or {}, sort_keys=True),
         ),
     )
     conn.commit()
-    return "inserted"
+    return f"queued_for_approval" if status == "PENDING" else "inserted"
 
 
 def _arbiter_candidate_from_db(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Optional[Dict[str, Any]]:
@@ -351,11 +355,18 @@ def _topic_label(question: str) -> str:
 def _category_cap_ok(conn: sqlite3.Connection, category: str) -> bool:
     """Return True if opening another position in this category is within the cap."""
     max_per = int(os.environ.get("BGL_MAX_PER_CATEGORY", "3") or "3")
-    cur = conn.execute(
-        "SELECT COUNT(*) FROM paper_trades WHERE status='OPEN' AND notes LIKE ?",
-        (f'%"category": "{category}"%',),
-    )
-    count = cur.fetchone()[0]
+    # Parse notes JSON in Python — LIKE on JSON text is order-sensitive and fragile
+    rows = conn.execute(
+        "SELECT notes FROM paper_trades WHERE status IN ('OPEN', 'PENDING')"
+    ).fetchall()
+    count = 0
+    for (notes_str,) in rows:
+        try:
+            notes = json.loads(notes_str or "{}")
+            if notes.get("category") == category:
+                count += 1
+        except Exception:
+            pass
     return count < max_per
 
 
@@ -409,6 +420,19 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             continue
 
         p_yes_market, spread, pricing_source = market_yes_price(m)
+
+        # Skip extreme tail markets — crowd < 3% or > 97% are too illiquid/noisy
+        min_crowd = _env_float("BGL_MIN_CROWD_PRICE", 0.03)
+        max_crowd = 1.0 - min_crowd
+        if p_yes_market < min_crowd or p_yes_market > max_crowd:
+            infer_diag_counts["evaluated"] += 1
+            infer_diag_counts["rejected"]["low_liquidity"] += 1
+            infer_diag_rows.append({
+                "slug": slug, "decision": "REJECT",
+                "reason": "extreme_tail",
+                "p_yes_market": float(p_yes_market),
+            })
+            continue
 
         use_llm = (
             _env_bool("BGL_INFER_USE_LLM", False)

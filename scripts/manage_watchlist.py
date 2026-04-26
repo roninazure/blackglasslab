@@ -44,6 +44,8 @@ LONG_TERM_CAP   = 15
 MIN_VOLUME      = 10_000
 MIN_PRICE       = 0.05
 PAGES_TO_SCAN   = 20
+# Max markets per topic across the entire watchlist (prevents Fed-cut over-concentration)
+MAX_PER_TOPIC   = 2
 
 # ---------------------------------------------------------------------------
 # Topic scoring
@@ -73,8 +75,8 @@ EXCLUDE_PATTERNS = [
     r"will .{3,40} win the \d{4} fifa world cup",
     r"will .{3,40} win the \d{4}.{0,12}(stanley cup|grey cup|world series|super bowl)",
     r"will .{3,40} win the \d{4} nba (finals|championship)",
-    r"will .{3,40} win the \d{4}[-–]\d{2,4}.{0,20}(champions league|la liga|premier league|bundesliga|serie a|ligue 1|eredivisie)",
-    r"win the .{3,60}(premier league|la liga|bundesliga|serie a|ligue 1)",
+    r"will .{3,40} win the \d{4}[-–]\d{2,4}.{0,20}(champions league|europa league|conference league|la liga|premier league|bundesliga|serie a|ligue 1|eredivisie)",
+    r"win the .{3,60}(champions league|europa league|conference league|premier league|la liga|bundesliga|serie a|ligue 1)",
     # Division / conference winner
     r"will .{3,40} win the .{3,30} (division|conference)",
     # Playoff / postseason qualification (any sport)
@@ -369,18 +371,29 @@ def main() -> None:
     print("Verifying new candidates...")
     print()
 
-    def pick_verified(candidates: list, cap: int) -> list:
+    # Build topic counts from already-validated markets so concentration check is global
+    existing_topic_counts: dict[str, int] = {}
+    for m in valid_short + valid_long:
+        t = m.get("topic", "other")
+        existing_topic_counts[t] = existing_topic_counts.get(t, 0) + 1
+
+    def pick_verified(candidates: list, cap: int, topic_counts: dict) -> list:
         verified = []
         for c in candidates:
             if len(verified) >= cap:
                 break
+            t = c.get("topic", "other")
+            # "other" topics are unconstrained; named topics capped at MAX_PER_TOPIC
+            if t != "other" and topic_counts.get(t, 0) >= MAX_PER_TOPIC:
+                continue
             if verify_slug(c["slug"]):
                 verified.append(c)
+                topic_counts[t] = topic_counts.get(t, 0) + 1
             time.sleep(0.15)
         return verified
 
-    short_new = pick_verified(short_candidates, max(0, short_slots))
-    long_new  = pick_verified(long_candidates,  max(0, long_slots))
+    short_new = pick_verified(short_candidates, max(0, short_slots), existing_topic_counts)
+    long_new  = pick_verified(long_candidates,  max(0, long_slots),  existing_topic_counts)
 
     # ------------------------------------------------------------------
     # Step 3: report
@@ -408,6 +421,18 @@ def main() -> None:
     to_add    = short_new + long_new
     to_remove = expired
     to_keep   = valid_short + valid_long
+
+    # Topic concentration summary
+    all_final = final_short + final_long
+    topic_summary: dict[str, int] = {}
+    for m in all_final:
+        t = m.get("topic", "other")
+        topic_summary[t] = topic_summary.get(t, 0) + 1
+    print("TOPIC CONCENTRATION:")
+    for t, n in sorted(topic_summary.items(), key=lambda x: -x[1]):
+        warn = " !! OVER CAP" if t != "other" and n > MAX_PER_TOPIC else ""
+        print(f"  {t:<16} {n}{warn}")
+    print()
 
     print(f"CHANGES:  +{len(to_add)} add  -{len(to_remove)} remove  ={len(to_keep)} keep")
     if to_remove:

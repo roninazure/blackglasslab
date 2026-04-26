@@ -62,6 +62,8 @@ def check_health():
                 k, _, v = line.partition("=")
                 os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
     try:
+        import sys
+        sys.path.insert(0, str(ROOT))
         from llm.claude_client import claude_enabled
         if claude_enabled():
             checks.append((PASS, "Claude", "enabled"))
@@ -186,12 +188,28 @@ def check_positions():
     ).fetchall()
 
     open_trades = [r for r in rows if r["status"] == "OPEN"]
-    closed = [r for r in rows if r["status"] == "CLOSED"]
-    void = [r for r in rows if r["status"] == "VOID"]
+    pending    = [r for r in rows if r["status"] == "PENDING"]
+    closed     = [r for r in rows if r["status"] == "CLOSED"]
+    void       = [r for r in rows if r["status"] == "VOID"]
+
+    # Show pending trades as urgent banner
+    if pending:
+        print()
+        print(f"!! PENDING APPROVAL  [{len(pending)} trade(s)] — run: python3 scripts/approve_trades.py")
+        for r in pending:
+            notes = {}
+            try: notes = json.loads(r["notes"] or "{}")
+            except: pass
+            crowd = float(notes.get("p_yes_market") or r["p_yes"] or 0.5)
+            claude = float(r["p_yes"] or 0.5)
+            rationale = (notes.get("llm") or {}).get("rationale", "")[:80]
+            print(f"   {(r['market_id'] or '')[:38]:<38}  {(r['side'] or '?'):<3}  crowd={crowd:.1%}  claude={claude:.1%}  edge={float(r['edge'] or 0):.1%}")
+            if rationale:
+                print(f"   → {rationale}")
 
     total_exposure = sum(float(r["size_usd"] or 100) for r in open_trades)
 
-    print(f"POSITIONS  [{len(open_trades)} open  {len(closed)} closed  {len(void)} void]")
+    print(f"POSITIONS  [{len(open_trades)} open  {len(pending)} pending  {len(closed)} closed  {len(void)} void]")
     print(f"  {'MARKET':<38}  {'SIDE':<3}  {'CROWD':<6}  {'BET':>6}  {'WIN PAYOUT':>11}  {'EDGE':>6}  HELD")
 
     total_win = 0.0

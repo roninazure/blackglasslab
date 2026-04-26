@@ -21,8 +21,10 @@ SLEEP_SECS="${SLEEP_SECS:-3600}"
 RESOLVE_EVERY="${RESOLVE_EVERY:-6}"    # resolve closed trades every N cycles
 EXPORT_EVERY="${EXPORT_EVERY:-6}"      # export data to JSON + push every N cycles
 DISCOVER_EVERY="${DISCOVER_EVERY:-24}" # refresh watchlist every N cycles
+MAX_CONSECUTIVE_FAILURES="${MAX_CONSECUTIVE_FAILURES:-5}"
 
 COUNT=0
+CONSECUTIVE_FAILURES=0
 
 while true; do
   if [[ -f KILL ]]; then
@@ -33,6 +35,7 @@ while true; do
   echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) : infer loop == (cycle $((COUNT + 1)))"
 
   # --- INFER ---
+  if BGL_REQUIRE_APPROVAL="${BGL_REQUIRE_APPROVAL:-1}" \
   BGL_INFER_USE_LLM="${BGL_INFER_USE_LLM:-1}" \
   BGL_INFER_BATCH="${BGL_INFER_BATCH:-5}" \
   BGL_INFER_COOLDOWN="${BGL_INFER_COOLDOWN:-6}" \
@@ -41,8 +44,16 @@ while true; do
   BGL_MIN_EDGE_VS_MARKET="${BGL_MIN_EDGE_VS_MARKET:-0.040}" \
   BGL_MAX_DISAGREEMENT="${BGL_MAX_DISAGREEMENT:-0.45}" \
   BGL_MAX_DISAGREE="${BGL_MAX_DISAGREE:-0.45}" \
-  python3 live_runner.py --mode infer --source polymarket --paper --loops 1 \
-  || echo "== [WARN] live_runner.py exited non-zero — continuing loop =="
+  python3 live_runner.py --mode infer --source polymarket --paper --loops 1; then
+    CONSECUTIVE_FAILURES=0
+  else
+    CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
+    echo "== [WARN] live_runner.py exited non-zero (consecutive failures: $CONSECUTIVE_FAILURES / $MAX_CONSECUTIVE_FAILURES) =="
+    if [[ "$CONSECUTIVE_FAILURES" -ge "$MAX_CONSECUTIVE_FAILURES" ]]; then
+      echo "== [FATAL] $(date -u +%Y-%m-%dT%H:%M:%SZ) : $MAX_CONSECUTIVE_FAILURES consecutive failures — stopping loop. Check logs. =="
+      exit 1
+    fi
+  fi
 
   COUNT=$((COUNT + 1))
 
