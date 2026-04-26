@@ -33,6 +33,7 @@ while true; do
   echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) : infer loop == (cycle $((COUNT + 1)))"
 
   # --- INFER ---
+  BGL_REQUIRE_APPROVAL="${BGL_REQUIRE_APPROVAL:-1}" \
   BGL_INFER_USE_LLM="${BGL_INFER_USE_LLM:-1}" \
   BGL_INFER_BATCH="${BGL_INFER_BATCH:-5}" \
   BGL_INFER_COOLDOWN="${BGL_INFER_COOLDOWN:-6}" \
