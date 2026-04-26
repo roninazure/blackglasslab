@@ -94,38 +94,21 @@ CUTOFF = "2026-03-28T21:00"
 
 MARKET_EXPIRY = {
     "will-the-court-force-trump-to-refund-tariffs-2026-06-30": "2026-06-30",
-    "will-duke-win-the-2026-ncaa-tournament": "2026-04-08",
-    "will-tennessee-win-the-2026-ncaa-tournament": "2026-04-08",
-    "will-iowa-win-the-2026-ncaa-tournament": "2026-04-08",
-    "will-rory-mcilroy-win-the-2026-masters-tournament": "2026-04-13",
-    "will-scottie-scheffler-win-the-2026-masters-tournament": "2026-04-13",
-    "will-bryson-dechambeau-win-the-2026-masters-tournament": "2026-04-13",
-    "will-jon-rahm-win-the-2026-masters-tournament": "2026-04-13",
-    "will-jason-day-win-the-2026-masters-tournament": "2026-04-13",
-    "will-brooks-koepka-win-the-2026-masters-tournament": "2026-04-13",
     "will-no-fed-rate-cuts-happen-in-2026": "2026-12-31",
-    "eth-flipped-in-2026": "2026-12-31",
-    "will-bitcoin-hit-150k-by-june-30-2026": "2026-06-30",
+    "will-1-fed-rate-cut-happen-in-2026": "2026-12-31",
+    "will-2-fed-rate-cuts-happen-in-2026": "2026-12-31",
+    "will-3-fed-rate-cuts-happen-in-2026": "2026-12-31",
+    "will-4-fed-rate-cuts-happen-in-2026": "2026-12-31",
+    "fed-emergency-rate-cut-before-2027": "2026-12-31",
     "us-recession-by-end-of-2026": "2026-12-31",
+    "blue-wave-in-2026": "2026-11-03",
+    "eth-flipped-in-2026": "2026-12-31",
 }
 
 # ---------------------------------------------------------------------------
 # Data loaders
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=20)
-def load_trades() -> pd.DataFrame:
-    # Try local SQLite first, fall back to committed JSON for Streamlit Cloud
-    if DB_PATH.exists():
-        conn = sqlite3.connect(DB_PATH)
-        df = pd.read_sql_query(
-            f"SELECT * FROM paper_trades WHERE ts_utc > '{CUTOFF}' AND status = 'OPEN' ORDER BY ts_utc DESC", conn)
-        conn.close()
-    else:
-        json_path = ROOT / "data" / "paper_trades.json"
-        if not json_path.exists():
-            return pd.DataFrame()
-        records = json.loads(json_path.read_text())
-        df = pd.DataFrame(records)
+def _enrich(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     def parse_notes(n):
@@ -137,8 +120,30 @@ def load_trades() -> pd.DataFrame:
     )
     df["llm_confidence"] = df["_notes"].apply(lambda n: n.get("llm", {}).get("confidence", 0.7))
     df["rationale"] = df["_notes"].apply(lambda n: n.get("llm", {}).get("rationale", ""))
+    df["category"] = df["_notes"].apply(lambda n: n.get("category", "other"))
+    df["approval"] = df["_notes"].apply(lambda n: n.get("approval", {}))
     df["ts_utc"] = pd.to_datetime(df["ts_utc"], utc=True)
     return df
+
+
+@st.cache_data(ttl=20)
+def load_trades(statuses: tuple = ("OPEN",)) -> pd.DataFrame:
+    # Try local SQLite first, fall back to committed JSON for Streamlit Cloud
+    placeholders = ",".join(f"'{s}'" for s in statuses)
+    if DB_PATH.exists():
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql_query(
+            f"SELECT * FROM paper_trades WHERE ts_utc > '{CUTOFF}' AND status IN ({placeholders}) ORDER BY ts_utc DESC", conn)
+        conn.close()
+    else:
+        json_path = ROOT / "data" / "paper_trades.json"
+        if not json_path.exists():
+            return pd.DataFrame()
+        records = json.loads(json_path.read_text())
+        df = pd.DataFrame(records)
+        if not df.empty and "status" in df.columns:
+            df = df[df["status"].isin(statuses)].reset_index(drop=True)
+    return _enrich(df)
 
 @st.cache_data(ttl=15)
 def load_diagnostics() -> dict:
@@ -241,14 +246,43 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Portfolio", "🔍 Scanner", "📈 Charts", "🎲 Monte Carlo", "🏆 Performance"
 ])
 
-df = load_trades()
+df         = load_trades(statuses=("OPEN",))
+df_pending = load_trades(statuses=("PENDING",))
+df_void    = load_trades(statuses=("VOID",))
 
 # ===========================================================================
 # TAB 1 — PORTFOLIO
 # ===========================================================================
 with tab1:
+    # PENDING approval banner — shown above everything else when trades await review
+    if not df_pending.empty:
+        st.markdown(
+            f'<div style="background:linear-gradient(90deg,#3a2a0a,#1a1500);'
+            f'border:1px solid #ffaa00;border-left:4px solid #ffaa00;'
+            f'padding:10px 16px;color:#ffcc44;font-weight:bold;'
+            f'margin-bottom:12px;letter-spacing:1px;font-size:13px;">'
+            f'⚠ {len(df_pending)} TRADE(S) AWAITING APPROVAL &nbsp;·&nbsp; '
+            f'run: <code style="color:#ffdd66">python3 scripts/approve_trades.py</code>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        pending_rows = []
+        for _, r in df_pending.iterrows():
+            crowd = r.get("crowd_p_yes") or r["p_yes"]
+            pending_rows.append({
+                "Market": r["market_id"][:42],
+                "Side": r["side"],
+                "Crowd%": f"{crowd*100:.1f}%",
+                "Claude%": f"{r['p_yes']*100:.1f}%",
+                "Edge": f"{r['edge']*100:.1f}%",
+                "Category": r.get("category", "?"),
+                "Queued": str(r["ts_utc"])[:16],
+            })
+        st.dataframe(pd.DataFrame(pending_rows), width='stretch', hide_index=True)
+        st.divider()
+
     if df.empty:
-        st.info("No real trades yet.")
+        st.info("No open trades right now.")
     else:
         # Top metrics
         total_bet = len(df) * 100.0
@@ -350,7 +384,12 @@ with tab1:
                 col2.metric("Crowd p_yes", f"{crowd*100:.1f}%")
                 col3.metric("Confidence", f"{(r.get('llm_confidence') or 0.7)*100:.0f}%")
                 st.info(r["rationale"] or "No rationale recorded")
-                st.caption(str(r["ts_utc"]))
+                ap = r.get("approval") or {}
+                if ap:
+                    st.caption(
+                        f"✓ approved by {ap.get('by','?')} at {ap.get('ts_utc','?')}"
+                    )
+                st.caption(f"queued: {r['ts_utc']}")
 
 
 # ===========================================================================
@@ -574,9 +613,9 @@ with tab5:
     resolved = df[df["status"]=="RESOLVED"] if not df.empty else pd.DataFrame()
 
     c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Total Trades", len(df) if not df.empty else 0)
-    c2.metric("Resolved", len(resolved))
-    c3.metric("Pending", len(df)-len(resolved) if not df.empty else 0)
+    c1.metric("Open", len(df) if not df.empty else 0)
+    c2.metric("Pending", len(df_pending) if not df_pending.empty else 0)
+    c3.metric("Voided", len(df_void) if not df_void.empty else 0)
 
     if not resolved.empty:
         wins = resolved[resolved["resolved_outcome"]==resolved["side"]]
@@ -608,6 +647,22 @@ with tab5:
                 sched_df = sched_df.sort_values("Days Left",
                     key=lambda x: pd.to_numeric(x, errors="coerce"))
             st.dataframe(sched_df, hide_index=True)
+
+        if not df_void.empty:
+            st.divider()
+            st.subheader(f"🗑 Voided Trades ({len(df_void)})")
+            void_rows = []
+            for _, r in df_void.iterrows():
+                ap = r.get("approval") or {}
+                outcome = r.get("resolved_outcome") or ""
+                void_rows.append({
+                    "Market": r["market_id"][:42],
+                    "Side": r["side"],
+                    "Voided": str(r["ts_utc"])[:16],
+                    "Reason": ap.get("reason") or outcome or "—",
+                    "By": ap.get("by", "system"),
+                })
+            st.dataframe(pd.DataFrame(void_rows), width='stretch', hide_index=True)
 
         st.divider()
         st.subheader("What you'll see here once trades resolve:")
