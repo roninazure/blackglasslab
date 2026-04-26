@@ -410,6 +410,19 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
 
         p_yes_market, spread, pricing_source = market_yes_price(m)
 
+        # Skip extreme tail markets — crowd < 3% or > 97% are too illiquid/noisy
+        min_crowd = _env_float("BGL_MIN_CROWD_PRICE", 0.03)
+        max_crowd = 1.0 - min_crowd
+        if p_yes_market < min_crowd or p_yes_market > max_crowd:
+            infer_diag_counts["evaluated"] += 1
+            infer_diag_counts["rejected"]["low_liquidity"] += 1
+            infer_diag_rows.append({
+                "slug": slug, "decision": "REJECT",
+                "reason": "extreme_tail",
+                "p_yes_market": float(p_yes_market),
+            })
+            continue
+
         use_llm = (
             _env_bool("BGL_INFER_USE_LLM", False)
             and openai_enabled()

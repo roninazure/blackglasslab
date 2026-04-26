@@ -73,8 +73,8 @@ EXCLUDE_PATTERNS = [
     r"will .{3,40} win the \d{4} fifa world cup",
     r"will .{3,40} win the \d{4}.{0,12}(stanley cup|grey cup|world series|super bowl)",
     r"will .{3,40} win the \d{4} nba (finals|championship)",
-    r"will .{3,40} win the \d{4}[-–]\d{2,4}.{0,20}(champions league|la liga|premier league|bundesliga|serie a|ligue 1|eredivisie)",
-    r"win the .{3,60}(premier league|la liga|bundesliga|serie a|ligue 1)",
+    r"will .{3,40} win the \d{4}[-–]\d{2,4}.{0,20}(champions league|europa league|conference league|la liga|premier league|bundesliga|serie a|ligue 1|eredivisie)",
+    r"win the .{3,60}(champions league|europa league|conference league|premier league|la liga|bundesliga|serie a|ligue 1)",
     # Division / conference winner
     r"will .{3,40} win the .{3,30} (division|conference)",
     # Playoff / postseason qualification (any sport)

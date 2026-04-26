@@ -62,6 +62,8 @@ def check_health():
                 k, _, v = line.partition("=")
                 os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
     try:
+        import sys
+        sys.path.insert(0, str(ROOT))
         from llm.claude_client import claude_enabled
         if claude_enabled():
             checks.append((PASS, "Claude", "enabled"))
