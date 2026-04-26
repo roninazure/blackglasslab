@@ -2,94 +2,37 @@
   "mode": "infer",
   "rows": [
     {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-the-fed-decrease-interest-rates-by-50-bps-after-the-april-2026-meeting"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-the-fed-increase-interest-rates-by-25-bps-after-the-april-2026-meeting"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-the-fed-decrease-interest-rates-by-25-bps-after-the-april-2026-meeting"
+    },
+    {
       "components": {},
       "decision": "REJECT",
-      "disagreement": 0.35,
-      "edge_abs": 0.01,
-      "edge_vs_market": 0.01,
-      "llm_confidence": 0.65,
-      "llm_rationale": "Tarcisio de Freitas is S\u00e3o Paulo's governor with limited national profile and no apparent candidacy announcement as of April 2026. The 1% crowd price reflects his negligible viability in a crowded field, but Brazilian politics can be volatile. Slight upward adjustment to 2% accounts for tail-risk scenarios (major candidate withdrawal, unexpected coalition formation), though the crowd price is roughly calibrated to available information.",
-      "llm_used": true,
-      "p_yes_market": 0.01,
-      "p_yes_model": 0.02,
+      "disagreement": 1.0,
+      "edge_abs": 0.42,
+      "edge_vs_market": 0.0,
+      "p_yes_market": 0.08,
+      "p_yes_model": 0.08,
       "pricing_source": "mid",
-      "question": "Will Tarcisio de Freitas win the 2026 Brazilian presidential election?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election",
-      "spread": 0.001
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.01,
-      "edge_vs_market": 0.01,
-      "llm_confidence": 0.72,
-      "llm_rationale": "Bol\u00edvar (leftist senator, ex-Petro ally) is a marginal presidential candidate facing entrenched competition and Colombia's centrist-to-right lean. The 1% crowd price may be slightly undervalued given non-zero polling and name recognition, but his structural disadvantages (fractured left, institutional opposition) justify a very low probability.",
-      "llm_used": true,
-      "p_yes_market": 0.01,
-      "p_yes_model": 0.02,
-      "pricing_source": "last_trade",
-      "question": "Will Gustavo Bol\u00edvar win the 2026 Colombian presidential election?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election",
-      "spread": 0.0
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.01,
-      "edge_vs_market": 0.01,
-      "llm_confidence": 0.72,
-      "llm_rationale": "Eduardo Bolsonaro has never held executive office and polls consistently show him with minimal support (~1-3%) in Brazilian presidential races. The crowd price of 1% appears reasonable given his lack of viability as a mainstream candidate, though a small upward adjustment to 2% accounts for tail-risk scenarios (e.g., dramatic political realignment, Lula disqualification) that could elevate a Bolsonaro family member.",
-      "llm_used": true,
-      "p_yes_market": 0.01,
-      "p_yes_model": 0.02,
-      "pricing_source": "mid",
-      "question": "Will Eduardo Bolsonaro win the 2026 Brazilian presidential election?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election",
-      "spread": 0.001
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.15000000000000002,
-      "edge_abs": 0.01,
-      "edge_vs_market": 0.01,
-      "llm_confidence": 0.85,
-      "llm_rationale": "The crowd price of 1% is at the extreme low end; a 50+ bps cut after April 2026 requires either a major recession/crisis or severe policy error. CME FedWatch and Fed communication suggest gradual policy adjustments in normal conditions. The 1% price likely reflects base rate reality, though tail risks (financial crisis, deflation) warrant modest upward adjustment to ~2%.",
-      "llm_used": true,
-      "p_yes_market": 0.01,
-      "p_yes_model": 0.02,
-      "pricing_source": "last_trade",
-      "question": "Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "will-the-fed-decrease-interest-rates-by-50-bps-after-the-april-2026-meeting",
-      "spread": 0.0
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.15000000000000002,
-      "edge_abs": 0.01,
-      "edge_vs_market": 0.01,
-      "llm_confidence": 0.85,
-      "llm_rationale": "The April 2026 FOMC meeting has just occurred (timestamp shows 4/26/2026). With the meeting concluded, a 25+ bps hike is extremely unlikely unless an emergency/unscheduled meeting occurs. The 1% crowd price is appropriately calibrated to near-zero probability post-meeting. Minimal upside risk from emergency scenarios justifies only slight adjustment above market price.",
-      "llm_used": true,
-      "p_yes_market": 0.01,
-      "p_yes_model": 0.02,
-      "pricing_source": "mid",
-      "question": "Will the Fed increase interest rates by 25+ bps after the April 2026 meeting?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "will-the-fed-increase-interest-rates-by-25-bps-after-the-april-2026-meeting",
-      "spread": 0.001
+      "question": "Will Kim Kardashian pass the bar exam by May 3?",
+      "reason": "wide_spread",
+      "side": "NO",
+      "slug": "will-kim-kardashian-pass-the-bar-exam-by-may-3",
+      "spread": 0.04000000000000001
     }
   ],
   "settings": {
@@ -102,19 +45,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 5,
+    "evaluated": 4,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 0,
+      "low_liquidity": 3,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 5,
+      "min_edge_abs": 0,
       "min_edge_vs_market": 0,
-      "wide_spread": 0
+      "wide_spread": 1
     }
   },
-  "ts_utc": "2026-04-26T09:23:41.923716+00:00"
+  "ts_utc": "2026-04-26T13:53:11.174949+00:00"
 }
