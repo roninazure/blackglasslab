@@ -355,11 +355,18 @@ def _topic_label(question: str) -> str:
 def _category_cap_ok(conn: sqlite3.Connection, category: str) -> bool:
     """Return True if opening another position in this category is within the cap."""
     max_per = int(os.environ.get("BGL_MAX_PER_CATEGORY", "3") or "3")
-    cur = conn.execute(
-        "SELECT COUNT(*) FROM paper_trades WHERE status='OPEN' AND notes LIKE ?",
-        (f'%"category": "{category}"%',),
-    )
-    count = cur.fetchone()[0]
+    # Parse notes JSON in Python — LIKE on JSON text is order-sensitive and fragile
+    rows = conn.execute(
+        "SELECT notes FROM paper_trades WHERE status IN ('OPEN', 'PENDING')"
+    ).fetchall()
+    count = 0
+    for (notes_str,) in rows:
+        try:
+            notes = json.loads(notes_str or "{}")
+            if notes.get("category") == category:
+                count += 1
+        except Exception:
+            pass
     return count < max_per
 
 

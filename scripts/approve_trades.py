@@ -75,8 +75,14 @@ def main() -> None:
         while True:
             ans = input("  Approve? [y]es / [n]o / [s]kip : ").strip().lower()
             if ans in ("y", "yes"):
+                notes["approval"] = {
+                    "status": "approved",
+                    "ts_utc": now_utc(),
+                    "by": "approve_trades.py",
+                }
                 conn.execute(
-                    "UPDATE paper_trades SET status='OPEN' WHERE id=?", (r["id"],)
+                    "UPDATE paper_trades SET status='OPEN', notes=? WHERE id=?",
+                    (json.dumps(notes, sort_keys=True), r["id"])
                 )
                 conn.commit()
                 print(f"  ✓ APPROVED — trade is now OPEN")
@@ -84,9 +90,15 @@ def main() -> None:
                 break
             elif ans in ("n", "no"):
                 reason = input("  Rejection reason (optional): ").strip() or "manual_reject"
+                notes["approval"] = {
+                    "status": "rejected",
+                    "reason": reason,
+                    "ts_utc": now_utc(),
+                    "by": "approve_trades.py",
+                }
                 conn.execute(
-                    "UPDATE paper_trades SET status='VOID', resolved_outcome=? WHERE id=?",
-                    (f"REJECTED: {reason}", r["id"])
+                    "UPDATE paper_trades SET status='VOID', resolved_outcome=?, notes=? WHERE id=?",
+                    (f"REJECTED: {reason}", json.dumps(notes, sort_keys=True), r["id"])
                 )
                 conn.commit()
                 print(f"  ✗ REJECTED — trade voided")
