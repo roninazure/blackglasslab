@@ -5,25 +5,22 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-the-fed-decrease-interest-rates-by-50-bps-after-the-april-2026-meeting"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-the-fed-increase-interest-rates-by-25-bps-after-the-april-2026-meeting"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
       "slug": "will-the-fed-decrease-interest-rates-by-25-bps-after-the-april-2026-meeting"
+    },
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 1.0,
+      "edge_abs": 0.345,
+      "edge_vs_market": 0.0,
+      "p_yes_market": 0.155,
+      "p_yes_model": 0.155,
+      "pricing_source": "mid",
+      "question": "Will Kim Kardashian pass the bar exam by May 3?",
+      "reason": "wide_spread",
+      "side": "NO",
+      "slug": "will-kim-kardashian-pass-the-bar-exam-by-may-3",
+      "spread": 0.07
     }
   ],
   "settings": {
@@ -36,19 +33,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 4,
+    "evaluated": 2,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 4,
+      "low_liquidity": 1,
       "low_volume": 0,
       "max_disagree": 0,
       "min_edge_abs": 0,
       "min_edge_vs_market": 0,
-      "wide_spread": 0
+      "wide_spread": 1
     }
   },
-  "ts_utc": "2026-04-27T05:54:37.670135+00:00"
+  "ts_utc": "2026-04-27T11:55:14.439768+00:00"
 }
