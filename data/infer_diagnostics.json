@@ -5,22 +5,37 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-the-fed-decrease-interest-rates-by-25-bps-after-the-april-2026-meeting"
+      "slug": "will-matheus-cunha-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-bournemouth-finish-in-3rd-place-in-the-2025-26-english-premier-league"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-charalambos-kostoulas-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     },
     {
       "components": {},
-      "decision": "REJECT",
-      "disagreement": 1.0,
-      "edge_abs": 0.345,
-      "edge_vs_market": 0.0,
-      "p_yes_market": 0.155,
-      "p_yes_model": 0.155,
+      "decision": "PASS",
+      "disagreement": 0.4,
+      "edge_abs": 0.135,
+      "edge_vs_market": -0.135,
+      "llm_confidence": 0.6,
+      "llm_rationale": "The crowd price of 85.5% appears overconfident given historical midterm patterns and current uncertainty about 2026 conditions. A 'blue wave' typically requires substantial Democratic gains; the current date (April 2026) is very close to the election, but fundamental factors like economic conditions, incumbent party dynamics, and Senate map difficulty suggest meaningful Republican resistance. Crowd may be anchored to recent Democratic momentum, but 72% better reflects base rate risk and structural headwinds.",
+      "llm_used": true,
+      "p_yes_market": 0.855,
+      "p_yes_model": 0.72,
       "pricing_source": "mid",
-      "question": "Will Kim Kardashian pass the bar exam by May 3?",
-      "reason": "wide_spread",
+      "question": "Blue wave in 2026?",
+      "reason": "pass",
       "side": "NO",
-      "slug": "will-kim-kardashian-pass-the-bar-exam-by-may-3",
-      "spread": 0.07
+      "slug": "blue-wave-in-2026",
+      "spread": 0.010000000000000009
     }
   ],
   "settings": {
@@ -33,19 +48,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 2,
-    "passed": 0,
+    "evaluated": 4,
+    "passed": 1,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 1,
+      "low_liquidity": 3,
       "low_volume": 0,
       "max_disagree": 0,
       "min_edge_abs": 0,
       "min_edge_vs_market": 0,
-      "wide_spread": 1
+      "wide_spread": 0
     }
   },
-  "ts_utc": "2026-04-27T11:55:14.439768+00:00"
+  "ts_utc": "2026-04-27T17:56:12.758967+00:00"
 }
