@@ -5,18 +5,6 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
       "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
     },
     {
@@ -24,6 +12,18 @@
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
       "slug": "will-the-fed-decrease-interest-rates-by-50-bps-after-the-april-2026-meeting"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-the-fed-increase-interest-rates-by-25-bps-after-the-april-2026-meeting"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-the-fed-decrease-interest-rates-by-25-bps-after-the-april-2026-meeting"
     }
   ],
   "settings": {
@@ -50,5 +50,5 @@
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-04-26T23:54:01.709510+00:00"
+  "ts_utc": "2026-04-27T05:54:37.670135+00:00"
 }
