@@ -5,37 +5,37 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
+      "slug": "will-bournemouth-finish-in-3rd-place-in-the-2025-26-english-premier-league"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-charalambos-kostoulas-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-sunderland-be-relegated-from-the-english-premier-league-after-the-202526-season"
     },
     {
       "components": {},
       "decision": "REJECT",
       "disagreement": 0.28,
-      "edge_abs": 0.0050000000000000044,
-      "edge_vs_market": 0.0050000000000000044,
+      "edge_abs": 0.03500000000000003,
+      "edge_vs_market": -0.03500000000000003,
       "llm_confidence": 0.72,
-      "llm_rationale": "Paxton faces significant headwinds: prior indictment/legal issues, moderate incumbent positioning, and potential stronger primary challengers. Crowd price of 57.5% reflects genuine uncertainty. Given the date is April 2026 with primary likely in May, this market is near-expiry and momentum matters, but no clear recent shift from baseline fundamentals justifies large divergence from crowd price.",
+      "llm_rationale": "The 2026 midterms (Nov 2026) are 6 months away. Historical 'blue wave' outcomes are rare\u2014the incumbent party typically loses seats. Current conditions show mixed signals: Democratic structural advantages in Senate seats up for election, but inflation/economic concerns and typical midterm dynamics favor Republicans. The crowd price of 85.5% appears overconfident given historical base rates (~25% for a true wave) and headwinds. Moderately diverge down.",
       "llm_used": true,
-      "p_yes_market": 0.575,
-      "p_yes_model": 0.58,
+      "p_yes_market": 0.855,
+      "p_yes_model": 0.82,
       "pricing_source": "mid",
-      "question": "Will Ken Paxton win the 2026 Texas Republican Primary?",
+      "question": "Blue wave in 2026?",
       "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "will-ken-paxton-win-the-2026-republican-primary",
+      "side": "NO",
+      "slug": "blue-wave-in-2026",
       "spread": 0.010000000000000009
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-manchester-united-finish-in-2nd-place-in-the-2025-26-english-premier-league"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-matheus-cunha-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     }
   ],
   "settings": {
@@ -62,5 +62,5 @@
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-04-28T17:58:43.989240+00:00"
+  "ts_utc": "2026-04-28T23:59:14.416032+00:00"
 }
