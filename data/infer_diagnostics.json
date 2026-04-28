@@ -2,82 +2,40 @@
   "mode": "infer",
   "rows": [
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 1.0,
-      "edge_abs": 0.0044999999999999485,
-      "edge_vs_market": 0.0,
-      "p_yes_market": 0.5045,
-      "p_yes_model": 0.5045,
-      "pricing_source": "mid",
-      "question": "Will Tarcisio de Freitas win the 2026 Brazilian presidential election?",
-      "reason": "low_liquidity",
-      "side": "YES",
-      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election",
-      "spread": 0.989
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
     },
     {
       "components": {},
       "decision": "REJECT",
-      "disagreement": 1.0,
-      "edge_abs": 0.0004999999999999449,
-      "edge_vs_market": 0.0,
-      "p_yes_market": 0.5005,
-      "p_yes_model": 0.5005,
-      "pricing_source": "mid",
-      "question": "Will Gustavo Bol\u00edvar win the 2026 Colombian presidential election?",
-      "reason": "low_liquidity",
-      "side": "YES",
-      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election",
-      "spread": 0.981
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 1.0,
-      "edge_abs": 0.0010000000000000009,
-      "edge_vs_market": 0.0,
-      "p_yes_market": 0.501,
-      "p_yes_model": 0.501,
-      "pricing_source": "mid",
-      "question": "Will Eduardo Bolsonaro win the 2026 Brazilian presidential election?",
-      "reason": "low_liquidity",
-      "side": "YES",
-      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election",
-      "spread": 0.98
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.15000000000000002,
-      "edge_abs": 0.010000000000000002,
-      "edge_vs_market": 0.010000000000000002,
-      "llm_confidence": 0.85,
-      "llm_rationale": "Kim Kardashian's bar exam attempt is now ~5 days away (exam deadline May 3, 2026). She has been studying for years but has failed previous attempts. Recent reporting suggests low likelihood of passing on this attempt. The 4% crowd price appears reasonable and slightly undervalued; adjusting modestly upward to 5% reflects residual uncertainty but maintains skepticism given her track record.",
+      "disagreement": 0.28,
+      "edge_abs": 0.0050000000000000044,
+      "edge_vs_market": 0.0050000000000000044,
+      "llm_confidence": 0.72,
+      "llm_rationale": "Paxton faces significant headwinds: prior indictment/legal issues, moderate incumbent positioning, and potential stronger primary challengers. Crowd price of 57.5% reflects genuine uncertainty. Given the date is April 2026 with primary likely in May, this market is near-expiry and momentum matters, but no clear recent shift from baseline fundamentals justifies large divergence from crowd price.",
       "llm_used": true,
-      "p_yes_market": 0.04,
-      "p_yes_model": 0.05,
+      "p_yes_market": 0.575,
+      "p_yes_model": 0.58,
       "pricing_source": "mid",
-      "question": "Will Kim Kardashian pass the bar exam by May 3?",
+      "question": "Will Ken Paxton win the 2026 Texas Republican Primary?",
       "reason": "min_edge_abs",
       "side": "YES",
-      "slug": "will-kim-kardashian-pass-the-bar-exam-by-may-3",
-      "spread": 0.020000000000000004
+      "slug": "will-ken-paxton-win-the-2026-republican-primary",
+      "spread": 0.010000000000000009
     },
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 1.0,
-      "edge_abs": 0.38,
-      "edge_vs_market": 0.0,
-      "p_yes_market": 0.88,
-      "p_yes_model": 0.88,
-      "pricing_source": "last_trade",
-      "question": "Will Galatasaray win the S\u00fcper Lig?",
-      "reason": "low_liquidity",
-      "side": "YES",
-      "slug": "will-galatasaray-win-the-sper-lig",
-      "spread": 0.0
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-manchester-united-finish-in-2nd-place-in-the-2025-26-english-premier-league"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-matheus-cunha-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     }
   ],
   "settings": {
@@ -90,13 +48,13 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 5,
+    "evaluated": 4,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 4,
+      "low_liquidity": 3,
       "low_volume": 0,
       "max_disagree": 0,
       "min_edge_abs": 1,
@@ -104,5 +62,5 @@
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-04-28T11:57:57.802135+00:00"
+  "ts_utc": "2026-04-28T17:58:43.989240+00:00"
 }
