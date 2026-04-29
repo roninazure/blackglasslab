@@ -2,40 +2,34 @@
   "mode": "infer",
   "rows": [
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.015,
-      "edge_vs_market": 0.015,
-      "llm_confidence": 0.72,
-      "llm_rationale": "As of late April 2026, 3 cuts remaining in 2026 requires aggressive easing from current baseline. CME FedWatch and Fed guidance typically price this scenario below 10% probability. The 6.5% crowd price appears reasonably calibrated but slightly underprices tail-risk scenarios involving significant economic deterioration; modest upward adjustment to 8% reflects real but low probability of recession forcing policy reversal.",
-      "llm_used": true,
-      "p_yes_market": 0.065,
-      "p_yes_model": 0.08,
-      "pricing_source": "mid",
-      "question": "Will 3 Fed rate cuts happen in 2026?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "will-3-fed-rate-cuts-happen-in-2026",
-      "spread": 0.010000000000000009
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
     },
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.010000000000000009,
-      "edge_vs_market": -0.010000000000000009,
-      "llm_confidence": 0.72,
-      "llm_rationale": "ETH/BTC flip requires ETH to exceed BTC's market cap (~$1.53T at current prices). Ethereum's technical leadership in smart contracts and institutional adoption are strong, but network effects and Bitcoin's first-mover advantage in store-of-value narratives remain formidable. 22 months is sufficient time for significant movement, but a flip remains a low-probability tail event. Crowd price of 43% appears slightly optimistic given historical resistance to flips and structural headwinds; modest downward adjustment to 42% warranted.",
-      "llm_used": true,
-      "p_yes_market": 0.43,
-      "p_yes_model": 0.42,
-      "pricing_source": "mid",
-      "question": "Ethereum flipped in 2026?",
-      "reason": "min_edge_abs",
-      "side": "NO",
-      "slug": "eth-flipped-in-2026",
-      "spread": 0.020000000000000018
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.0135,
+      "reason": "extreme_tail",
+      "slug": "will-kim-kardashian-pass-the-bar-exam-by-may-3"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.986,
+      "reason": "extreme_tail",
+      "slug": "will-galatasaray-win-the-sper-lig"
     }
   ],
   "settings": {
@@ -48,19 +42,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 2,
+    "evaluated": 5,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 0,
+      "low_liquidity": 5,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 2,
+      "min_edge_abs": 0,
       "min_edge_vs_market": 0,
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-04-29T12:00:33.387790+00:00"
+  "ts_utc": "2026-04-29T18:01:20.544924+00:00"
 }
