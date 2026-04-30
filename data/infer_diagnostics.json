@@ -5,31 +5,37 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
+      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
+    },
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.38,
+      "edge_abs": 0.02499999999999991,
+      "edge_vs_market": -0.02499999999999991,
+      "llm_confidence": 0.62,
+      "llm_rationale": "Paxton faces significant headwinds: ongoing legal challenges, potential primary challengers with higher name recognition/fundraising, and Texas GOP preference for electable moderates. Crowd price of 57.5% appears slightly optimistic given his indictment history and divisive record. However, incumbent advantage and strong conservative base support prevent sharper downgrade.",
+      "llm_used": true,
+      "p_yes_market": 0.575,
+      "p_yes_model": 0.55,
+      "pricing_source": "mid",
+      "question": "Will Ken Paxton win the 2026 Texas Republican Primary?",
+      "reason": "min_edge_abs",
+      "side": "NO",
+      "slug": "will-ken-paxton-win-the-2026-republican-primary",
+      "spread": 0.010000000000000009
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
+      "slug": "will-manchester-united-finish-in-2nd-place-in-the-2025-26-english-premier-league"
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.0135,
-      "reason": "extreme_tail",
-      "slug": "will-kim-kardashian-pass-the-bar-exam-by-may-3"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.986,
-      "reason": "extreme_tail",
-      "slug": "will-galatasaray-win-the-sper-lig"
+      "slug": "will-matheus-cunha-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     }
   ],
   "settings": {
@@ -42,19 +48,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 5,
+    "evaluated": 4,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 5,
+      "low_liquidity": 3,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 0,
+      "min_edge_abs": 1,
       "min_edge_vs_market": 0,
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-04-29T18:01:20.544924+00:00"
+  "ts_utc": "2026-04-30T00:02:04.417827+00:00"
 }
