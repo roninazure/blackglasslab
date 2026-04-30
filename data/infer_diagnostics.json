@@ -4,71 +4,35 @@
     {
       "components": {},
       "decision": "REJECT",
-      "disagreement": 0.38,
-      "edge_abs": 0.03500000000000003,
-      "edge_vs_market": 0.03500000000000003,
-      "llm_confidence": 0.62,
-      "llm_rationale": "As of late April 2026, the crowd at 24.5% appears slightly underpricing recession risk given typical late-cycle dynamics and historical base rates (~20-25% annually). With ~7.5 months remaining, economic momentum would need to remain quite robust to avoid recession, and recent Fed policy transmission suggests tightening cycles historically precede downturns within 12-18 months. Modest upward adjustment to 28% reflects this tail risk while respecting the informative crowd signal.",
+      "disagreement": 0.28,
+      "edge_abs": 0.04999999999999999,
+      "edge_vs_market": 0.04999999999999999,
+      "llm_confidence": 0.72,
+      "llm_rationale": "Market is dated 2026-04-30, meaning we're already ~5 months into 2026 with actual Fed decisions observable. At 7% crowd price, the market is pricing ~1 cut maximum through year-end. Current economic conditions (as of late April 2026) and actual Fed actions to date would determine this; absent severe recession signals or dramatic pivot, 3 cuts total in 2026 requires either significant near-term cuts or previous cuts already taken. The 7% price appears slightly too low given base rates for 3+ cuts in any given year under normal conditions, but without knowing actual April 2026 economic data/Fed stance, only modest upward adjustment to ~12% is warranted.",
       "llm_used": true,
-      "p_yes_market": 0.245,
-      "p_yes_model": 0.28,
+      "p_yes_market": 0.07,
+      "p_yes_model": 0.12,
       "pricing_source": "mid",
-      "question": "US recession by end of 2026?",
+      "question": "Will 3 Fed rate cuts happen in 2026?",
       "reason": "min_edge_abs",
       "side": "YES",
-      "slug": "us-recession-by-end-of-2026",
-      "spread": 0.010000000000000009
+      "slug": "will-3-fed-rate-cuts-happen-in-2026",
+      "spread": 0.020000000000000004
     },
     {
       "components": {},
       "decision": "REJECT",
       "disagreement": 1.0,
-      "edge_abs": 0.4,
+      "edge_abs": 0.065,
       "edge_vs_market": 0.0,
-      "p_yes_market": 0.1,
-      "p_yes_model": 0.1,
+      "p_yes_market": 0.435,
+      "p_yes_model": 0.435,
       "pricing_source": "mid",
-      "question": "Fed emergency rate cut before 2027?",
+      "question": "Ethereum flipped in 2026?",
       "reason": "wide_spread",
       "side": "NO",
-      "slug": "fed-emergency-rate-cut-before-2027",
-      "spread": 0.08000000000000002
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.023499999999999854,
-      "edge_vs_market": -0.023499999999999854,
-      "llm_confidence": 0.72,
-      "llm_rationale": "As of late April 2026, we're deep into the year with ~7 months remaining. CME FedWatch data and recent Fed communications suggest modest probability of rate cuts, but inflation/employment dynamics remain uncertain. The crowd price of 57.3% for NO cuts appears slightly elevated given typical central bank optionality and economic uncertainty; I adjust modestly downward to 55% to reflect the still-meaningful probability of at least one cut by year-end, balanced against hawkish inflation concerns.",
-      "llm_used": true,
-      "p_yes_market": 0.5734999999999999,
-      "p_yes_model": 0.55,
-      "pricing_source": "mid",
-      "question": "Will no Fed rate cuts happen in 2026?",
-      "reason": "min_edge_abs",
-      "side": "NO",
-      "slug": "will-no-fed-rate-cuts-happen-in-2026",
-      "spread": 0.0030000000000000027
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.009999999999999981,
-      "edge_vs_market": 0.009999999999999981,
-      "llm_confidence": 0.72,
-      "llm_rationale": "At 2026-04-30, we're ~7 months into 2026 with no cuts yet. CME FedWatch data would show current rate expectations; if Fed has maintained restrictive stance through April without cuts, market-implied probability of at least one cut by year-end is genuinely low. Crowd price of 21% appears well-calibrated to fundamental expectations of continued higher-for-longer policy.",
-      "llm_used": true,
-      "p_yes_market": 0.21000000000000002,
-      "p_yes_model": 0.22,
-      "pricing_source": "mid",
-      "question": "Will 1 Fed rate cut happen in 2026?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "will-1-fed-rate-cut-happen-in-2026",
-      "spread": 0.01999999999999999
+      "slug": "eth-flipped-in-2026",
+      "spread": 0.030000000000000027
     }
   ],
   "settings": {
@@ -81,7 +45,7 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 4,
+    "evaluated": 2,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
@@ -90,10 +54,10 @@
       "low_liquidity": 0,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 3,
+      "min_edge_abs": 1,
       "min_edge_vs_market": 0,
       "wide_spread": 1
     }
   },
-  "ts_utc": "2026-04-30T12:02:55.346212+00:00"
+  "ts_utc": "2026-04-30T18:03:31.482956+00:00"
 }
