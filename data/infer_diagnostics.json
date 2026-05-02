@@ -2,22 +2,34 @@
   "mode": "infer",
   "rows": [
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 0.38,
-      "edge_abs": 0.015000000000000013,
-      "edge_vs_market": -0.015000000000000013,
-      "llm_confidence": 0.62,
-      "llm_rationale": "The question asks about ETH flipping (trading above BTC in price per unit), an extremely rare event requiring ETH to 2.7x while BTC stays flat. Crowd price of 43.5% appears overestimated given historical precedent (flips have occurred briefly only a few times) and current momentum favoring BTC dominance. Modest downward adjustment to 42% reflects low-moderate conviction that tail-risk events command some baseline probability even if unlikely.",
-      "llm_used": true,
-      "p_yes_market": 0.435,
-      "p_yes_model": 0.42,
-      "pricing_source": "mid",
-      "question": "Ethereum flipped in 2026?",
-      "reason": "min_edge_abs",
-      "side": "NO",
-      "slug": "eth-flipped-in-2026",
-      "spread": 0.010000000000000009
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.99,
+      "reason": "extreme_tail",
+      "slug": "will-galatasaray-win-the-sper-lig"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
     }
   ],
   "settings": {
@@ -30,19 +42,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 1,
+    "evaluated": 5,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 0,
+      "low_liquidity": 5,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 1,
+      "min_edge_abs": 0,
       "min_edge_vs_market": 0,
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-02T00:05:48.038214+00:00"
+  "ts_utc": "2026-05-02T06:06:09.089349+00:00"
 }
