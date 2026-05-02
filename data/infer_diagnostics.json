@@ -4,53 +4,20 @@
     {
       "components": {},
       "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.040000000000000036,
-      "edge_vs_market": 0.040000000000000036,
-      "llm_confidence": 0.72,
-      "llm_rationale": "As of May 2026, ~7 months remain until year-end. Current US economic data would be critical\u2014the crowd price of 24% appears slightly underpriced given typical recession base rates (~15-20% annually) and the 7-month remaining window. Recent Fed policy, labor market strength, and yield curve conditions should drive material divergence from historical base rates. Without real-time 2026 data, a modest upward adjustment to 28% accounts for accumulated recession risk over the extended horizon while respecting the crowd's signal.",
+      "disagreement": 0.38,
+      "edge_abs": 0.015000000000000013,
+      "edge_vs_market": -0.015000000000000013,
+      "llm_confidence": 0.62,
+      "llm_rationale": "The question asks about ETH flipping (trading above BTC in price per unit), an extremely rare event requiring ETH to 2.7x while BTC stays flat. Crowd price of 43.5% appears overestimated given historical precedent (flips have occurred briefly only a few times) and current momentum favoring BTC dominance. Modest downward adjustment to 42% reflects low-moderate conviction that tail-risk events command some baseline probability even if unlikely.",
       "llm_used": true,
-      "p_yes_market": 0.24,
-      "p_yes_model": 0.28,
+      "p_yes_market": 0.435,
+      "p_yes_model": 0.42,
       "pricing_source": "mid",
-      "question": "US recession by end of 2026?",
+      "question": "Ethereum flipped in 2026?",
       "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "us-recession-by-end-of-2026",
-      "spread": 0.01999999999999999
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 1.0,
-      "edge_abs": 0.42,
-      "edge_vs_market": 0.0,
-      "p_yes_market": 0.08,
-      "p_yes_model": 0.08,
-      "pricing_source": "mid",
-      "question": "Fed emergency rate cut before 2027?",
-      "reason": "wide_spread",
       "side": "NO",
-      "slug": "fed-emergency-rate-cut-before-2027",
-      "spread": 0.07999999999999999
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.04500000000000001,
-      "edge_vs_market": 0.04500000000000001,
-      "llm_confidence": 0.72,
-      "llm_rationale": "As of May 2026, with ~7 months remaining in the year, the crowd price of 17.5% appears slightly underpriced relative to baseline Fed cutting probability. Historical rate-cut frequency and current economic conditions (assuming typical late-cycle dynamics) suggest at least one cut by year-end is moderately likely. CME FedWatch data would be the reference benchmark, but absent specific real-time data, a modest upward adjustment from the crowd price to ~22% reflects reasonable probability while maintaining calibration.",
-      "llm_used": true,
-      "p_yes_market": 0.175,
-      "p_yes_model": 0.22,
-      "pricing_source": "mid",
-      "question": "Will 1 Fed rate cut happen in 2026?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "will-1-fed-rate-cut-happen-in-2026",
-      "spread": 0.009999999999999981
+      "slug": "eth-flipped-in-2026",
+      "spread": 0.010000000000000009
     }
   ],
   "settings": {
@@ -63,7 +30,7 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 3,
+    "evaluated": 1,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
@@ -72,10 +39,10 @@
       "low_liquidity": 0,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 2,
+      "min_edge_abs": 1,
       "min_edge_vs_market": 0,
-      "wide_spread": 1
+      "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-01T18:05:22.743286+00:00"
+  "ts_utc": "2026-05-02T00:05:48.038214+00:00"
 }
