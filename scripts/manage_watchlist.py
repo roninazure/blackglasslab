@@ -89,6 +89,10 @@ EXCLUDE_PATTERNS = [
     r"will .{3,60} win the .{3,60}(trophy|award|golden boot|ballon d.or|\bmvp\b)",
     # Cup/domestic competitions per-team
     r"win the \d{4}[-–]\d{2,4}.{0,10}(fa cup|league cup|copa del rey|dfb-pokal)",
+    # Relegation / promotion markets
+    r"will .{3,50} be relegated",
+    r"will .{3,50} (get|avoid) relegat",
+    r"will .{3,50} (win|earn|secure) promot",
     # Meme / novelty markets
     r"(jesus christ|second coming|rapture|will god|will aliens|flat earth|lizard people)",
 ]
