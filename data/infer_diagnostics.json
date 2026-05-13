@@ -2,34 +2,40 @@
   "mode": "infer",
   "rows": [
     {
+      "components": {},
       "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
+      "disagreement": 0.28,
+      "edge_abs": 0.025000000000000022,
+      "edge_vs_market": -0.025000000000000022,
+      "llm_confidence": 0.72,
+      "llm_rationale": "Paxton faces credibility challenges from past indictments and ethical questions, but maintains strong conservative base support as sitting AG. The 2026 primary is competitive with potential challengers; crowd price of 60.5% appears slightly optimistic given structural headwinds, but reasonable given his incumbency advantage and Texas GOP alignment.",
+      "llm_used": true,
+      "p_yes_market": 0.605,
+      "p_yes_model": 0.58,
+      "pricing_source": "mid",
+      "question": "Will Ken Paxton win the 2026 Texas Republican Primary?",
+      "reason": "min_edge_abs",
+      "side": "NO",
+      "slug": "will-ken-paxton-win-the-2026-republican-primary",
+      "spread": 0.010000000000000009
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
+      "slug": "will-manchester-united-finish-in-2nd-place-in-the-2025-26-english-premier-league"
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.99,
-      "reason": "extreme_tail",
-      "slug": "will-galatasaray-win-the-sper-lig"
+      "slug": "will-matheus-cunha-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
+      "slug": "will-bournemouth-finish-in-3rd-place-in-the-2025-26-english-premier-league"
     }
   ],
   "settings": {
@@ -42,19 +48,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 5,
+    "evaluated": 4,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 5,
+      "low_liquidity": 3,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 0,
+      "min_edge_abs": 1,
       "min_edge_vs_market": 0,
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-13T16:20:42.234801+00:00"
+  "ts_utc": "2026-05-13T22:50:49.311540+00:00"
 }
