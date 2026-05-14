@@ -2,28 +2,40 @@
   "mode": "infer",
   "rows": [
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 0.35,
-      "edge_abs": 0.044999999999999984,
-      "edge_vs_market": 0.044999999999999984,
-      "llm_confidence": 0.65,
-      "llm_rationale": "Ethereum has not flipped BTC since inception despite multiple attempts. Current crowd price at 27.5% appears slightly underweighting the possibility given we're already in May 2026 (7+ months remaining) and market dynamics can shift rapidly. However, BTC's structural advantages in network effect and institutional adoption make flipping unlikely but not impossible. Slight upward adjustment to 32% reflects tail-risk potential while maintaining that BTC dominance remains more probable.",
-      "llm_used": true,
-      "p_yes_market": 0.275,
-      "p_yes_model": 0.32,
-      "pricing_source": "mid",
-      "question": "Ethereum flipped in 2026?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "eth-flipped-in-2026",
-      "spread": 0.02999999999999997
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
+      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
+    },
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.35,
+      "edge_abs": 0.03500000000000003,
+      "edge_vs_market": -0.03500000000000003,
+      "llm_confidence": 0.65,
+      "llm_rationale": "Paxton faces structural headwinds as incumbent AG with mixed record and potential legal exposure, but retains strong conservative base support. Crowd price of 61.5% appears slightly optimistic; modest downward adjustment to 58% reflects historical primary vulnerability of AGs with baggage and uncertainty around 2026 Texas GOP dynamics.",
+      "llm_used": true,
+      "p_yes_market": 0.615,
+      "p_yes_model": 0.58,
+      "pricing_source": "mid",
+      "question": "Will Ken Paxton win the 2026 Texas Republican Primary?",
+      "reason": "min_edge_abs",
+      "side": "NO",
+      "slug": "will-ken-paxton-win-the-2026-republican-primary",
+      "spread": 0.010000000000000009
     }
   ],
   "settings": {
@@ -36,13 +48,13 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 2,
+    "evaluated": 4,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 1,
+      "low_liquidity": 3,
       "low_volume": 0,
       "max_disagree": 0,
       "min_edge_abs": 1,
@@ -50,5 +62,5 @@
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-14T16:52:23.479314+00:00"
+  "ts_utc": "2026-05-14T22:52:47.233208+00:00"
 }
