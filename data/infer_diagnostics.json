@@ -5,37 +5,31 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
+      "slug": "will-matheus-cunha-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
+      "slug": "will-charalambos-kostoulas-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.010499999999999999,
+      "reason": "extreme_tail",
+      "slug": "gta-vi-released-before-june-2026"
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
+      "slug": "will-mohamed-salah-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     },
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 0.35,
-      "edge_abs": 0.03500000000000003,
-      "edge_vs_market": -0.03500000000000003,
-      "llm_confidence": 0.65,
-      "llm_rationale": "Paxton faces structural headwinds as incumbent AG with mixed record and potential legal exposure, but retains strong conservative base support. Crowd price of 61.5% appears slightly optimistic; modest downward adjustment to 58% reflects historical primary vulnerability of AGs with baggage and uncertainty around 2026 Texas GOP dynamics.",
-      "llm_used": true,
-      "p_yes_market": 0.615,
-      "p_yes_model": 0.58,
-      "pricing_source": "mid",
-      "question": "Will Ken Paxton win the 2026 Texas Republican Primary?",
-      "reason": "min_edge_abs",
-      "side": "NO",
-      "slug": "will-ken-paxton-win-the-2026-republican-primary",
-      "spread": 0.010000000000000009
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-alexander-isak-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     }
   ],
   "settings": {
@@ -48,19 +42,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 4,
+    "evaluated": 5,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 3,
+      "low_liquidity": 5,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 1,
+      "min_edge_abs": 0,
       "min_edge_vs_market": 0,
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-14T22:52:47.233208+00:00"
+  "ts_utc": "2026-05-15T04:53:11.377319+00:00"
 }
