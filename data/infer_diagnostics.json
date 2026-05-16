@@ -5,37 +5,31 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
+      "slug": "will-matheus-cunha-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
+      "slug": "will-charalambos-kostoulas-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
+      "slug": "gta-vi-released-before-june-2026"
     },
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.03500000000000003,
-      "edge_vs_market": -0.03500000000000003,
-      "llm_confidence": 0.72,
-      "llm_rationale": "Paxton faces headwinds from ongoing legal issues and intra-GOP establishment skepticism, but retains strong base-level support in Texas Republican politics. The crowd price of 61.5% appears slightly optimistic given these structural challenges and the typical advantage of well-funded establishment alternatives in competitive primaries.",
-      "llm_used": true,
-      "p_yes_market": 0.615,
-      "p_yes_model": 0.58,
-      "pricing_source": "mid",
-      "question": "Will Ken Paxton win the 2026 Texas Republican Primary?",
-      "reason": "min_edge_abs",
-      "side": "NO",
-      "slug": "will-ken-paxton-win-the-2026-republican-primary",
-      "spread": 0.010000000000000009
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-mohamed-salah-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-alexander-isak-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     }
   ],
   "settings": {
@@ -48,19 +42,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 4,
+    "evaluated": 5,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 3,
+      "low_liquidity": 5,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 1,
+      "min_edge_abs": 0,
       "min_edge_vs_market": 0,
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-16T04:54:56.766697+00:00"
+  "ts_utc": "2026-05-16T10:55:20.301151+00:00"
 }
