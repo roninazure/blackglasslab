@@ -2,40 +2,10 @@
   "mode": "infer",
   "rows": [
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.024999999999999994,
-      "edge_vs_market": 0.024999999999999994,
-      "llm_confidence": 0.72,
-      "llm_rationale": "Crowd price of 9.5% appears slightly underpriced given base rates for emergency cuts (~1-2 per decade) and current economic uncertainty. With ~19 months to expiry, tail risks (recession, financial crisis, geopolitical shock) justify modest premium above crowd estimate, but not dramatic divergence.",
-      "llm_used": true,
-      "p_yes_market": 0.095,
-      "p_yes_model": 0.12,
-      "pricing_source": "mid",
-      "question": "Fed emergency rate cut before 2027?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "fed-emergency-rate-cut-before-2027",
-      "spread": 0.010000000000000009
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.024999999999999994,
-      "edge_vs_market": 0.024999999999999994,
-      "llm_confidence": 0.72,
-      "llm_rationale": "Current date is May 2026, leaving ~7 months until year-end. CME FedWatch data and recent Fed communications suggest rate cuts are unlikely given inflation persistence and labor market resilience. The 15.5% crowd price appears slightly undervalued given baseline probability of at least one cut by year-end, but not by much\u2014Fed remains hawkish. Modest upward adjustment to 18% reflects small-but-real tail risk of economic deterioration prompting emergency cuts.",
-      "llm_used": true,
-      "p_yes_market": 0.155,
-      "p_yes_model": 0.18,
-      "pricing_source": "mid",
-      "question": "Will 1 Fed rate cut happen in 2026?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "will-1-fed-rate-cut-happen-in-2026",
-      "spread": 0.010000000000000009
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
     }
   ],
   "settings": {
@@ -48,19 +18,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 2,
+    "evaluated": 1,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 0,
+      "low_liquidity": 1,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 2,
+      "min_edge_abs": 0,
       "min_edge_vs_market": 0,
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-16T22:56:29.034716+00:00"
+  "ts_utc": "2026-05-17T04:56:54.955273+00:00"
 }
