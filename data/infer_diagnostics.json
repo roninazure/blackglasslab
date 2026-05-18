@@ -5,7 +5,37 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
+      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
+    },
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.28,
+      "edge_abs": 0.04500000000000004,
+      "edge_vs_market": -0.04500000000000004,
+      "llm_confidence": 0.72,
+      "llm_rationale": "Paxton faces headwinds as the incumbent AG with controversial record and legal baggage, but maintains strong Trump alignment and GOP base support in Texas. The 62.5% crowd price appears slightly optimistic given typical primary dynamics; adjusting down modestly reflects uncertainty about whether his controversial profile depresses turnout or energizes opposition within the primary.",
+      "llm_used": true,
+      "p_yes_market": 0.625,
+      "p_yes_model": 0.58,
+      "pricing_source": "mid",
+      "question": "Will Ken Paxton win the 2026 Texas Republican Primary?",
+      "reason": "min_edge_abs",
+      "side": "NO",
+      "slug": "will-ken-paxton-win-the-2026-republican-primary",
+      "spread": 0.010000000000000009
     }
   ],
   "settings": {
@@ -18,19 +48,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 1,
+    "evaluated": 4,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 1,
+      "low_liquidity": 3,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 0,
+      "min_edge_abs": 1,
       "min_edge_vs_market": 0,
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-18T13:39:06.253037+00:00"
+  "ts_utc": "2026-05-18T19:39:37.709562+00:00"
 }
