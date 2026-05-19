@@ -2,22 +2,10 @@
   "mode": "infer",
   "rows": [
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.024999999999999994,
-      "edge_vs_market": 0.024999999999999994,
-      "llm_confidence": 0.72,
-      "llm_rationale": "Crowd price of 9.5% appears slightly underweighted. With ~19 months to expiry (May 2026 to end-2027), emergency cuts require severe economic stress; current conditions show resilience but tail risks (geopolitical shock, financial instability, recession) justify slightly higher probability than market reflects. CME FedWatch data would anchor this more precisely, but 12% accounts for low baseline emergency-cut likelihood while acknowledging genuine tail risks.",
-      "llm_used": true,
-      "p_yes_market": 0.095,
-      "p_yes_model": 0.12,
-      "pricing_source": "mid",
-      "question": "Fed emergency rate cut before 2027?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "fed-emergency-rate-cut-before-2027",
-      "spread": 0.010000000000000009
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
     }
   ],
   "settings": {
@@ -36,13 +24,13 @@
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 0,
+      "low_liquidity": 1,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 1,
+      "min_edge_abs": 0,
       "min_edge_vs_market": 0,
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-19T13:40:43.202314+00:00"
+  "ts_utc": "2026-05-19T19:41:08.733545+00:00"
 }
