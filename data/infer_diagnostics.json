@@ -5,7 +5,19 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
+      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
     }
   ],
   "settings": {
@@ -18,13 +30,13 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 1,
+    "evaluated": 3,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 1,
+      "low_liquidity": 3,
       "low_volume": 0,
       "max_disagree": 0,
       "min_edge_abs": 0,
@@ -32,5 +44,5 @@
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-19T19:41:08.733545+00:00"
+  "ts_utc": "2026-05-20T01:41:29.255890+00:00"
 }
