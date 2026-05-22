@@ -2,19 +2,10 @@
   "mode": "infer",
   "rows": [
     {
-      "components": {},
       "decision": "REJECT",
-      "disagreement": 1.0,
-      "edge_abs": 0.39,
-      "edge_vs_market": 0.0,
-      "p_yes_market": 0.11,
-      "p_yes_model": 0.11,
-      "pricing_source": "mid",
-      "question": "Fed emergency rate cut before 2027?",
-      "reason": "wide_spread",
-      "side": "NO",
-      "slug": "fed-emergency-rate-cut-before-2027",
-      "spread": 0.04000000000000001
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
     }
   ],
   "settings": {
@@ -33,13 +24,13 @@
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 0,
+      "low_liquidity": 1,
       "low_volume": 0,
       "max_disagree": 0,
       "min_edge_abs": 0,
       "min_edge_vs_market": 0,
-      "wide_spread": 1
+      "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-22T01:43:56.142294+00:00"
+  "ts_utc": "2026-05-22T07:44:17.787211+00:00"
 }
