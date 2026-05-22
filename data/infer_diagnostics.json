@@ -5,19 +5,25 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
+      "slug": "will-matheus-cunha-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
+      "slug": "will-charalambos-kostoulas-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     },
     {
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-beth-van-duyne-win-the-2026-republican-primary"
+      "slug": "gta-vi-released-before-june-2026"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-mohamed-salah-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     }
   ],
   "settings": {
@@ -30,13 +36,13 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 3,
+    "evaluated": 4,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 3,
+      "low_liquidity": 4,
       "low_volume": 0,
       "max_disagree": 0,
       "min_edge_abs": 0,
@@ -44,5 +50,5 @@
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-22T13:44:34.464878+00:00"
+  "ts_utc": "2026-05-22T19:45:03.024029+00:00"
 }
