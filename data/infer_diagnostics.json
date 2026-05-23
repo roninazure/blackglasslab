@@ -5,25 +5,31 @@
       "decision": "REJECT",
       "p_yes_market": 0.01,
       "reason": "extreme_tail",
-      "slug": "will-matheus-cunha-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-charalambos-kostoulas-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "gta-vi-released-before-june-2026"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
       "slug": "will-mohamed-salah-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-alexander-isak-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-viktor-gyokeres-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-dominic-solanke-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-hugo-ekitike-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
     }
   ],
   "settings": {
@@ -36,13 +42,13 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 4,
+    "evaluated": 5,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 4,
+      "low_liquidity": 5,
       "low_volume": 0,
       "max_disagree": 0,
       "min_edge_abs": 0,
@@ -50,5 +56,5 @@
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-22T19:45:03.024029+00:00"
+  "ts_utc": "2026-05-23T01:45:18.516087+00:00"
 }
