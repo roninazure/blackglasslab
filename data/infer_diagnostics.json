@@ -2,54 +2,6 @@
   "mode": "infer",
   "rows": [
     {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-hugo-ekitike-be-the-top-goal-scorer-in-the-202526-english-premier-league-season"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-gustavo-bolvar-win-the-2026-colombian-presidential-election"
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.28,
-      "edge_abs": 0.015000000000000013,
-      "edge_vs_market": -0.015000000000000013,
-      "llm_confidence": 0.72,
-      "llm_rationale": "Crowd price of 69.5% reflects genuine uncertainty in 2026 midterm dynamics. With 5 months to election, recent polling and historical data (2022 saw modest GOP gains) suggest Democrats face headwinds in house/senate. Crowd price slightly overweights Democratic probability; modest downward adjustment to 68% accounts for typical midterm anti-incumbent patterns and economic variables still in flux.",
-      "llm_used": true,
-      "p_yes_market": 0.6950000000000001,
-      "p_yes_model": 0.68,
-      "pricing_source": "mid",
-      "question": "Blue wave in 2026?",
-      "reason": "min_edge_abs",
-      "side": "NO",
-      "slug": "blue-wave-in-2026",
-      "spread": 0.029999999999999916
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 0.38,
-      "edge_abs": 0.024999999999999994,
-      "edge_vs_market": 0.024999999999999994,
-      "llm_confidence": 0.62,
-      "llm_rationale": "As of May 2026, we're 7 months from resolution. Current data shows mixed signals: labor market remains resilient but inflation pressures persist. The crowd price of 21.5% appears slightly underweighting recession risk given historical base rates (~15-20% annually) and policy uncertainty. Modest upward adjustment to 24% reflects non-negligible tail risks while respecting crowd wisdom.",
-      "llm_used": true,
-      "p_yes_market": 0.215,
-      "p_yes_model": 0.24,
-      "pricing_source": "mid",
-      "question": "US recession by end of 2026?",
-      "reason": "min_edge_abs",
-      "side": "YES",
-      "slug": "us-recession-by-end-of-2026",
-      "spread": 0.010000000000000009
-    },
-    {
       "components": {},
       "decision": "REJECT",
       "disagreement": 1.0,
@@ -75,19 +27,19 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 5,
+    "evaluated": 1,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
       "fetch_failed": 0,
       "inactive_market": 0,
-      "low_liquidity": 2,
+      "low_liquidity": 0,
       "low_volume": 0,
       "max_disagree": 0,
-      "min_edge_abs": 2,
+      "min_edge_abs": 0,
       "min_edge_vs_market": 0,
       "wide_spread": 1
     }
   },
-  "ts_utc": "2026-05-23T07:45:36.169892+00:00"
+  "ts_utc": "2026-05-23T13:45:50.598320+00:00"
 }
