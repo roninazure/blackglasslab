@@ -1,22 +1,6 @@
 {
   "mode": "infer",
-  "rows": [
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 1.0,
-      "edge_abs": 0.385,
-      "edge_vs_market": 0.0,
-      "p_yes_market": 0.115,
-      "p_yes_model": 0.115,
-      "pricing_source": "mid",
-      "question": "Fed emergency rate cut before 2027?",
-      "reason": "wide_spread",
-      "side": "NO",
-      "slug": "fed-emergency-rate-cut-before-2027",
-      "spread": 0.05000000000000002
-    }
-  ],
+  "rows": [],
   "settings": {
     "batch": 5,
     "cooldown": 43,
@@ -27,7 +11,7 @@
   },
   "source": "polymarket",
   "summary": {
-    "evaluated": 1,
+    "evaluated": 0,
     "passed": 0,
     "rejected": {
       "closed_market": 0,
@@ -38,8 +22,8 @@
       "max_disagree": 0,
       "min_edge_abs": 0,
       "min_edge_vs_market": 0,
-      "wide_spread": 1
+      "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-23T13:45:50.598320+00:00"
+  "ts_utc": "2026-05-24T17:11:33.297991+00:00"
 }
