@@ -1,0 +1,257 @@
+{
+  "markets": [
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-bitcoin-hit-1m-before-gta-vi-872-424",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "scotus-accepts-sports-event-contract-case-by-july-31-2026",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-china-invades-taiwan-before-gta-vi-716-644",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "new-rhianna-album-before-gta-vi-926",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "new-playboi-carti-album-before-gta-vi-421",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-gpt-6-be-released",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-paul-reevs-be-the-republican-nominee-for-az-01",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-matt-gress-be-the-republican-nominee-for-az-01",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-jay-feely-be-the-republican-nominee-for-az-05",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-cori-bush-be-the-democratic-nominee-for-mo-01",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {},
+      "final_stage": "existing_position_filter",
+      "market_id": "blue-wave-in-2026",
+      "reason": "existing_open_or_pending_position"
+    },
+    {
+      "decision": "SKIP",
+      "details": {},
+      "final_stage": "existing_position_filter",
+      "market_id": "us-recession-by-end-of-2026",
+      "reason": "existing_open_or_pending_position"
+    },
+    {
+      "decision": "SKIP",
+      "details": {},
+      "final_stage": "existing_position_filter",
+      "market_id": "fed-emergency-rate-cut-before-2027",
+      "reason": "existing_open_or_pending_position"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-no-fed-rate-cuts-happen-in-2026",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-1-fed-rate-cut-happen-in-2026",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {},
+      "final_stage": "existing_position_filter",
+      "market_id": "will-2-fed-rate-cuts-happen-in-2026",
+      "reason": "existing_open_or_pending_position"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-3-fed-rate-cuts-happen-in-2026",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-4-fed-rate-cuts-happen-in-2026",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-5-fed-rate-cuts-happen-in-2026",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "batch": 5
+      },
+      "final_stage": "batch_selection",
+      "market_id": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election",
+      "reason": "not_selected_in_batch"
+    },
+    {
+      "decision": "REJECT",
+      "details": {
+        "p_yes_market": 0.01
+      },
+      "final_stage": "tail_filter",
+      "market_id": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election",
+      "reason": "extreme_tail"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "cooldown": 43
+      },
+      "final_stage": "cooldown_filter",
+      "market_id": "will-the-us-confirm-that-aliens-exist-before-2027-789-924-249",
+      "reason": "recent_infer_cooldown"
+    },
+    {
+      "decision": "SKIP",
+      "details": {
+        "cooldown": 43
+      },
+      "final_stage": "cooldown_filter",
+      "market_id": "will-the-us-invade-iran-before-2027",
+      "reason": "recent_infer_cooldown"
+    },
+    {
+      "decision": "REJECT",
+      "details": {
+        "disagreement": 0.4,
+        "edge_vs_market": 0.0225,
+        "llm_used": true,
+        "p_yes_market": 0.0375,
+        "p_yes_model": 0.06
+      },
+      "final_stage": "edge_filter",
+      "market_id": "will-china-invade-taiwan-before-2027",
+      "reason": "min_edge_abs"
+    },
+    {
+      "decision": "REJECT",
+      "details": {
+        "disagreement": 0.4,
+        "edge_vs_market": 0.044999999999999984,
+        "llm_used": true,
+        "p_yes_market": 0.07500000000000001,
+        "p_yes_model": 0.12
+      },
+      "final_stage": "edge_filter",
+      "market_id": "will-the-iranian-regime-fall-by-the-end-of-2026",
+      "reason": "min_edge_abs"
+    }
+  ],
+  "run_id": "infer-2026-07-11T13:14:00.035380+00:00",
+  "source": "polymarket",
+  "summary": {
+    "blocked_existing_position": 4,
+    "candidates_generated": 0,
+    "diagnostics_written": 3,
+    "disagreement_rejected": 0,
+    "edge_rejected": 2,
+    "extreme_tail": 1,
+    "fetch_attempted": 3,
+    "fetch_failed": 0,
+    "finalized_markets": 25,
+    "inactive_or_closed": 0,
+    "invalid_price": 0,
+    "liquidity_rejected": 0,
+    "llm_attempted": 2,
+    "llm_failed": 0,
+    "paper_duplicate": 0,
+    "paper_inserted": 0,
+    "paper_not_requested": 0,
+    "paper_pending": 0,
+    "skipped_category_cap": 0,
+    "spread_rejected": 0,
+    "time_rejected": 0,
+    "volume_rejected": 0,
+    "watchlist_total": 25
+  },
+  "ts_utc": "2026-07-11T13:14:00.035380+00:00"
+}

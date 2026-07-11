@@ -1,0 +1,8 @@
+RESOLVER: id=2 slug=blue-wave-in-2026 lookup_source=slug OPEN (reason=not_resolved)
+RESOLVER: id=3 slug=fed-emergency-rate-cut-before-2027 lookup_source=slug OPEN (reason=not_resolved)
+RESOLVER: id=4 slug=us-recession-by-end-of-2026 lookup_source=slug OPEN (reason=not_resolved)
+RESOLVER: id=6 slug=will-the-court-force-trump-to-refund-tariffs-2026-06-30 lookup_source=slug lookup_failed=No market returned for slug
+RESOLVER: id=6 slug=will-the-court-force-trump-to-refund-tariffs-2026-06-30 lookup_source=snapshot_id CLOSED outcome=YES brier=0.336400 profit_usd=-100.00
+RESOLVER: id=13 slug=will-tottenham-be-relegated-from-the-english-premier-league-after-the-202526-season lookup_source=slug lookup_failed=No market returned for slug
+RESOLVER: id=13 slug=will-tottenham-be-relegated-from-the-english-premier-league-after-the-202526-season lookup_source=snapshot_id CLOSED outcome=NO brier=0.000400 profit_usd=+47.17
+RESOLVER SUMMARY: checked=5 closed=2 dry_run=False

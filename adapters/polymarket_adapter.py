@@ -125,3 +125,20 @@ class PolymarketAdapter:
             market["question"] = event_data.get("title")
 
         return market
+
+    def get_market_by_id(self, market_id: Any) -> Dict[str, Any]:
+        market_id_str = str(market_id or "").strip()
+        if not market_id_str.isdigit():
+            raise ValueError("get_market_by_id: market ID must be numeric")
+        data = self._fetch_json(
+            f"{self.BASE_URL}/{market_id_str}",
+            context=f"market id={market_id_str}",
+        )
+        if self._is_not_found(data):
+            raise LookupError(f"market ID not found in Polymarket: {market_id_str}")
+        returned_id = str(data.get("id") or "").strip()
+        if returned_id and returned_id != market_id_str:
+            raise LookupError(
+                f"market ID mismatch: requested={market_id_str} returned={returned_id}"
+            )
+        return data

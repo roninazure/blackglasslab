@@ -77,6 +77,44 @@ def fetch_market_by_slug(slug: str, timeout_s: int = 20) -> Dict[str, Any]:
     m["outcomePrices"] = _json_load_maybe(m.get("outcomePrices"))
     return m
 
+
+def fetch_market_by_id(market_id: Any, timeout_s: int = 20) -> Dict[str, Any]:
+    market_id_str = str(market_id or "").strip()
+    if not market_id_str.isdigit():
+        raise ValueError("Snapshot market ID is missing or non-numeric")
+
+    url = f"{GAMMA_BASE}/markets/{market_id_str}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
+        "Accept": "application/json,text/plain,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://polymarket.com/",
+        "Origin": "https://polymarket.com",
+    }
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        obj = json.loads(resp.read().decode("utf-8", errors="replace"))
+    if not isinstance(obj, dict):
+        raise ValueError("No market returned for snapshot ID")
+    returned_id = str(obj.get("id") or "").strip()
+    if returned_id and returned_id != market_id_str:
+        raise ValueError(
+            f"Market ID mismatch: requested={market_id_str} returned={returned_id}"
+        )
+    obj["outcomes"] = _json_load_maybe(obj.get("outcomes"))
+    obj["outcomePrices"] = _json_load_maybe(obj.get("outcomePrices"))
+    return obj
+
+
+def _notes_dict(notes: Any) -> Dict[str, Any]:
+    if not notes:
+        return {}
+    try:
+        parsed = json.loads(notes) if isinstance(notes, str) else notes
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
 def infer_market_yes_prob(market: Dict[str, Any]) -> Optional[float]:
     """
     Returns market-implied P(YES) if outcomes/prices are present.
@@ -221,23 +259,37 @@ def main() -> int:
 
     for (trade_id, slug, consensus_p_yes, p_yes, side, size_usd, notes) in rows:
         checked += 1
+        notes_dict = _notes_dict(notes)
+        snapshot = notes_dict.get("snapshot")
+        snapshot_id = snapshot.get("id") if isinstance(snapshot, dict) else None
+        lookup_source = "slug"
 
         try:
             snap = fetch_market_by_slug(str(slug), timeout_s=int(args.timeout))
-        except urllib.error.HTTPError as e:
-            print(f"RESOLVER: id={trade_id} slug={slug} http_error={e.code} (skipping)")
-            time.sleep(args.sleep)
-            continue
-        except Exception as e:
-            print(f"RESOLVER: id={trade_id} slug={slug} error={e} (skipping)")
-            time.sleep(args.sleep)
-            continue
+        except Exception as slug_error:
+            print(
+                f"RESOLVER: id={trade_id} slug={slug} lookup_source=slug "
+                f"lookup_failed={slug_error}"
+            )
+            try:
+                snap = fetch_market_by_id(snapshot_id, timeout_s=int(args.timeout))
+                lookup_source = "snapshot_id"
+            except Exception as id_error:
+                print(
+                    f"RESOLVER: id={trade_id} slug={slug} lookup_source=snapshot_id "
+                    f"snapshot_id={snapshot_id} lookup_failed={id_error} (keeping OPEN)"
+                )
+                time.sleep(args.sleep)
+                continue
 
         is_resolved, outcome, why = resolved_outcome_from_snapshot(snap)
 
         if not is_resolved or not outcome:
             # Keep OPEN, but you may still want to observe drift in market price (optional later).
-            print(f"RESOLVER: id={trade_id} slug={slug} OPEN (reason={why})")
+            print(
+                f"RESOLVER: id={trade_id} slug={slug} lookup_source={lookup_source} "
+                f"OPEN (reason={why})"
+            )
             time.sleep(args.sleep)
             continue
 
@@ -252,14 +304,6 @@ def main() -> int:
         b = brier(float(p_model), outcome)
 
         # Compute profit_usd using entry market price from notes
-        notes_dict: Dict[str, Any] = {}
-        if notes:
-            try:
-                parsed = json.loads(notes) if isinstance(notes, str) else {}
-                if isinstance(parsed, dict):
-                    notes_dict = parsed
-            except Exception:
-                pass
         p_yes_entry = notes_dict.get("p_yes_market")
         profit_usd = compute_profit_usd(
             side=str(side or "YES"),
@@ -275,6 +319,7 @@ def main() -> int:
             "profit_usd": profit_usd,
             "resolver": "phase_2.4",
             "resolver_reason": why,
+            "lookup_source": lookup_source,
             "market_closed": bool(snap.get("closed")),
             "market_active": snap.get("active"),
             "umaResolutionStatus": snap.get("umaResolutionStatus"),
@@ -288,7 +333,10 @@ def main() -> int:
             # Preserve existing notes verbatim; append a JSON line.
             new_notes = str(notes).rstrip() + "\n" + json.dumps({"resolution": meta}, separators=(",", ":"))
 
-        print(f"RESOLVER: id={trade_id} slug={slug} CLOSED outcome={outcome} brier={b:.6f} profit_usd={profit_usd:+.2f}")
+        print(
+            f"RESOLVER: id={trade_id} slug={slug} lookup_source={lookup_source} "
+            f"CLOSED outcome={outcome} brier={b:.6f} profit_usd={profit_usd:+.2f}"
+        )
 
         if not args.dry_run:
             conn.execute(

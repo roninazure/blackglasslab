@@ -1,0 +1,76 @@
+{
+  "mode": "infer",
+  "rows": [
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election"
+    },
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.4,
+      "edge_abs": 0.0225,
+      "edge_vs_market": 0.0225,
+      "llm_confidence": 0.6,
+      "llm_rationale": "Crowd price of 3.8% appears underweighting tail risks. With ~5.5 months remaining, base rates for major military invasions, recent cross-strait tensions, and asymmetric incentive structures (PRC benefits from ambiguity; markets underprice rare high-impact events) suggest true probability is modestly higher. However, no imminent invasion indicators support crowd skepticism. 6% reflects elevated but still low probability.",
+      "llm_used": true,
+      "p_yes_market": 0.0375,
+      "p_yes_model": 0.06,
+      "pricing_source": "mid",
+      "question": "Will China invade Taiwan by end of 2026?",
+      "reason": "min_edge_abs",
+      "side": "YES",
+      "slug": "will-china-invade-taiwan-before-2027",
+      "spread": 0.0010000000000000009
+    },
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.4,
+      "edge_abs": 0.044999999999999984,
+      "edge_vs_market": 0.044999999999999984,
+      "llm_confidence": 0.6,
+      "llm_rationale": "Crowd price of 7.5% appears underweighted given ~18 months remaining. Recent Iranian protests, economic deterioration, and IRGC tensions warrant higher probability, though regime collapse remains structurally difficult. Base rate of authoritarian regime collapse in 18 months is ~5-15%; current conditions push toward upper range.",
+      "llm_used": true,
+      "p_yes_market": 0.07500000000000001,
+      "p_yes_model": 0.12,
+      "pricing_source": "mid",
+      "question": "Will the Iranian regime fall before 2027?",
+      "reason": "min_edge_abs",
+      "side": "YES",
+      "slug": "will-the-iranian-regime-fall-by-the-end-of-2026",
+      "spread": 0.009999999999999995
+    }
+  ],
+  "settings": {
+    "batch": 5,
+    "cooldown": 43,
+    "max_disagree": 0.45,
+    "min_edge_abs": 0.05,
+    "min_edge_vs_market": 0.05,
+    "paper_size": 100.0
+  },
+  "source": "polymarket",
+  "summary": {
+    "evaluated": 3,
+    "passed": 0,
+    "rejected": {
+      "category_cap": 0,
+      "closed_market": 0,
+      "extreme_tail": 1,
+      "fetch_failed": 0,
+      "inactive_market": 0,
+      "invalid_price": 0,
+      "low_liquidity": 0,
+      "low_volume": 0,
+      "max_disagree": 0,
+      "min_edge_abs": 2,
+      "min_edge_vs_market": 0,
+      "time_rejected": 0,
+      "wide_spread": 0
+    }
+  },
+  "ts_utc": "2026-07-11T13:14:08.196499+00:00"
+}

@@ -26,6 +26,32 @@ from models.baseline import score_market, market_yes_price
 DB_PATH = os.path.join("memory", "runs.sqlite")
 SIGNALS_DIR = Path("signals")
 WATCHLIST_PATH = Path("markets") / "polymarket_watchlist.json"
+PIPELINE_REPORT_PATH = SIGNALS_DIR / "infer_pipeline_report.json"
+
+PIPELINE_SUMMARY_FIELDS = (
+    "watchlist_total",
+    "blocked_existing_position",
+    "skipped_category_cap",
+    "fetch_attempted",
+    "fetch_failed",
+    "inactive_or_closed",
+    "invalid_price",
+    "extreme_tail",
+    "liquidity_rejected",
+    "volume_rejected",
+    "spread_rejected",
+    "time_rejected",
+    "llm_attempted",
+    "llm_failed",
+    "edge_rejected",
+    "disagreement_rejected",
+    "diagnostics_written",
+    "candidates_generated",
+    "paper_inserted",
+    "paper_pending",
+    "paper_duplicate",
+    "paper_not_requested",
+)
 
 
 def _candidates_path(mode: str) -> Path:
@@ -78,6 +104,77 @@ def _write_infer_diagnostics(payload: dict) -> None:
     (SIGNALS_DIR / "infer_diagnostics.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True),
         encoding="utf-8",
+    )
+
+
+def _write_pipeline_report(payload: dict) -> None:
+    SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
+    PIPELINE_REPORT_PATH.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def _new_pipeline_report(watchlist: List[str], venue: str) -> Dict[str, Any]:
+    ts = utc_now_iso()
+    summary = {field: 0 for field in PIPELINE_SUMMARY_FIELDS}
+    summary["watchlist_total"] = len(watchlist)
+    return {
+        "run_id": f"infer-{ts}",
+        "ts_utc": ts,
+        "source": venue,
+        "summary": summary,
+        "markets": [
+            {
+                "market_id": slug,
+                "final_stage": "watchlist_loaded",
+                "decision": "SKIP",
+                "reason": "unclassified",
+                "details": {},
+            }
+            for slug in watchlist
+        ],
+    }
+
+
+def _finalize_pipeline_market(
+    record: Dict[str, Any],
+    *,
+    final_stage: str,
+    decision: str,
+    reason: str,
+    details: Optional[Dict[str, Any]] = None,
+) -> None:
+    record["final_stage"] = final_stage
+    record["decision"] = decision
+    record["reason"] = reason
+    record["details"] = details or {}
+
+
+def _existing_position_slugs(conn: sqlite3.Connection, venue: str) -> set[str]:
+    rows = conn.execute(
+        "SELECT market_id FROM paper_trades WHERE venue=? AND status IN ('OPEN','PENDING')",
+        (venue,),
+    ).fetchall()
+    return {str(row[0]) for row in rows if row and row[0]}
+
+
+def _print_pipeline_funnel(report: Dict[str, Any]) -> None:
+    s = report["summary"]
+    print(
+        "PIPELINE "
+        f"watchlist={s['watchlist_total']} fetched={s['fetch_attempted'] - s['fetch_failed']} "
+        f"llm={s['llm_attempted']} rejected="
+        f"{s['inactive_or_closed'] + s['invalid_price'] + s['extreme_tail'] + s['liquidity_rejected'] + s['volume_rejected'] + s['spread_rejected'] + s['time_rejected'] + s['edge_rejected'] + s['disagreement_rejected']} "
+        f"candidates={s['candidates_generated']}",
+        flush=True,
+    )
+    print(
+        "SKIPS "
+        f"existing={s['blocked_existing_position']} category={s['skipped_category_cap']} "
+        f"fetch_failed={s['fetch_failed']} inactive={s['inactive_or_closed']} "
+        f"tail={s['extreme_tail']} edge={s['edge_rejected']}",
+        flush=True,
     )
 
 
@@ -370,10 +467,24 @@ def _category_cap_ok(conn: sqlite3.Connection, category: str) -> bool:
     return count < max_per
 
 
-def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Optional[Dict[str, Any]]:
+def _infer_one(
+    *, conn: sqlite3.Connection, venue: str, paper_size: float
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
     watchlist = _load_watchlist()
+    report = _new_pipeline_report(watchlist, venue)
+    records = {row["market_id"]: row for row in report["markets"]}
+    summary = report["summary"]
     if not watchlist or get_adapter is None:
-        return None
+        reason = "empty_watchlist" if not watchlist else "adapter_unavailable"
+        for record in report["markets"]:
+            _finalize_pipeline_market(
+                record,
+                final_stage="setup",
+                decision="SKIP",
+                reason=reason,
+            )
+        summary["finalized_markets"] = len(report["markets"])
+        return (None, report)
 
     batch = int(os.environ.get("BGL_INFER_BATCH", "8") or "8")
     cooldown_n = int(os.environ.get("BGL_INFER_COOLDOWN", "0") or "0")
@@ -383,6 +494,7 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
     conn.commit()
 
     recent = set(_infer_recent_slugs(conn, venue, cooldown_n))
+    existing = _existing_position_slugs(conn, venue)
     adapter = get_adapter(venue)
 
     infer_diag_rows: list[dict] = []
@@ -396,19 +508,67 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             "low_liquidity": 0,
             "low_volume": 0,
             "wide_spread": 0,
+            "time_rejected": 0,
+            "invalid_price": 0,
+            "extreme_tail": 0,
+            "category_cap": 0,
             "max_disagree": 0,
             "min_edge_abs": 0,
             "min_edge_vs_market": 0,
         },
     }
 
+    selected = set(slugs)
+    for slug in watchlist:
+        record = records[slug]
+        if slug in existing:
+            summary["blocked_existing_position"] += 1
+            _finalize_pipeline_market(
+                record,
+                final_stage="existing_position_filter",
+                decision="SKIP",
+                reason="existing_open_or_pending_position",
+            )
+        elif slug not in selected:
+            _finalize_pipeline_market(
+                record,
+                final_stage="batch_selection",
+                decision="SKIP",
+                reason="not_selected_in_batch",
+                details={"batch": batch},
+            )
+
+    candidate: Optional[Dict[str, Any]] = None
+
     for slug in slugs:
+        record = records[slug]
+        if slug in existing:
+            continue
         if cooldown_n > 0 and slug in recent:
+            _finalize_pipeline_market(
+                record,
+                final_stage="cooldown_filter",
+                decision="SKIP",
+                reason="recent_infer_cooldown",
+                details={"cooldown": cooldown_n},
+            )
             continue
 
+        if candidate is not None:
+            _finalize_pipeline_market(
+                record,
+                final_stage="candidate_limit",
+                decision="SKIP",
+                reason="candidate_limit_reached",
+                details={"max_candidates_per_run": 1},
+            )
+            continue
+
+        summary["fetch_attempted"] += 1
         try:
             m = adapter.get_market(slug)  # type: ignore[attr-defined]
         except Exception as e:
+            summary["fetch_failed"] += 1
             infer_diag_counts["evaluated"] += 1
             infer_diag_counts["rejected"]["fetch_failed"] += 1
             infer_diag_rows.append({
@@ -417,21 +577,56 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
                 "reason": "fetch_failed",
                 "error": str(e)[:500],
             })
+            _finalize_pipeline_market(
+                record,
+                final_stage="api_lookup",
+                decision="REJECT",
+                reason="fetch_failed",
+                details={"error": str(e)[:500]},
+            )
             continue
 
         p_yes_market, spread, pricing_source = market_yes_price(m)
+
+        if pricing_source == "fallback":
+            summary["invalid_price"] += 1
+            infer_diag_counts["evaluated"] += 1
+            infer_diag_counts["rejected"]["invalid_price"] += 1
+            infer_diag_rows.append({
+                "slug": slug,
+                "question": str(m.get("question") or slug),
+                "decision": "REJECT",
+                "reason": "invalid_price",
+                "pricing_source": pricing_source,
+            })
+            _finalize_pipeline_market(
+                record,
+                final_stage="price_validation",
+                decision="REJECT",
+                reason="invalid_price",
+                details={"pricing_source": pricing_source},
+            )
+            continue
 
         # Skip extreme tail markets — crowd < 3% or > 97% are too illiquid/noisy
         min_crowd = _env_float("BGL_MIN_CROWD_PRICE", 0.03)
         max_crowd = 1.0 - min_crowd
         if p_yes_market < min_crowd or p_yes_market > max_crowd:
+            summary["extreme_tail"] += 1
             infer_diag_counts["evaluated"] += 1
-            infer_diag_counts["rejected"]["low_liquidity"] += 1
+            infer_diag_counts["rejected"]["extreme_tail"] += 1
             infer_diag_rows.append({
                 "slug": slug, "decision": "REJECT",
                 "reason": "extreme_tail",
                 "p_yes_market": float(p_yes_market),
             })
+            _finalize_pipeline_market(
+                record,
+                final_stage="tail_filter",
+                decision="REJECT",
+                reason="extreme_tail",
+                details={"p_yes_market": float(p_yes_market)},
+            )
             continue
 
         use_llm = (
@@ -445,6 +640,16 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
         baseline = score_market(m)
 
         if baseline.reject_reason is not None:
+            summary_key = {
+                "inactive_market": "inactive_or_closed",
+                "closed_market": "inactive_or_closed",
+                "low_liquidity": "liquidity_rejected",
+                "low_volume": "volume_rejected",
+                "wide_spread": "spread_rejected",
+                "time_rejected": "time_rejected",
+            }.get(baseline.reject_reason)
+            if summary_key:
+                summary[summary_key] += 1
             infer_diag_counts["evaluated"] += 1
             infer_diag_counts["rejected"][baseline.reject_reason] += 1
             infer_diag_rows.append({
@@ -462,10 +667,23 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
                 "spread": float(spread),
                 "components": baseline.components,
             })
+            _finalize_pipeline_market(
+                record,
+                final_stage="market_quality_filter",
+                decision="REJECT",
+                reason=baseline.reject_reason,
+                details={
+                    "p_yes_market": float(baseline.p_yes_market),
+                    "spread": float(spread),
+                    "pricing_source": pricing_source,
+                },
+            )
             continue
 
         llm_used = False
+        llm_error = ""
         if use_llm:
+            summary["llm_attempted"] += 1
             ctx = {
                 "venue": venue,
                 "slug": slug,
@@ -495,6 +713,8 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
                 llm_used = True
             except Exception as llm_err:
                 err_msg = str(llm_err)
+                llm_error = err_msg[:500]
+                summary["llm_failed"] += 1
                 print(f"[WARN] LLM call failed, falling back to baseline: {err_msg[:120]}", flush=True)
                 if "billing" in err_msg.lower() or "credit" in err_msg.lower():
                     # Disable LLM for rest of this run to avoid spamming API errors
@@ -537,10 +757,32 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
         })
         if reason != "pass":
             infer_diag_counts["rejected"][reason] += 1
+            if reason == "max_disagree":
+                summary["disagreement_rejected"] += 1
+            else:
+                summary["edge_rejected"] += 1
+            details = {
+                "p_yes_market": float(p_yes_market),
+                "p_yes_model": float(p_yes_model),
+                "edge_vs_market": float(edge_vs_market),
+                "disagreement": float(disagreement),
+                "llm_used": llm_used,
+            }
+            if llm_error:
+                details["llm_error"] = llm_error
+                details["fallback"] = "baseline"
+            _finalize_pipeline_market(
+                record,
+                final_stage="disagreement_filter" if reason == "max_disagree" else "edge_filter",
+                decision="REJECT",
+                reason=reason,
+                details=details,
+            )
+            continue
 
         cand = {
             "ts_utc": utc_now_iso(),
-            "run_id": f"infer-{utc_now_iso()}",
+            "run_id": report["run_id"],
             "market_id": slug,
             "question": str(m.get("question") or slug),
             "venue": venue,
@@ -580,29 +822,41 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
             },
         }
 
-        if _passes_filters(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement):
-            category = _topic_label(str(m.get("question") or slug))
-            if not _category_cap_ok(conn, category):
-                infer_diag_counts["rejected"]["max_disagree"] += 0  # count as filtered
-                print(f"  [infer] category cap reached for '{category}' — skipping {slug}", flush=True)
-                continue
-            infer_diag_counts["passed"] += 1
-            _write_infer_diagnostics({
-                "ts_utc": utc_now_iso(),
-                "source": venue,
-                "mode": "infer",
-                "settings": {
-                    "batch": int(os.environ.get("BGL_INFER_BATCH", "8") or "8"),
-                    "cooldown": int(os.environ.get("BGL_INFER_COOLDOWN", "0") or "0"),
-                    "min_edge_abs": _filters()[0],
-                    "min_edge_vs_market": _filters()[1],
-                    "max_disagree": _filters()[2],
-                    "paper_size": float(os.environ.get("BGL_PAPER_SIZE", "100") or "100"),
-                },
-                "summary": infer_diag_counts,
-                "rows": infer_diag_rows,
-            })
-            return cand
+        category = _topic_label(str(m.get("question") or slug))
+        if not _category_cap_ok(conn, category):
+            summary["skipped_category_cap"] += 1
+            infer_diag_counts["rejected"]["category_cap"] += 1
+            infer_diag_rows[-1]["decision"] = "REJECT"
+            infer_diag_rows[-1]["reason"] = "category_cap"
+            print(f"  [infer] category cap reached for '{category}' - skipping {slug}", flush=True)
+            _finalize_pipeline_market(
+                record,
+                final_stage="category_cap",
+                decision="SKIP",
+                reason="category_cap_reached",
+                details={"category": category},
+            )
+            continue
+        infer_diag_counts["passed"] += 1
+        summary["candidates_generated"] += 1
+        candidate = cand
+        details = {
+            "category": category,
+            "side": side,
+            "edge_vs_market": float(edge_vs_market),
+            "disagreement": float(disagreement),
+            "llm_used": llm_used,
+        }
+        if llm_error:
+            details["llm_error"] = llm_error
+            details["fallback"] = "baseline"
+        _finalize_pipeline_market(
+            record,
+            final_stage="candidate_creation",
+            decision="CANDIDATE",
+            reason="candidate_generated",
+            details=details,
+        )
 
     _write_infer_diagnostics({
         "ts_utc": utc_now_iso(),
@@ -619,7 +873,11 @@ def _infer_one(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Op
         "summary": infer_diag_counts,
         "rows": infer_diag_rows,
     })
-    return None
+    summary["diagnostics_written"] = len(infer_diag_rows)
+    summary["finalized_markets"] = sum(
+        1 for row in report["markets"] if row["reason"] != "unclassified"
+    )
+    return (candidate, report)
 
 
 def main() -> int:
@@ -641,11 +899,12 @@ def main() -> int:
 
     for i in range(int(args.loops)):
         cand: Optional[Dict[str, Any]] = None
+        pipeline_report: Optional[Dict[str, Any]] = None
 
         if mode == "arbiter":
             cand = _arbiter_candidate_from_db(conn=conn, venue=venue, paper_size=paper_size)
         else:
-            cand = _infer_one(conn=conn, venue=venue, paper_size=paper_size)
+            cand, pipeline_report = _infer_one(conn=conn, venue=venue, paper_size=paper_size)
 
         cands: List[Dict[str, Any]] = [cand] if cand is not None else []
         _write_candidates(mode, cands)
@@ -653,6 +912,27 @@ def main() -> int:
         paper_status = ""
         if args.paper and cand is not None:
             paper_status = "paper=" + _insert_paper_trade(conn, cand)
+
+        if pipeline_report is not None:
+            if cand is not None:
+                market_record = next(
+                    row for row in pipeline_report["markets"]
+                    if row["market_id"] == cand["market_id"]
+                )
+                if not args.paper:
+                    pipeline_report["summary"]["paper_not_requested"] += 1
+                    market_record["details"]["paper_result"] = "not_requested"
+                elif paper_status == "paper=queued_for_approval":
+                    pipeline_report["summary"]["paper_pending"] += 1
+                    market_record["details"]["paper_result"] = "pending_approval"
+                elif paper_status == "paper=inserted":
+                    pipeline_report["summary"]["paper_inserted"] += 1
+                    market_record["details"]["paper_result"] = "inserted_open"
+                elif paper_status == "paper=skipped_duplicate":
+                    pipeline_report["summary"]["paper_duplicate"] += 1
+                    market_record["details"]["paper_result"] = "duplicate"
+            _write_pipeline_report(pipeline_report)
+            _print_pipeline_funnel(pipeline_report)
 
         if cand is None:
             print(f"LIVE_RUNNER OK candidates=0 ({mode} no trade candidate passed filters) -> {_candidates_path(mode)}")

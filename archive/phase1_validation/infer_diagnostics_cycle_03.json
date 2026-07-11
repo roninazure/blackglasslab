@@ -1,0 +1,33 @@
+{
+  "mode": "infer",
+  "rows": [],
+  "settings": {
+    "batch": 5,
+    "cooldown": 43,
+    "max_disagree": 0.45,
+    "min_edge_abs": 0.05,
+    "min_edge_vs_market": 0.05,
+    "paper_size": 100.0
+  },
+  "source": "polymarket",
+  "summary": {
+    "evaluated": 0,
+    "passed": 0,
+    "rejected": {
+      "category_cap": 0,
+      "closed_market": 0,
+      "extreme_tail": 0,
+      "fetch_failed": 0,
+      "inactive_market": 0,
+      "invalid_price": 0,
+      "low_liquidity": 0,
+      "low_volume": 0,
+      "max_disagree": 0,
+      "min_edge_abs": 0,
+      "min_edge_vs_market": 0,
+      "time_rejected": 0,
+      "wide_spread": 0
+    }
+  },
+  "ts_utc": "2026-07-11T13:13:29.705530+00:00"
+}

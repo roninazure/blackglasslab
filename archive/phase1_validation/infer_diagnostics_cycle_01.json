@@ -1,0 +1,112 @@
+{
+  "mode": "infer",
+  "rows": [
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.35,
+      "edge_abs": 0.02350000000000002,
+      "edge_vs_market": 0.02350000000000002,
+      "llm_confidence": 0.65,
+      "llm_rationale": "Bitcoin needs ~1456% gain to reach $1M from current $64.1K; GTA VI releases likely late 2025/early 2026. Crypto volatility makes 1M plausible within 18-24 months, but uncertain timing relative to GTA VI release. Crowd price at 49.6% appears slightly underweighting BTC's historical bull-run potential and the compressed timeframe advantage.",
+      "llm_used": true,
+      "p_yes_market": 0.4965,
+      "p_yes_model": 0.52,
+      "pricing_source": "mid",
+      "question": "Will bitcoin hit $1m before GTA VI?",
+      "reason": "min_edge_abs",
+      "side": "YES",
+      "slug": "will-bitcoin-hit-1m-before-gta-vi-872-424",
+      "spread": 0.0010000000000000009
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.0135,
+      "reason": "extreme_tail",
+      "slug": "scotus-accepts-sports-event-contract-case-by-july-31-2026"
+    },
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.42000000000000004,
+      "edge_abs": 0.025000000000000022,
+      "edge_vs_market": -0.025000000000000022,
+      "llm_confidence": 0.58,
+      "llm_rationale": "GTA VI expected late 2025; China-Taiwan invasion has significant structural deterrents (economic costs, US military capability, internal CCP costs) but elevated near-term risks. Crowd price at 50.5% slightly overweights geopolitical tail risk; modest divergence to 48% reflects that major powers typically avoid full-scale invasion despite tensions, though uncertainty remains genuinely high.",
+      "llm_used": true,
+      "p_yes_market": 0.505,
+      "p_yes_model": 0.48,
+      "pricing_source": "mid",
+      "question": "Will China invades Taiwan before GTA VI?",
+      "reason": "min_edge_abs",
+      "side": "NO",
+      "slug": "will-china-invades-taiwan-before-gta-vi-716-644",
+      "spread": 0.010000000000000009
+    },
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.38,
+      "edge_abs": 0.015000000000000013,
+      "edge_vs_market": 0.015000000000000013,
+      "llm_confidence": 0.62,
+      "llm_rationale": "Rihanna has been relatively quiet on music (last album 2016), while GTA VI is officially scheduled for Fall 2025. However, she has released some music recently and could surprise with a project, making it slightly more likely than the crowd's pricing suggests. High uncertainty given both outcomes remain plausible.",
+      "llm_used": true,
+      "p_yes_market": 0.505,
+      "p_yes_model": 0.52,
+      "pricing_source": "mid",
+      "question": "New Rihanna Album before GTA VI?",
+      "reason": "min_edge_abs",
+      "side": "YES",
+      "slug": "new-rhianna-album-before-gta-vi-926",
+      "spread": 0.010000000000000009
+    },
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.42000000000000004,
+      "edge_abs": 0.015000000000000013,
+      "edge_vs_market": 0.015000000000000013,
+      "llm_confidence": 0.58,
+      "llm_rationale": "Crowd price of 50.5% is reasonable given uncertainty on both timelines. Playboi Carti releases intermittently (last album 2024); GTA VI expected late 2025. Slight edge to YES given Carti's faster release cadence historically, but high uncertainty warrants near-consensus positioning.",
+      "llm_used": true,
+      "p_yes_market": 0.505,
+      "p_yes_model": 0.52,
+      "pricing_source": "mid",
+      "question": "New Playboi Carti Album before GTA VI?",
+      "reason": "min_edge_abs",
+      "side": "YES",
+      "slug": "new-playboi-carti-album-before-gta-vi-421",
+      "spread": 0.010000000000000009
+    }
+  ],
+  "settings": {
+    "batch": 5,
+    "cooldown": 43,
+    "max_disagree": 0.45,
+    "min_edge_abs": 0.05,
+    "min_edge_vs_market": 0.05,
+    "paper_size": 100.0
+  },
+  "source": "polymarket",
+  "summary": {
+    "evaluated": 5,
+    "passed": 0,
+    "rejected": {
+      "category_cap": 0,
+      "closed_market": 0,
+      "extreme_tail": 1,
+      "fetch_failed": 0,
+      "inactive_market": 0,
+      "invalid_price": 0,
+      "low_liquidity": 0,
+      "low_volume": 0,
+      "max_disagree": 0,
+      "min_edge_abs": 4,
+      "min_edge_vs_market": 0,
+      "time_rejected": 0,
+      "wide_spread": 0
+    }
+  },
+  "ts_utc": "2026-07-11T13:12:43.916686+00:00"
+}
