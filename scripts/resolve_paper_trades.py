@@ -230,6 +230,7 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="Do not write updates; print what would change")
     ap.add_argument("--timeout", type=int, default=20, help="HTTP timeout seconds")
     args = ap.parse_args()
+    mode_label = "DRY RUN" if args.dry_run else "WRITE"
 
     conn = _connect_db(args.db)
     cur = conn.cursor()
@@ -250,7 +251,7 @@ def main() -> int:
     rows = cur.fetchall()
 
     if not rows:
-        print("RESOLVER: no OPEN polymarket paper_trades to process.")
+        print(f"RESOLVER {mode_label}: no OPEN polymarket paper_trades to process.")
         conn.close()
         return 0
 
@@ -268,7 +269,7 @@ def main() -> int:
             snap = fetch_market_by_slug(str(slug), timeout_s=int(args.timeout))
         except Exception as slug_error:
             print(
-                f"RESOLVER: id={trade_id} slug={slug} lookup_source=slug "
+                f"RESOLVER {mode_label}: id={trade_id} slug={slug} lookup_source=slug "
                 f"lookup_failed={slug_error}"
             )
             try:
@@ -276,7 +277,7 @@ def main() -> int:
                 lookup_source = "snapshot_id"
             except Exception as id_error:
                 print(
-                    f"RESOLVER: id={trade_id} slug={slug} lookup_source=snapshot_id "
+                    f"RESOLVER {mode_label}: id={trade_id} slug={slug} lookup_source=snapshot_id "
                     f"snapshot_id={snapshot_id} lookup_failed={id_error} (keeping OPEN)"
                 )
                 time.sleep(args.sleep)
@@ -287,7 +288,7 @@ def main() -> int:
         if not is_resolved or not outcome:
             # Keep OPEN, but you may still want to observe drift in market price (optional later).
             print(
-                f"RESOLVER: id={trade_id} slug={slug} lookup_source={lookup_source} "
+                f"RESOLVER {mode_label}: id={trade_id} slug={slug} lookup_source={lookup_source} "
                 f"OPEN (reason={why})"
             )
             time.sleep(args.sleep)
@@ -297,7 +298,7 @@ def main() -> int:
         p_model = p_yes if p_yes is not None else consensus_p_yes
         if p_model is None:
             # Should not happen in your schema, but guard anyway.
-            print(f"RESOLVER: id={trade_id} slug={slug} cannot_score (no p_model) (keeping OPEN)")
+            print(f"RESOLVER {mode_label}: id={trade_id} slug={slug} cannot_score (no p_model) (keeping OPEN)")
             time.sleep(args.sleep)
             continue
 
@@ -334,7 +335,7 @@ def main() -> int:
             new_notes = str(notes).rstrip() + "\n" + json.dumps({"resolution": meta}, separators=(",", ":"))
 
         print(
-            f"RESOLVER: id={trade_id} slug={slug} lookup_source={lookup_source} "
+            f"RESOLVER {mode_label}: id={trade_id} slug={slug} lookup_source={lookup_source} "
             f"CLOSED outcome={outcome} brier={b:.6f} profit_usd={profit_usd:+.2f}"
         )
 

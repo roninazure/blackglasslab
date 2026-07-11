@@ -5,6 +5,7 @@ Output: swarm_edge_thumb.png  (1200×630 — standard Open Graph size)
 """
 from __future__ import annotations
 import json, math, sqlite3
+import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -14,6 +15,10 @@ except ImportError:
     raise SystemExit("pip install Pillow")
 
 ROOT     = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+
+from swarm_edge_io import load_paper_trades_export, merge_notes_blob
+
 DB_PATH  = ROOT / "memory" / "runs.sqlite"
 DATA_DIR = ROOT / "data"
 OUT      = ROOT / "swarm_edge_thumb.png"
@@ -54,11 +59,9 @@ def live_stats() -> dict:
     # Try JSON first (cloud-friendly)
     jfile = DATA_DIR / "paper_trades.json"
     if jfile.exists():
-        rows = json.loads(jfile.read_text())
+        _meta, rows = load_paper_trades_export(jfile)
         for t in rows:
-            notes = {}
-            try: notes = json.loads(t.get("notes") or "{}")
-            except: pass
+            notes = merge_notes_blob(t.get("notes"))
             crowd = notes.get("crowd_p_yes") or t.get("p_yes", 0.5)
             try:
                 crowd = float(crowd)
@@ -80,9 +83,7 @@ def live_stats() -> dict:
         ).fetchall()
         conn.close()
         for r in rows:
-            notes = {}
-            try: notes = json.loads(r["notes"] or "{}")
-            except: pass
+            notes = merge_notes_blob(r["notes"])
             crowd = notes.get("crowd_p_yes") or r["p_yes"]
             try:
                 crowd = float(crowd)

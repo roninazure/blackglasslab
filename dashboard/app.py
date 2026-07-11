@@ -13,6 +13,12 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import sys
+
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+
+from swarm_edge_io import load_paper_trades_export, merge_notes_blob
 
 # ---------------------------------------------------------------------------
 # Page config + Bloomberg CSS
@@ -86,7 +92,6 @@ st.markdown("""
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-ROOT = Path(__file__).parent.parent
 DB_PATH = ROOT / "memory" / "runs.sqlite"
 DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
 LOG_PATH = ROOT / "logs" / "infer_loop.log"
@@ -111,10 +116,7 @@ MARKET_EXPIRY = {
 def _enrich(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    def parse_notes(n):
-        try: return json.loads(n) if isinstance(n, str) else (n or {})
-        except: return {}
-    df["_notes"] = df["notes"].apply(parse_notes)
+    df["_notes"] = df["notes"].apply(merge_notes_blob)
     df["crowd_p_yes"] = df["_notes"].apply(lambda n: n.get("p_yes_market")).apply(
         lambda x: x if (x is not None and not (isinstance(x, float) and math.isnan(x))) else None
     )
@@ -139,7 +141,7 @@ def load_trades(statuses: tuple = ("OPEN",)) -> pd.DataFrame:
         json_path = ROOT / "data" / "paper_trades.json"
         if not json_path.exists():
             return pd.DataFrame()
-        records = json.loads(json_path.read_text())
+        _meta, records = load_paper_trades_export(json_path)
         df = pd.DataFrame(records)
         if not df.empty and "status" in df.columns:
             df = df[df["status"].isin(statuses)].reset_index(drop=True)

@@ -18,9 +18,14 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-
+import sys
+from pathlib import Path
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+
+from swarm_edge_io import merge_notes_blob
 
 
 def _connect_db(path: str) -> sqlite3.Connection:
@@ -30,13 +35,7 @@ def _connect_db(path: str) -> sqlite3.Connection:
 
 
 def _safe_json(s: Optional[str]) -> Dict[str, Any]:
-    if not s:
-        return {}
-    try:
-        obj = json.loads(s)
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
+    return merge_notes_blob(s)
 
 
 def main() -> int:

@@ -43,3 +43,19 @@
 **Verification:** Targeted tests cover Brier, market Brier, skill score, payout formulas, exclusions, missing metadata, and source immutability. Production paper-trade fingerprint remained `55d5b4d19a3d1f733b71cfe6670b2d5f25108b7ce852277f1ece90f4271334a6` before and after analysis.
 
 **Next action:** Accumulate resolved paper forecasts without strategy changes and rerun the same baseline at the 10-, 30-, and 100-forecast evidence gates.
+
+## 2026-07-11 - Runtime publication and reporting hardening
+
+**Symptoms:** The unattended wrapper still committed and pushed runtime artifacts by default, while several operator summaries could diverge from SQLite by reading stale `data/` exports or by parsing resolver notes as a single JSON blob. The live loop was also selecting `python3` implicitly rather than the local `.venv`.
+
+**Investigation scope:** Traced `scripts/run_live.sh`, `scripts/export_data.py`, resolver output consumers, morning/integrity checks, the paper dashboard, and the legacy report scripts. Verified the production SQLite fingerprint before and after controlled validation. Re-ran the live reports from SQLite and refreshed the `data/` exports locally only.
+
+**Findings:** Runtime publication is now opt-in behind `SWARM_EDGE_PUBLISH_ENABLED=1`, and watchlist apply is opt-in behind `SWARM_EDGE_WATCHLIST_APPLY=1`. Exports now carry ISO `generated_at_utc` metadata plus `source_db_path`. Resolver notes with appended resolution metadata are parsed correctly by dashboard and reporting consumers. The paper dashboard now counts only `status='CLOSED'` rows as closed. `integrity_check.py` and `morning_status.py` now read positions from SQLite and use `pgrep` for loop checks.
+
+**Files changed:** `scripts/run_live.sh`, `scripts/export_data.py`, `scripts/resolve_paper_trades.py`, `scripts/morning_status.py`, `scripts/integrity_check.py`, `scripts/watch_resolutions.py`, `dashboard/app.py`, `reporting/paper_dashboard.py`, `scripts/make_flyer.py`, `scripts/make_thumbnail.py`, `.gitignore`, `.env.example`, `README.md`, `KNOWN_ISSUES.md`, `ROADMAP.md`, `docs/LEGACY_REVIEW_QUEUE.md`, `tests/test_resolve_paper_trades.py`, `tests/test_runtime_publication_and_reporting.py`, and `swarm_edge_io.py`.
+
+**Tests:** Targeted resolver and publication/reporting unit tests pass. Full test discovery under `tests/` passes. Python compilation passes for the touched modules. `git diff --check` still reports a pre-existing trailing-whitespace issue in the tracked flyer PDF outside this pass.
+
+**Controlled validation:** One controlled `live_runner.py --infer` cycle ran against a temp copy of `memory/runs.sqlite`; it produced no candidate and left the production database fingerprint unchanged. A resolver dry-run against production SQLite reported only the four OPEN trades and left ids 6 and 13 untouched because they are already CLOSED. SQLite-backed operational reports now agree on `OPEN=4`, `CLOSED=2`, `VOID=15`, `PENDING=0`.
+
+**Next action:** Restart the daemon only with local-only publication defaults enabled and manual monitoring on the first runtime window. If the external fetch failure seen in the sandbox recurs in the real runtime, stop and investigate network/DNS before extending the unattended run.

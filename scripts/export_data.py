@@ -2,8 +2,8 @@
 """
 export_data.py — Export live data to JSON for Streamlit Cloud dashboard.
 
-Dumps open trades from SQLite and copies infer_diagnostics.json,
-then commits and pushes so Streamlit Cloud picks up the latest snapshot.
+Dumps open trades from SQLite and copies infer_diagnostics.json.
+Git publication is opt-in via SWARM_EDGE_PUBLISH_ENABLED=1.
 
 Called automatically by run_live.sh every 6 cycles (~6h).
 Run manually: python3 scripts/export_data.py
@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import subprocess
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,9 +24,14 @@ TRADES_OUT  = DATA_DIR / "paper_trades.json"
 DIAG_SRC    = ROOT / "signals" / "infer_diagnostics.json"
 DIAG_OUT    = DATA_DIR / "infer_diagnostics.json"
 CUTOFF      = "2026-03-28T21:00"
+PUBLISH_ENABLED = os.getenv("SWARM_EDGE_PUBLISH_ENABLED", "0").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 
-def now_utc() -> str:
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def utc_now_label() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
@@ -42,8 +48,13 @@ def export_trades() -> int:
     ).fetchall()
     conn.close()
     records = [dict(r) for r in rows]
+    payload = {
+        "generated_at_utc": utc_now_iso(),
+        "source_db_path": str(DB_PATH),
+        "records": records,
+    }
     DATA_DIR.mkdir(exist_ok=True)
-    TRADES_OUT.write_text(json.dumps(records, indent=2, default=str))
+    TRADES_OUT.write_text(json.dumps(payload, indent=2, default=str))
     print(f"  [export] {len(records)} open trades → data/paper_trades.json")
     return len(records)
 
@@ -53,12 +64,19 @@ def export_diagnostics() -> bool:
         print("  [export] diagnostics not found — skipping")
         return False
     DATA_DIR.mkdir(exist_ok=True)
-    DIAG_OUT.write_text(DIAG_SRC.read_text())
+    diag = json.loads(DIAG_SRC.read_text())
+    if isinstance(diag, dict):
+        diag["generated_at_utc"] = utc_now_iso()
+        diag["source_db_path"] = str(DB_PATH)
+    DIAG_OUT.write_text(json.dumps(diag, indent=2, sort_keys=True, default=str))
     print("  [export] diagnostics → data/infer_diagnostics.json")
     return True
 
 
 def git_push() -> None:
+    if not PUBLISH_ENABLED:
+        print("  [export] publication disabled (SWARM_EDGE_PUBLISH_ENABLED=0)")
+        return
     files = []
     if TRADES_OUT.exists():
         files.append("data/paper_trades.json")
@@ -102,10 +120,16 @@ def git_push() -> None:
 
 
 def main() -> None:
-    print(f"EXPORT — {now_utc()}")
-    export_trades()
-    export_diagnostics()
-    git_push()
+    print(f"EXPORT — {utc_now_label()}")
+    try:
+        export_trades()
+        export_diagnostics()
+    except Exception as exc:
+        print(f"  [export] local export failed: {exc}")
+    try:
+        git_push()
+    except Exception as exc:
+        print(f"  [export] publication failed: {exc}")
 
 
 if __name__ == "__main__":

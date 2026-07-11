@@ -1,6 +1,14 @@
 {
+  "generated_at_utc": "2026-07-11T15:10:28.724334+00:00",
   "mode": "infer",
-  "rows": [],
+  "rows": [
+    {
+      "decision": "REJECT",
+      "error": "fetch failed for market slug=will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election: <urlopen error [Errno 8] nodename nor servname provided, or not known>",
+      "reason": "fetch_failed",
+      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
+    }
+  ],
   "settings": {
     "batch": 5,
     "cooldown": 43,
@@ -10,20 +18,25 @@
     "paper_size": 100.0
   },
   "source": "polymarket",
+  "source_db_path": "/Users/scottsteele/blackglasslab/memory/runs.sqlite",
   "summary": {
-    "evaluated": 0,
+    "evaluated": 1,
     "passed": 0,
     "rejected": {
+      "category_cap": 0,
       "closed_market": 0,
-      "fetch_failed": 0,
+      "extreme_tail": 0,
+      "fetch_failed": 1,
       "inactive_market": 0,
+      "invalid_price": 0,
       "low_liquidity": 0,
       "low_volume": 0,
       "max_disagree": 0,
       "min_edge_abs": 0,
       "min_edge_vs_market": 0,
+      "time_rejected": 0,
       "wide_spread": 0
     }
   },
-  "ts_utc": "2026-05-24T17:11:33.297991+00:00"
+  "ts_utc": "2026-07-11T15:10:27.511649+00:00"
 }

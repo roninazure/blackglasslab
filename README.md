@@ -114,6 +114,10 @@ cd ~/blackglasslab
 # start
 nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &
 
+# defaults
+#   SWARM_EDGE_PUBLISH_ENABLED=0 keeps exports local-only
+#   SWARM_EDGE_WATCHLIST_APPLY=0 keeps watchlist refresh read-only
+
 # monitor
 tail -f logs/infer_loop.log
 

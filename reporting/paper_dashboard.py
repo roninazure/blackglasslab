@@ -7,6 +7,13 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List, Tuple
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+
+from swarm_edge_io import merge_notes_blob
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
 
@@ -22,13 +29,7 @@ def _connect_db(path: str) -> sqlite3.Connection:
 
 
 def _safe_json(s: Optional[str]) -> Dict[str, Any]:
-    if not s:
-        return {}
-    try:
-        obj = json.loads(s)
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
+    return merge_notes_blob(s)
 
 
 def _fmt(x: Any, nd: int = 6) -> str:
@@ -120,7 +121,7 @@ def main() -> int:
     cur.execute(f"SELECT COUNT(*) AS n FROM paper_trades {where} AND status='OPEN';", params)
     open_n = int(cur.fetchone()["n"] or 0)
 
-    cur.execute(f"SELECT COUNT(*) AS n FROM paper_trades {where} AND status!='OPEN';", params)
+    cur.execute(f"SELECT COUNT(*) AS n FROM paper_trades {where} AND status='CLOSED';", params)
     closed_n = int(cur.fetchone()["n"] or 0)
 
     cur.execute(f"SELECT AVG(edge) AS a FROM paper_trades {where};", params)
@@ -129,7 +130,7 @@ def main() -> int:
     cur.execute(f"SELECT AVG(disagreement) AS a FROM paper_trades {where};", params)
     avg_disagree = cur.fetchone()["a"]
 
-    cur.execute(f"SELECT AVG(brier) AS a FROM paper_trades {where} AND status!='OPEN' AND brier IS NOT NULL;", params)
+    cur.execute(f"SELECT AVG(brier) AS a FROM paper_trades {where} AND status='CLOSED' AND brier IS NOT NULL;", params)
     avg_brier = cur.fetchone()["a"]
 
     cur.execute(f"SELECT MIN(ts_utc) AS t FROM paper_trades {where};", params)

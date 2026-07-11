@@ -8,6 +8,8 @@ __pycache__/
 
 # env
 .env
+.env.*
+!.env.example
 .venv/
 venv/
 
@@ -19,10 +21,13 @@ signals/
 logs/
 memory/*.sqlite
 memory/*.sqlite-*
+*.sqlite-wal
+*.sqlite-shm
 *.log
 
 # local backups
 *.bak.*
+*.backup.*
 *.bak
 *.tmp
 
@@ -31,6 +36,12 @@ __pycache__/
 *.pyc
 .venv/
 markets/_pm_search2/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+htmlcov/
+/KILL
 
 # runtime artifacts
 signals/infer_diagnostics.json

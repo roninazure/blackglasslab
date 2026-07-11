@@ -17,8 +17,13 @@ import sqlite3
 import subprocess
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import sys
 
 ROOT      = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+
+from swarm_edge_io import load_paper_trades_export, merge_notes_blob
+
 DB_PATH   = ROOT / "memory" / "runs.sqlite"
 LOG_PATH  = ROOT / "logs" / "infer_loop.log"
 DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
@@ -51,15 +56,20 @@ def check_kill():
 # ── 2. LOOP RUNNING ───────────────────────────────────────────────────────────
 def check_loop():
     try:
-        r = subprocess.run(["ps", "aux"], capture_output=True, text=True)
+        r = subprocess.run(
+            ["pgrep", "-fl", "run_live.sh|live_runner.py"],
+            capture_output=True,
+            text=True,
+        )
         procs = [l for l in r.stdout.splitlines()
                  if "run_live.sh" in l and "caffeinate" not in l
                  and "integrity" not in l and "grep" not in l]
         if len(procs) == 1:
-            pid = procs[0].split()[1]
+            pid = procs[0].split()[0]
             check(PASS, "Loop process", f"running (pid {pid})")
         elif len(procs) > 1:
-            check(WARN, "Loop process", f"{len(procs)} instances — run pkill -f run_live.sh then restart")
+            pids = " ".join(l.split()[0] for l in procs)
+            check(WARN, "Loop process", f"{len(procs)} instances — pids {pids}")
         else:
             check(FAIL, "Loop process", "NOT RUNNING — restart: nohup caffeinate -i bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
     except Exception as e:
@@ -218,31 +228,28 @@ def check_database():
 
 # ── 9. POSITIONS SANITY ───────────────────────────────────────────────────────
 def check_positions():
-    jfile = DATA_DIR / "paper_trades.json"
-    if not jfile.exists():
-        check(WARN, "Positions data", "data/paper_trades.json not found — run export_data.py")
-        return
     try:
-        trades = json.loads(jfile.read_text())
-        open_t = [t for t in trades if t.get("status") == "OPEN"]
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        trades = conn.execute("SELECT * FROM paper_trades ORDER BY ts_utc DESC").fetchall()
+        conn.close()
+        open_t = [t for t in trades if t["status"] == "OPEN"]
         nan_trades = []
         bad_crowd  = []
         for t in open_t:
-            notes = {}
-            try: notes = json.loads(t.get("notes") or "{}")
-            except: pass
+            notes = merge_notes_blob(t["notes"])
             crowd = notes.get("p_yes_market") or notes.get("crowd_p_yes")
             try:
                 c = float(crowd)
                 if math.isnan(c) or c <= 0:
-                    nan_trades.append(t.get("market_id","?"))
+                    nan_trades.append(t["market_id"] or "?")
             except:
-                bad_crowd.append(t.get("market_id","?"))
+                bad_crowd.append(t["market_id"] or "?")
 
         if nan_trades or bad_crowd:
             check(WARN, "Positions sanity", f"bad crowd prices: {nan_trades + bad_crowd}")
         else:
-            total_stake = sum(float(t.get("size_usd",0)) for t in open_t)
+            total_stake = sum(float(t["size_usd"] or 0) for t in open_t)
             check(PASS, "Positions sanity", f"{len(open_t)} open, ${total_stake:.0f} deployed, no NaN prices")
     except Exception as e:
         check(WARN, "Positions sanity", f"could not parse: {e}")
@@ -255,12 +262,20 @@ def check_export():
         check(WARN, "Export freshness", "data/paper_trades.json missing")
         return
     try:
-        mtime = datetime.fromtimestamp(jfile.stat().st_mtime, tz=timezone.utc)
+        meta, _records = load_paper_trades_export(jfile)
+        generated_at = meta.get("generated_at_utc")
+        source_db_path = meta.get("source_db_path")
+        if generated_at:
+            mtime = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+        else:
+            mtime = datetime.fromtimestamp(jfile.stat().st_mtime, tz=timezone.utc)
         hours = (now_utc() - mtime).total_seconds() / 3600
         if hours > 12:
             check(WARN, "Export freshness", f"{hours:.0f}h since last export — dashboard may be stale")
         else:
             check(PASS, "Export freshness", f"last exported {hours:.1f}h ago")
+        if source_db_path and str(source_db_path) != str(DB_PATH):
+            check(WARN, "Export source", f"{source_db_path} != {DB_PATH}")
     except Exception as e:
         check(WARN, "Export freshness", f"could not check: {e}")
 

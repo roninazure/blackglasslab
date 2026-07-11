@@ -7,9 +7,14 @@ from reportlab.lib.colors import HexColor
 import json
 import math
 import sqlite3
+import sys
 from pathlib import Path
 
 ROOT    = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+
+from swarm_edge_io import merge_notes_blob
+
 OUT     = ROOT / "swarm_edge_flyer.pdf"
 DB_PATH = ROOT / "memory" / "runs.sqlite"
 CUTOFF  = "2026-03-28T21:00"
@@ -50,9 +55,7 @@ def live_stats() -> dict:
             return {**defaults, "n_markets": n_markets}
         total_payout = 0.0
         for r in rows:
-            notes = {}
-            try: notes = json.loads(r["notes"] or "{}")
-            except: pass
+            notes = merge_notes_blob(r["notes"])
             crowd = notes.get("p_yes_market") or float(r["p_yes"] or 0.5)
             sp = (1 - crowd) if r["side"] == "NO" else crowd
             if sp > 0:

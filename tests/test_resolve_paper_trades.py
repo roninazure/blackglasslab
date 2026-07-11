@@ -71,6 +71,7 @@ class ResolverTests(unittest.TestCase):
                 self.assertEqual(resolver.main(), 0)
 
             fetch_by_id.assert_called_once_with(1126854, timeout_s=20)
+            self.assertIn("RESOLVER DRY RUN:", output.getvalue())
             self.assertIn("lookup_source=slug lookup_failed=not found", output.getvalue())
             self.assertIn("lookup_source=snapshot_id CLOSED", output.getvalue())
 

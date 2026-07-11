@@ -13,8 +13,13 @@ import sqlite3
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 
 ROOT      = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+
+from swarm_edge_io import merge_notes_blob
+
 DB_PATH   = ROOT / "memory" / "runs.sqlite"
 LOG_PATH  = ROOT / "logs" / "infer_loop.log"
 DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
@@ -134,21 +139,19 @@ def check_loop():
     print("LOOP")
     try:
         result = subprocess.run(
-            ["ps", "aux"],
+            ["pgrep", "-fl", "run_live.sh|live_runner.py"],
             capture_output=True, text=True
         )
-        # Only count bash/sh processes — caffeinate wrapping run_live.sh
-        # creates a parent process that also matches, causing false duplicates
         pids = [l for l in result.stdout.strip().splitlines()
                 if "run_live.sh" in l
                 and "morning_status" not in l
                 and "grep" not in l
                 and "caffeinate" not in l]
         if len(pids) == 1:
-            pid = pids[0].split()[1]
+            pid = pids[0].split()[0]
             print(f"  status   RUNNING  (pid {pid})")
         elif len(pids) > 1:
-            pid_list = " ".join(l.split()[1] for l in pids)
+            pid_list = " ".join(l.split()[0] for l in pids)
             print(f"  WARNING  {len(pids)} instances running (pids {pid_list})")
             print(f"           fix: pkill -f run_live.sh && pkill -f live_runner.py && nohup caffeinate -i bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
         else:
@@ -197,9 +200,7 @@ def check_positions():
         print()
         print(f"!! PENDING APPROVAL  [{len(pending)} trade(s)] — run: python3 scripts/approve_trades.py")
         for r in pending:
-            notes = {}
-            try: notes = json.loads(r["notes"] or "{}")
-            except: pass
+            notes = merge_notes_blob(r["notes"])
             crowd = float(notes.get("p_yes_market") or r["p_yes"] or 0.5)
             claude = float(r["p_yes"] or 0.5)
             rationale = (notes.get("llm") or {}).get("rationale", "")[:80]
@@ -227,11 +228,7 @@ def check_positions():
             days_held = "?"
 
         # Crowd price from notes (same source as dashboard)
-        notes = {}
-        try:
-            notes = json.loads(r["notes"] or "{}")
-        except Exception:
-            pass
+        notes = merge_notes_blob(r["notes"])
         crowd_raw = notes.get("p_yes_market") or notes.get("crowd_p_yes")
         try:
             crowd_p_yes = float(crowd_raw) if crowd_raw is not None else p_yes_claude
@@ -264,11 +261,7 @@ def check_positions():
             slug = (r["market_id"] or "")[:38]
             outcome = r["resolved_outcome"] or "?"
             brier = r["brier"]
-            notes = {}
-            try:
-                notes = json.loads(r["notes"] or "{}")
-            except Exception:
-                pass
+            notes = merge_notes_blob(r["notes"])
             profit = notes.get("profit_usd") or (notes.get("resolution") or {}).get("profit_usd") or 0
             total_profit += float(profit)
             brier_s = f"{brier:.4f}" if brier is not None else "    ?"

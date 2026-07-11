@@ -1,16 +1,19 @@
 # Known Issues
 
-- Inference pipeline lacked complete stage-level observability. Resolved in Phase 1 and validated across one complete 25-market rotation.
-- Resolver lacked a numeric market-ID fallback. Resolved and live-validated through Gamma `snapshot_id` lookup.
-- Historical trades 6 and 13 were orphaned by slug lookup. Resolved through `notes.snapshot.id` and closed with venue-confirmed outcomes in Phase 1.
-- Watchlist/category concentration is weak; category labeling is heuristic and differs slightly between discovery and inference.
-- Configuration is scattered across environment variables, shell defaults, and Python defaults.
-- Structured reporting is incomplete beyond the latest-run pipeline and diagnostics artifacts.
-- Inference intentionally evaluates a rotating batch and generates at most one candidate per run; this limits coverage latency.
-- LLM failure falls back to the baseline, so a candidate can be generated without LLM output; the pipeline report records this condition.
-- Time to resolution affects baseline confidence but is not currently a hard rejection despite legacy documentation implying a minimum-hours filter.
-- The integrity checker reports OPEN exposure using logic that includes CLOSED trades; its displayed `6 open` conflicts with the database's verified `4 OPEN` rows.
-- The calibration baseline has only two resolved forecasts, which is anecdotal and cannot establish edge.
-- Paper P&L is theoretical gross P&L; fees, slippage, spread crossing, latency, and fill risk are not modeled.
-- Four legacy `runs` rows contain populated Brier fields despite `outcome='UNRESOLVED'`; they are excluded from Phase 2 calibration.
-- One of the two calibration-eligible paper trades has no stored category and is reported as `unknown`.
+## Resolved
+
+- Inference pipeline now records a terminal reason for every watchlist market.
+- Resolver fallback by `notes.snapshot.id` is implemented and validated.
+- `run_live.sh` no longer auto-publishes runtime snapshots by default.
+- Legacy summaries now parse resolver notes that contain a base JSON blob plus a resolver JSON line.
+- `scripts/integrity_check.py` now reports positions from SQLite rather than stale exported JSON.
+
+## Open
+
+- Watchlist/category concentration is still heuristic and can cluster by topic.
+- Configuration remains scattered across shell defaults, `.env`, Python defaults, and helper scripts.
+- Structured reporting is incomplete beyond the main runtime pipeline and calibration artifacts.
+- Legacy reporting CLIs still overlap with the current dashboard and should be retired or reconciled deliberately.
+- Calibration evidence is still too small to support an edge claim.
+- Paper P&L remains theoretical gross P&L; fees, slippage, spread crossing, latency, and fills are not modeled.
+- The runtime still performs sequential external calls, which is acceptable at current cadence but not yet optimized for scale.
