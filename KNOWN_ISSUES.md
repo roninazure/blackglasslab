@@ -10,3 +10,7 @@
 - LLM failure falls back to the baseline, so a candidate can be generated without LLM output; the pipeline report records this condition.
 - Time to resolution affects baseline confidence but is not currently a hard rejection despite legacy documentation implying a minimum-hours filter.
 - The integrity checker reports OPEN exposure using logic that includes CLOSED trades; its displayed `6 open` conflicts with the database's verified `4 OPEN` rows.
+- The calibration baseline has only two resolved forecasts, which is anecdotal and cannot establish edge.
+- Paper P&L is theoretical gross P&L; fees, slippage, spread crossing, latency, and fill risk are not modeled.
+- Four legacy `runs` rows contain populated Brier fields despite `outcome='UNRESOLVED'`; they are excluded from Phase 2 calibration.
+- One of the two calibration-eligible paper trades has no stored category and is reported as `unknown`.

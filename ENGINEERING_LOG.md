@@ -29,3 +29,17 @@
 **Acceptance:** Targeted tests, full discovery, Python compilation, and the scoped diff check pass. The project integrity check reports 7 passes and 4 existing operational warnings. Phase 1 acceptance evidence is stored in `archive/phase1_validation/`. Phase 1 is complete; unattended operation remains stopped.
 
 **Next action:** Begin Phase 2 with a read-only calibration baseline over CLOSED trades, defining sample-size requirements and reporting Brier score by model/reason/category before any threshold changes.
+
+## 2026-07-11 - Phase 2 calibration baseline
+
+**Scope:** Inventoried the production SQLite schema and built deterministic, read-only calibration analytics over `paper_trades`. No thresholds, models, watchlist entries, trade rows, or schema objects changed.
+
+**Inventory:** SQLite contains 21 paper trades, 4 runs, 24 agent runs, 4 arbiter runs, and 24 population rows. There is no `forecasts`, scoring, resolution, or diagnostics table. All four legacy `runs` outcomes are `UNRESOLVED` and are excluded despite populated legacy Brier fields. Paper trades contain 2 CLOSED, 4 OPEN, 15 VOID, and 0 PENDING rows. Only CLOSED IDs 6 and 13 are binary resolved forecasts; both have entry market probabilities, model probabilities, Brier scores, resolver P&L, and resolution timestamps.
+
+**Baseline:** Model Brier is 0.168400 versus market Brier 0.176360 on two matched forecasts, yielding Brier skill 0.045136. Model log loss is 0.443852 versus market log loss 0.539773. Theoretical gross paper P&L is -$52.8330, hit rate is 50%, average signed edge is -0.190250, and average absolute edge is 0.190250. These figures are classified `anecdotal_only`; no edge claim is permitted.
+
+**P&L assessment:** Resolver YES, NO, and losing-trade formulas are mathematically correct for binary shares at the recorded entry probability. The formula omits fees, slippage, spread crossing, latency, and fills, so the result is gross theoretical rather than realistic net P&L. No formula or historical value was changed.
+
+**Verification:** Targeted tests cover Brier, market Brier, skill score, payout formulas, exclusions, missing metadata, and source immutability. Production paper-trade fingerprint remained `55d5b4d19a3d1f733b71cfe6670b2d5f25108b7ce852277f1ece90f4271334a6` before and after analysis.
+
+**Next action:** Accumulate resolved paper forecasts without strategy changes and rerun the same baseline at the 10-, 30-, and 100-forecast evidence gates.

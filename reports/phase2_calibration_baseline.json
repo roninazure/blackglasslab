@@ -1,0 +1,578 @@
+{
+  "by_category": [
+    {
+      "average_absolute_edge": 0.3005,
+      "average_pnl_usd": 47.167,
+      "average_signed_edge": -0.3005,
+      "brier_skill_score_vs_market": 0.9961059284805089,
+      "evidence_strength": {
+        "classification": "anecdotal_only",
+        "edge_claim_permitted": false,
+        "minimum_for_any_edge_claim": 30,
+        "resolved_forecasts": 1
+      },
+      "hit_rate": 1.0,
+      "label": "other",
+      "market_brier": 0.10272025,
+      "market_log_loss": 0.38639804539093864,
+      "market_matched_sample_count": 1,
+      "model_absolute_calibration_error": 0.02,
+      "model_brier": 0.0004,
+      "model_brier_ci_95": null,
+      "model_brier_on_market_matched_subset": 0.0004,
+      "model_log_loss": 0.020202707317519466,
+      "pnl_sample_count": 1,
+      "resolved_sample_count": 1,
+      "total_realized_pnl_usd": 47.167
+    },
+    {
+      "average_absolute_edge": 0.08000000000000002,
+      "average_pnl_usd": -100.0,
+      "average_signed_edge": -0.08000000000000002,
+      "brier_skill_score_vs_market": -0.34560000000000035,
+      "evidence_strength": {
+        "classification": "anecdotal_only",
+        "edge_claim_permitted": false,
+        "minimum_for_any_edge_claim": 30,
+        "resolved_forecasts": 1
+      },
+      "hit_rate": 0.0,
+      "label": "unknown",
+      "market_brier": 0.25,
+      "market_log_loss": 0.6931471805599453,
+      "market_matched_sample_count": 1,
+      "model_absolute_calibration_error": 0.5800000000000001,
+      "model_brier": 0.3364000000000001,
+      "model_brier_ci_95": null,
+      "model_brier_on_market_matched_subset": 0.3364000000000001,
+      "model_log_loss": 0.8675005677047231,
+      "pnl_sample_count": 1,
+      "resolved_sample_count": 1,
+      "total_realized_pnl_usd": -100.0
+    }
+  ],
+  "by_model": [
+    {
+      "average_absolute_edge": 0.19025,
+      "average_pnl_usd": -26.4165,
+      "average_signed_edge": -0.19025,
+      "brier_skill_score_vs_market": 0.045135628022490715,
+      "evidence_strength": {
+        "classification": "anecdotal_only",
+        "edge_claim_permitted": false,
+        "minimum_for_any_edge_claim": 30,
+        "resolved_forecasts": 2
+      },
+      "hit_rate": 0.5,
+      "label": "claude-haiku-4-5-20251001",
+      "market_brier": 0.176360125,
+      "market_log_loss": 0.539772612975442,
+      "market_matched_sample_count": 2,
+      "model_absolute_calibration_error": 0.30000000000000004,
+      "model_brier": 0.16840000000000005,
+      "model_brier_ci_95": null,
+      "model_brier_on_market_matched_subset": 0.16840000000000005,
+      "model_log_loss": 0.4438516375111213,
+      "pnl_sample_count": 2,
+      "resolved_sample_count": 2,
+      "total_realized_pnl_usd": -52.833
+    }
+  ],
+  "by_month": [
+    {
+      "average_absolute_edge": 0.19025,
+      "average_pnl_usd": -26.4165,
+      "average_signed_edge": -0.19025,
+      "brier_skill_score_vs_market": 0.045135628022490715,
+      "evidence_strength": {
+        "classification": "anecdotal_only",
+        "edge_claim_permitted": false,
+        "minimum_for_any_edge_claim": 30,
+        "resolved_forecasts": 2
+      },
+      "hit_rate": 0.5,
+      "label": "2026-07",
+      "market_brier": 0.176360125,
+      "market_log_loss": 0.539772612975442,
+      "market_matched_sample_count": 2,
+      "model_absolute_calibration_error": 0.30000000000000004,
+      "model_brier": 0.16840000000000005,
+      "model_brier_ci_95": null,
+      "model_brier_on_market_matched_subset": 0.16840000000000005,
+      "model_log_loss": 0.4438516375111213,
+      "pnl_sample_count": 2,
+      "resolved_sample_count": 2,
+      "total_realized_pnl_usd": -52.833
+    }
+  ],
+  "by_reason": [
+    {
+      "average_absolute_edge": 0.19025,
+      "average_pnl_usd": -26.4165,
+      "average_signed_edge": -0.19025,
+      "brier_skill_score_vs_market": 0.045135628022490715,
+      "evidence_strength": {
+        "classification": "anecdotal_only",
+        "edge_claim_permitted": false,
+        "minimum_for_any_edge_claim": 30,
+        "resolved_forecasts": 2
+      },
+      "hit_rate": 0.5,
+      "label": "infer",
+      "market_brier": 0.176360125,
+      "market_log_loss": 0.539772612975442,
+      "market_matched_sample_count": 2,
+      "model_absolute_calibration_error": 0.30000000000000004,
+      "model_brier": 0.16840000000000005,
+      "model_brier_ci_95": null,
+      "model_brier_on_market_matched_subset": 0.16840000000000005,
+      "model_log_loss": 0.4438516375111213,
+      "pnl_sample_count": 2,
+      "resolved_sample_count": 2,
+      "total_realized_pnl_usd": -52.833
+    }
+  ],
+  "by_side": [
+    {
+      "average_absolute_edge": 0.19025,
+      "average_pnl_usd": -26.4165,
+      "average_signed_edge": -0.19025,
+      "brier_skill_score_vs_market": 0.045135628022490715,
+      "evidence_strength": {
+        "classification": "anecdotal_only",
+        "edge_claim_permitted": false,
+        "minimum_for_any_edge_claim": 30,
+        "resolved_forecasts": 2
+      },
+      "hit_rate": 0.5,
+      "label": "NO",
+      "market_brier": 0.176360125,
+      "market_log_loss": 0.539772612975442,
+      "market_matched_sample_count": 2,
+      "model_absolute_calibration_error": 0.30000000000000004,
+      "model_brier": 0.16840000000000005,
+      "model_brier_ci_95": null,
+      "model_brier_on_market_matched_subset": 0.16840000000000005,
+      "model_log_loss": 0.4438516375111213,
+      "pnl_sample_count": 2,
+      "resolved_sample_count": 2,
+      "total_realized_pnl_usd": -52.833
+    }
+  ],
+  "calibration_buckets": {
+    "available": false,
+    "buckets": [],
+    "reason": "requires_at_least_10_resolved_forecasts"
+  },
+  "evidence_strength": {
+    "classification": "anecdotal_only",
+    "edge_claim_permitted": false,
+    "minimum_for_any_edge_claim": 30,
+    "resolved_forecasts": 2
+  },
+  "excluded_trades": [
+    {
+      "exclusion_reason": "status_void",
+      "id": 1,
+      "market_id": "iran-leadership-change-or-us-x-iran-ceasefire-first",
+      "resolved_outcome": "VOID",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_open_unresolved",
+      "id": 2,
+      "market_id": "blue-wave-in-2026",
+      "resolved_outcome": null,
+      "status": "OPEN"
+    },
+    {
+      "exclusion_reason": "status_open_unresolved",
+      "id": 3,
+      "market_id": "fed-emergency-rate-cut-before-2027",
+      "resolved_outcome": null,
+      "status": "OPEN"
+    },
+    {
+      "exclusion_reason": "status_open_unresolved",
+      "id": 4,
+      "market_id": "us-recession-by-end-of-2026",
+      "resolved_outcome": null,
+      "status": "OPEN"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 5,
+      "market_id": "will-bitcoin-hit-150k-by-june-30-2026",
+      "resolved_outcome": "VOID: below min_crowd_price 3%",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 7,
+      "market_id": "will-4-fed-rate-cuts-happen-in-2026",
+      "resolved_outcome": "VOID: below 5pct crowd floor",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 8,
+      "market_id": "will-aston-villa-win-the-2025-26-uefa-europa-league",
+      "resolved_outcome": "VOID",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 9,
+      "market_id": "will-freiburg-win-the-2025-26-uefa-europa-league",
+      "resolved_outcome": "VOID",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 10,
+      "market_id": "will-5-fed-rate-cuts-happen-in-2026",
+      "resolved_outcome": "VOID",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 11,
+      "market_id": "will-there-be-no-change-in-fed-interest-rates-after-the-april-2026-meeting",
+      "resolved_outcome": "VOID",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 12,
+      "market_id": "will-nottm-forest-win-the-2025-26-uefa-europa-league",
+      "resolved_outcome": "VOID",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_open_unresolved",
+      "id": 14,
+      "market_id": "will-2-fed-rate-cuts-happen-in-2026",
+      "resolved_outcome": null,
+      "status": "OPEN"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 15,
+      "market_id": "will-no-fed-rate-cuts-happen-in-2026",
+      "resolved_outcome": "REJECTED: manual_reject",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 16,
+      "market_id": "will-3-fed-rate-cuts-happen-in-2026",
+      "resolved_outcome": "REJECTED: manual_reject",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 17,
+      "market_id": "will-the-us-confirm-that-aliens-exist-before-2027-789-924-249",
+      "resolved_outcome": "REJECTED: manual_reject",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 18,
+      "market_id": "eth-flipped-in-2026",
+      "resolved_outcome": "REJECTED: stale_signal_reprice_required",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 19,
+      "market_id": "will-1-fed-rate-cut-happen-in-2026",
+      "resolved_outcome": "REJECTED: stale_signal_reprice_required",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 20,
+      "market_id": "will-ken-paxton-win-the-2026-republican-primary",
+      "resolved_outcome": "REJECTED: stale_signal_reprice_required",
+      "status": "VOID"
+    },
+    {
+      "exclusion_reason": "status_void",
+      "id": 21,
+      "market_id": "will-the-us-invade-iran-before-2027",
+      "resolved_outcome": "REJECTED: stale_signal_reprice_required",
+      "status": "VOID"
+    }
+  ],
+  "included_trades": [
+    {
+      "absolute_calibration_error": 0.5800000000000001,
+      "absolute_edge": 0.08000000000000002,
+      "category": "unknown",
+      "correct_side": false,
+      "entry_ts_utc": "2026-04-10T03:48:29.362363+00:00",
+      "id": 6,
+      "lookup_source": "snapshot_id",
+      "market_brier": 0.25,
+      "market_id": "will-the-court-force-trump-to-refund-tariffs-2026-06-30",
+      "market_log_loss": 0.6931471805599453,
+      "market_probability": 0.5,
+      "model": "claude-haiku-4-5-20251001",
+      "model_brier": 0.3364000000000001,
+      "model_log_loss": 0.8675005677047231,
+      "model_probability": 0.42,
+      "month": "2026-07",
+      "outcome": "YES",
+      "outcome_value": 1,
+      "profit_source": "resolver_metadata",
+      "profit_usd": -100.0,
+      "question": "Will the Court Force Trump to Refund Tariffs?",
+      "reason": "infer",
+      "resolved_at_utc": "2026-07-11T13:16:09.756953+00:00",
+      "run_id": "infer-2026-04-10T03:48:29.362390+00:00",
+      "side": "NO",
+      "signed_edge": -0.08000000000000002,
+      "size_usd": 100.0,
+      "stored_brier_matches": true,
+      "stored_model_brier": 0.3364000000000001,
+      "venue": "polymarket"
+    },
+    {
+      "absolute_calibration_error": 0.02,
+      "absolute_edge": 0.3005,
+      "category": "other",
+      "correct_side": true,
+      "entry_ts_utc": "2026-04-27T16:56:08.789054+00:00",
+      "id": 13,
+      "lookup_source": "snapshot_id",
+      "market_brier": 0.10272025,
+      "market_id": "will-tottenham-be-relegated-from-the-english-premier-league-after-the-202526-season",
+      "market_log_loss": 0.38639804539093864,
+      "market_probability": 0.3205,
+      "model": "claude-haiku-4-5-20251001",
+      "model_brier": 0.0004,
+      "model_log_loss": 0.020202707317519466,
+      "model_probability": 0.02,
+      "month": "2026-07",
+      "outcome": "NO",
+      "outcome_value": 0,
+      "profit_source": "resolver_metadata",
+      "profit_usd": 47.167,
+      "question": "Will Tottenham be relegated from the English Premier League after the 2025\u201326 season?",
+      "reason": "infer",
+      "resolved_at_utc": "2026-07-11T13:16:09.868905+00:00",
+      "run_id": "infer-2026-04-27T16:56:08.789091+00:00",
+      "side": "NO",
+      "signed_edge": -0.3005,
+      "size_usd": 100.0,
+      "stored_brier_matches": true,
+      "stored_model_brier": 0.0004,
+      "venue": "polymarket"
+    }
+  ],
+  "inventory": {
+    "columns": {
+      "agent_population": [
+        "id",
+        "agent_id",
+        "role",
+        "mode",
+        "seed",
+        "generation",
+        "parent_agent_id",
+        "mutation",
+        "is_active",
+        "fitness",
+        "notes",
+        "created_ts_utc",
+        "updated_ts_utc",
+        "last_used_ts_utc"
+      ],
+      "agent_runs": [
+        "id",
+        "run_id",
+        "agent_name",
+        "side",
+        "conf",
+        "rationale",
+        "brier",
+        "reward",
+        "score",
+        "notes",
+        "ts_utc",
+        "fitness",
+        "agent_id"
+      ],
+      "arbiter_runs": [
+        "id",
+        "run_id",
+        "ts_utc",
+        "consensus_side",
+        "consensus_p_yes",
+        "disagreement",
+        "winner_agent",
+        "winner_fitness",
+        "notes"
+      ],
+      "kv": [
+        "key",
+        "value"
+      ],
+      "paper_trades": [
+        "id",
+        "run_id",
+        "ts_utc",
+        "market_id",
+        "question",
+        "venue",
+        "side",
+        "consensus_p_yes",
+        "disagreement",
+        "size_usd",
+        "reason",
+        "status",
+        "resolved_outcome",
+        "p_yes",
+        "edge",
+        "brier",
+        "notes"
+      ],
+      "runs": [
+        "id",
+        "run_id",
+        "ts_utc",
+        "market_id",
+        "question",
+        "outcome",
+        "operator_side",
+        "operator_conf",
+        "operator_rationale",
+        "skeptic_side",
+        "skeptic_conf",
+        "skeptic_rationale",
+        "operator_score",
+        "skeptic_score",
+        "operator_notes",
+        "skeptic_notes",
+        "operator_brier",
+        "operator_reward",
+        "skeptic_brier",
+        "skeptic_reward"
+      ]
+    },
+    "diagnostics_table_present": false,
+    "forecasts_table_present": false,
+    "paper_trade_fields": {
+      "binary_resolved_outcome_count": 2,
+      "categories": {
+        "crypto": 1,
+        "macro/fed": 6,
+        "other": 6,
+        "politics": 1,
+        "unknown": 7
+      },
+      "entry_market_probability_count": 20,
+      "model_identifiers": {
+        "claude-haiku-4-5-20251001": 17,
+        "unknown": 4
+      },
+      "notes_json_object_count_distribution": {
+        "0": 1,
+        "1": 18,
+        "2": 2
+      },
+      "resolution_timestamp_count": 2,
+      "resolver_profit_count": 2,
+      "stored_brier_count": 2,
+      "valid_model_probability_count": 21
+    },
+    "paper_trade_reason_counts": {
+      "arbiter": 4,
+      "infer": 17
+    },
+    "paper_trade_status_counts": {
+      "CLOSED": 2,
+      "OPEN": 4,
+      "VOID": 15
+    },
+    "resolution_table_present": false,
+    "row_counts": {
+      "agent_population": 24,
+      "agent_runs": 24,
+      "arbiter_runs": 4,
+      "kv": 1,
+      "paper_trades": 21,
+      "runs": 4
+    },
+    "runs_calibration_eligible_count": 0,
+    "runs_outcome_counts": {
+      "UNRESOLVED": 4
+    },
+    "scoring_table_present": false,
+    "tables": [
+      "agent_population",
+      "agent_runs",
+      "arbiter_runs",
+      "kv",
+      "paper_trades",
+      "runs"
+    ]
+  },
+  "method_version": "phase2_calibration_v1",
+  "overall": {
+    "average_absolute_edge": 0.19025,
+    "average_pnl_usd": -26.4165,
+    "average_signed_edge": -0.19025,
+    "brier_skill_score_vs_market": 0.045135628022490715,
+    "hit_rate": 0.5,
+    "market_brier": 0.176360125,
+    "market_log_loss": 0.539772612975442,
+    "market_matched_sample_count": 2,
+    "model_absolute_calibration_error": 0.30000000000000004,
+    "model_brier": 0.16840000000000005,
+    "model_brier_ci_95": null,
+    "model_brier_on_market_matched_subset": 0.16840000000000005,
+    "model_log_loss": 0.4438516375111213,
+    "pnl_sample_count": 2,
+    "resolved_sample_count": 2,
+    "total_realized_pnl_usd": -52.833
+  },
+  "pnl_assumptions": {
+    "classification": "theoretical_gross_paper_pnl",
+    "entry_probability_source": "notes.p_yes_market",
+    "fees_included": false,
+    "slippage_included": false,
+    "spread_crossing_modeled": false
+  },
+  "source_database": "memory/runs.sqlite",
+  "source_paper_trades_sha256": "55d5b4d19a3d1f733b71cfe6670b2d5f25108b7ce852277f1ece90f4271334a6",
+  "valid_for": {
+    "calibration_scoring_ids": [
+      6,
+      13
+    ],
+    "category_analysis_ids": [
+      13
+    ],
+    "market_comparison_ids": [
+      6,
+      13
+    ],
+    "model_comparison_ids": [
+      6,
+      13
+    ],
+    "pnl_scoring_ids": [
+      6,
+      13
+    ],
+    "reason_analysis_ids": [
+      6,
+      13
+    ]
+  },
+  "warnings": [
+    "Only 2 resolved forecasts are available; results are anecdotal only and cannot establish edge."
+  ]
+}
