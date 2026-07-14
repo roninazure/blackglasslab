@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from context.crypto import get_crypto_context
+from context.temporal import build_temporal_context, format_temporal_context_block
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +121,9 @@ def build_context_block(
     Includes: time-to-resolution, crypto prices, category-specific notes.
     """
     lines: list[str] = []
+
+    temporal_context = build_temporal_context(market_snapshot, question=question)
+    lines.append(format_temporal_context_block(temporal_context))
 
     # Time to resolution
     end_date = market_snapshot.get("endDate") or market_snapshot.get("end_date")

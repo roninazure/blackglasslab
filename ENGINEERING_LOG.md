@@ -1,5 +1,19 @@
 # Swarm Edge Engineering Log
 
+## 2026-07-13 - Phase 2.6 temporal grounding safeguards
+
+**Symptoms:** Four pending trades were rejected after Claude relied on stale release-date assumptions, including "before GTA VI" markets that lacked reliable temporal grounding.
+
+**Investigation scope:** Traced the forecast prompt, market-context builder, live inference loop, candidate creation boundary, and the new temporal validator. Verified that the resolver and database schema remained untouched.
+
+**Findings:** Every LLM forecast prompt now includes current UTC, current date, market end/resolution metadata when available, time remaining, and an explicit event status. The model prompt now requires chronology to match supplied time context. A post-response validator blocks stale date claims, impossible relative-time claims, and contradictory chronology before candidate creation. GTA VI-linked markets are temporarily excluded when verified temporal metadata is missing.
+
+**Files changed:** `context/temporal.py`, `context/market_context.py`, `llm/claude_client.py`, `live_runner.py`, and focused temporal-grounding tests.
+
+**Tests:** Targeted temporal-grounding, pipeline, and resolver unit tests pass. Full discovery, compilation, and runtime validation are still in progress for this pass.
+
+**Next action:** Finish the controlled inference run, refresh operational documentation, and commit the temporal safeguard pass once the repo is clean.
+
 ## 2026-07-11 - Phase 1 stabilization and observability
 
 **Symptoms:** A 25-market watchlist could produce only one or two diagnostics rows. Historical OPEN trades 6 and 13 could not be resolved by their stored slugs despite numeric IDs in `notes.snapshot.id`.

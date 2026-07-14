@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -120,10 +121,13 @@ def forecast_yes_probability(
     snap = context.get("market_snapshot", {})
     updated = snap.get("updatedAt", "")
     venue = str(context.get("venue", "polymarket"))
+    now_utc = datetime.now(timezone.utc)
 
     # Build enriched context block (crypto prices, time-to-resolution, category notes)
     try:
         from context.market_context import build_context_block
+        from context.temporal import build_temporal_context, format_temporal_context_block
+        temporal_context = build_temporal_context(snap, question=question, slug=str(context.get("slug") or ""), now=now_utc)
         enriched = build_context_block(
             question=question,
             market_snapshot=snap,
@@ -131,15 +135,35 @@ def forecast_yes_probability(
             venue=venue,
         )
     except Exception:
+        temporal_context = {
+            "current_utc": now_utc.isoformat().replace("+00:00", "Z"),
+            "current_date": now_utc.date().isoformat(),
+            "market_end_date": None,
+            "market_resolution_date": None,
+            "time_remaining": "unknown",
+            "event_status": "UNKNOWN",
+        }
+        try:
+            from context.temporal import format_temporal_context_block
+            temporal_block = format_temporal_context_block(temporal_context)
+        except Exception:
+            temporal_block = ""
         enriched = ""
+    else:
+        temporal_block = format_temporal_context_block(temporal_context)
 
     ctx_lines = [
         f"Question: {question}",
         f"Venue: {venue}",
         f"Current crowd price (P_YES): {p_yes_market:.4f}  ({p_yes_market * 100:.1f}%)",
+        f"Current UTC: {temporal_context['current_utc']}",
+        f"Current date: {temporal_context['current_date']}",
     ]
     if updated:
         ctx_lines.append(f"Last updated: {updated}")
+    if temporal_block:
+        ctx_lines.append("")
+        ctx_lines.append(temporal_block)
     if enriched:
         ctx_lines.append("")
         ctx_lines.append(enriched)
@@ -148,6 +172,8 @@ def forecast_yes_probability(
         "\n\nEstimate the true probability this market resolves YES. "
         "Consider whether the crowd price is well-calibrated. "
         "Only diverge significantly if you have clear, specific reasoning. "
+        "Verify every date and relative-time claim against the supplied current UTC time. "
+        "Do not rely on stale, guessed, impossible, or contradictory chronology. "
         "Return JSON only."
     )
 

@@ -1,7 +1,7 @@
 # Swarm Edge Roadmap
 
 1. **Phase 1: Stabilization and observability** - complete.
-2. **Phase 2: Statistical validation** - in progress; calibration baseline is complete, but sample accumulation and evidence gating continue.
+2. **Phase 2: Statistical validation** - in progress; calibration baseline is complete, and temporal grounding safeguards are now in place. Sample accumulation and evidence gating continue.
 3. **Phase 3: Multi-model ensemble** - compare and combine independently evaluated forecasting models.
 4. **Phase 4: Replay and backtesting** - reproduce historical decisions from timestamped market data.
 5. **Phase 5: Terminal and dashboard** - expose validated operational and statistical reporting.

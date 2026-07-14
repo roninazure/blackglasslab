@@ -21,6 +21,7 @@ except Exception:
     openai_enabled = lambda: False  # type: ignore
     forecast_yes_probability = None  # type: ignore
 
+from context.temporal import build_temporal_context, validate_temporal_rationale
 from models.baseline import score_market, market_yes_price
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
@@ -45,6 +46,7 @@ PIPELINE_SUMMARY_FIELDS = (
     "llm_failed",
     "edge_rejected",
     "disagreement_rejected",
+    "temporal_inconsistency",
     "diagnostics_written",
     "candidates_generated",
     "paper_inserted",
@@ -62,8 +64,8 @@ def _candidates_path(mode: str) -> Path:
     return SIGNALS_DIR / "trade_candidates.json"
 
 
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def utc_now_iso(now: Optional[datetime] = None) -> str:
+    return (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
 
 
 def _connect_db(path: str) -> sqlite3.Connection:
@@ -161,11 +163,23 @@ def _existing_position_slugs(conn: sqlite3.Connection, venue: str) -> set[str]:
 
 def _print_pipeline_funnel(report: Dict[str, Any]) -> None:
     s = report["summary"]
+    rejected_total = (
+        s["inactive_or_closed"]
+        + s["invalid_price"]
+        + s["extreme_tail"]
+        + s["fetch_failed"]
+        + s["liquidity_rejected"]
+        + s["volume_rejected"]
+        + s["spread_rejected"]
+        + s["time_rejected"]
+        + s["edge_rejected"]
+        + s["disagreement_rejected"]
+        + s.get("temporal_inconsistency", 0)
+    )
     print(
         "PIPELINE "
         f"watchlist={s['watchlist_total']} fetched={s['fetch_attempted'] - s['fetch_failed']} "
-        f"llm={s['llm_attempted']} rejected="
-        f"{s['inactive_or_closed'] + s['invalid_price'] + s['extreme_tail'] + s['liquidity_rejected'] + s['volume_rejected'] + s['spread_rejected'] + s['time_rejected'] + s['edge_rejected'] + s['disagreement_rejected']} "
+        f"llm={s['llm_attempted']} rejected={rejected_total} "
         f"candidates={s['candidates_generated']}",
         flush=True,
     )
@@ -173,7 +187,7 @@ def _print_pipeline_funnel(report: Dict[str, Any]) -> None:
         "SKIPS "
         f"existing={s['blocked_existing_position']} category={s['skipped_category_cap']} "
         f"fetch_failed={s['fetch_failed']} inactive={s['inactive_or_closed']} "
-        f"tail={s['extreme_tail']} edge={s['edge_rejected']}",
+        f"tail={s['extreme_tail']} edge={s['edge_rejected']} temporal={s.get('temporal_inconsistency', 0)}",
         flush=True,
     )
 
@@ -515,6 +529,7 @@ def _infer_one(
             "max_disagree": 0,
             "min_edge_abs": 0,
             "min_edge_vs_market": 0,
+            "temporal_inconsistency": 0,
         },
     }
 
@@ -583,6 +598,35 @@ def _infer_one(
                 decision="REJECT",
                 reason="fetch_failed",
                 details={"error": str(e)[:500]},
+            )
+            continue
+
+        temporal_context = build_temporal_context(
+            m,
+            question=str(m.get("question") or slug),
+            slug=slug,
+        )
+        if temporal_context.get("requires_verified_temporal_context") and temporal_context.get("event_status") == "UNKNOWN":
+            summary["temporal_inconsistency"] += 1
+            infer_diag_counts["evaluated"] += 1
+            infer_diag_counts["rejected"]["temporal_inconsistency"] += 1
+            infer_diag_rows.append({
+                "slug": slug,
+                "question": str(m.get("question") or slug),
+                "decision": "REJECT",
+                "reason": "temporal_inconsistency",
+                "temporal_context": temporal_context,
+                "temporal_error": "missing_verified_temporal_context",
+            })
+            _finalize_pipeline_market(
+                record,
+                final_stage="temporal_validation",
+                decision="REJECT",
+                reason="temporal_inconsistency",
+                details={
+                    "temporal_error": "missing_verified_temporal_context",
+                    "temporal_context": temporal_context,
+                },
             )
             continue
 
@@ -711,6 +755,47 @@ def _infer_one(
                 disagreement = float(max(0.0, min(1.0, 1.0 - float(llm_conf))))
                 components = {}
                 llm_used = True
+                valid_temporal, temporal_reason, temporal_details = validate_temporal_rationale(
+                    llm_rationale,
+                    temporal_context,
+                    question=str(m.get("question") or slug),
+                )
+                if not valid_temporal:
+                    summary["temporal_inconsistency"] += 1
+                    infer_diag_counts["evaluated"] += 1
+                    infer_diag_counts["rejected"]["temporal_inconsistency"] += 1
+                    infer_diag_rows.append({
+                        "slug": slug,
+                        "question": str(m.get("question") or slug),
+                        "p_yes_market": float(p_yes_market),
+                        "p_yes_model": float(p_yes_model),
+                        "edge_vs_market": float(p_yes_model - p_yes_market),
+                        "edge_abs": float(abs(p_yes_model - p_yes_market)),
+                        "disagreement": float(disagreement),
+                        "llm_confidence": float(llm_conf),
+                        "llm_rationale": llm_rationale,
+                        "llm_used": llm_used,
+                        "side": "YES" if p_yes_model >= 0.5 else "NO",
+                        "decision": "REJECT",
+                        "reason": "temporal_inconsistency",
+                        "pricing_source": pricing_source,
+                        "spread": float(spread),
+                        "components": components,
+                        "temporal_validation": temporal_reason,
+                        "temporal_details": temporal_details,
+                    })
+                    _finalize_pipeline_market(
+                        record,
+                        final_stage="temporal_validation",
+                        decision="REJECT",
+                        reason="temporal_inconsistency",
+                        details={
+                            "temporal_validation": temporal_reason,
+                            "temporal_details": temporal_details,
+                            "llm_used": llm_used,
+                        },
+                    )
+                    continue
             except Exception as llm_err:
                 err_msg = str(llm_err)
                 llm_error = err_msg[:500]
@@ -754,6 +839,7 @@ def _infer_one(
             "pricing_source": pricing_source,
             "spread": float(spread),
             "components": components,
+            "temporal_context": temporal_context,
         })
         if reason != "pass":
             infer_diag_counts["rejected"][reason] += 1
