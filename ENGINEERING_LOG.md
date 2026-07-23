@@ -1,5 +1,23 @@
 # Swarm Edge Engineering Log
 
+## 2026-07-23 - Phase 3 Loop Engine v1
+
+**Objective:** Convert the rotating hourly infer batch into an economical opportunity loop that ranks market quality before inference, routes forecasts by market family, applies a bounded critic pass, and publishes dashboard-ready brain activity.
+
+**Architecture:** Added a deterministic 0-100 opportunity ranker using liquidity, volume, spread, probability band, resolution horizon, category, temporal metadata, novelty risk, and existing category exposure. The infer loop now fetches the sampled batch, applies existing hard quality and concentration gates, sorts eligible markets by opportunity score, and spends LLM calls in rank order. Non-paper inference no longer persists `kv.infer_cursor`.
+
+**Cost controls:** Central defaults cap primary calls at 3 per cycle, skeptic calls at 1 per cycle, and combined calls at 24 per UTC day. Daily usage is stored in an ignored JSON runtime artifact rather than SQLite. Low-scoring, duplicate, cooldown, weak-quality, and category-capped markets do not reach Claude. Provider cost remains `null` unless an operator configures an estimated per-call rate.
+
+**Prompt and critic behavior:** Forecasts route through `macro/fed`, `macro/econ`, `politics`, `crypto`, `legal`, `geopolitics`, `sports`, or `novelty/other` instructions. Every family includes current UTC, the market deadline, time remaining, failure modes, and a temporal self-check. A compact critic runs only for qualifying edge, near-threshold edge, high-confidence risky categories, or ambiguous novelty timing. It can allow, shrink halfway toward the market, or reject.
+
+**Observability:** Each infer cycle writes `signals/swarm_brain_report.json` with ranked opportunities, call usage, budget state, temporal state, final reasons, forecast values, and concise rationale fields. Morning status shows call counts, candidate/reject counts, score grades, and the top five latest opportunities.
+
+**Safety and compatibility:** No SQLite schema changes were made. Historical outcomes were not altered. Real-money execution and wallet code remain absent. Paper insertion still defaults to `PENDING` behind `BGL_REQUIRE_APPROVAL=1`; launchd and the `swarm-edge` wrapper retain their existing entrypoints.
+
+**Validation:** Focused Phase 3, pipeline, and temporal tests pass. Full discovery passes 25 tests. A network-enabled non-paper wrapper run fetched 8 markets, ranked 7, used the 3-call primary cap, made no skeptic call because no forecast met a critic trigger, rejected 2 low-opportunity novelty markets, budget-skipped 2 markets, and generated no candidate. Status showed the running launchd job and the latest top five. Python compilation, diff checks, and database preservation checks are recorded in `reports/phase3_loop_engine_v1.md`.
+
+**Next action:** Accumulate brain reports and resolved paper outcomes, then calibrate opportunity-score bands and critic decisions before expanding batch cadence or model count.
+
 ## 2026-07-13 - Phase 2.6 temporal grounding safeguards
 
 **Symptoms:** Four pending trades were rejected after Claude relied on stale release-date assumptions, including "before GTA VI" markets that lacked reliable temporal grounding.

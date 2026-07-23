@@ -11,6 +11,7 @@ from unittest import mock
 
 import live_runner
 from context.temporal import build_temporal_context, validate_temporal_rationale
+from loop_engine.skeptic import SkepticReview
 
 
 def _create_db(path: Path) -> sqlite3.Connection:
@@ -178,6 +179,19 @@ class TemporalGroundingTests(unittest.TestCase):
                     live_runner,
                     "forecast_yes_probability",
                     return_value=(0.70, 0.90, "No temporal contradiction here."),
+                ),
+                mock.patch.object(
+                    live_runner,
+                    "review_forecast",
+                    return_value=SkepticReview(
+                        action="ALLOW",
+                        reason="supported",
+                        rationale="fixture critic",
+                        temporal_valid=True,
+                        stale_facts=False,
+                        malformed_or_novelty=False,
+                        edge_real=True,
+                    ),
                 ),
                 mock.patch.object(live_runner, "_kv_set", lambda *args, **kwargs: None),
                 mock.patch.dict(os.environ, env, clear=False),

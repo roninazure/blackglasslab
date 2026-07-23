@@ -15,7 +15,11 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
+
+from context.temporal import build_temporal_context, format_temporal_context_block
+from loop_engine.prompts import build_forecast_prompts, classify_market
+from loop_engine.skeptic import SkepticReview, normalize_skeptic_review
 
 # ---------------------------------------------------------------------------
 # .env loader — simple KV parse, no external deps needed
@@ -78,21 +82,20 @@ def claude_enabled() -> bool:
 # Core forecast function
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """\
-You are a calibrated prediction market forecaster working for a quantitative trading system.
+def _model_name() -> str:
+    model = os.environ.get("BGL_LLM_MODEL", "claude-haiku-4-5-20251001").strip()
+    if not model.startswith("claude-"):
+        return "claude-haiku-4-5-20251001"
+    return model
 
-Your job: estimate the TRUE probability that a binary prediction market resolves YES.
 
-Rules:
-- Be calibrated. If something is 90% likely, say 0.90, not 0.99.
-- The crowd price is informative but not always right. Diverge only with clear reasoning.
-- For near-expiry markets (days away), weight recent reality heavily.
-- For long-horizon markets, use base rates and fundamentals.
-- Return ONLY valid JSON — no markdown, no preamble, nothing else.
-
-Output format (exact):
-{"p_yes": <float 0.01-0.99>, "confidence": <float 0.50-0.95>, "rationale": "<1-2 sentences max>"}
-"""
+def _parse_json_response(raw: str) -> dict[str, Any]:
+    cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", raw.strip())
+    cleaned = cleaned.rstrip("` \n")
+    parsed = json.loads(cleaned)
+    if not isinstance(parsed, dict):
+        raise ValueError("Claude response must be a JSON object")
+    return parsed
 
 
 def forecast_yes_probability(
@@ -113,75 +116,41 @@ def forecast_yes_probability(
         rationale   — 1-2 sentence explanation
     """
     client = _get_client()
-    model = os.environ.get("BGL_LLM_MODEL", "claude-haiku-4-5-20251001").strip()
-    if not model.startswith("claude-"):
-        model = "claude-haiku-4-5-20251001"  # ignore non-Claude model names (e.g. leftover o3-mini)
+    model = _model_name()
 
     p_yes_market = float(context.get("p_yes_market", 0.5))
     snap = context.get("market_snapshot", {})
-    updated = snap.get("updatedAt", "")
     venue = str(context.get("venue", "polymarket"))
     now_utc = datetime.now(timezone.utc)
-
-    # Build enriched context block (crypto prices, time-to-resolution, category notes)
-    try:
-        from context.market_context import build_context_block
-        from context.temporal import build_temporal_context, format_temporal_context_block
-        temporal_context = build_temporal_context(snap, question=question, slug=str(context.get("slug") or ""), now=now_utc)
-        enriched = build_context_block(
-            question=question,
-            market_snapshot=snap,
-            p_yes_market=p_yes_market,
-            venue=venue,
-        )
-    except Exception:
-        temporal_context = {
-            "current_utc": now_utc.isoformat().replace("+00:00", "Z"),
-            "current_date": now_utc.date().isoformat(),
-            "market_end_date": None,
-            "market_resolution_date": None,
-            "time_remaining": "unknown",
-            "event_status": "UNKNOWN",
-        }
-        try:
-            from context.temporal import format_temporal_context_block
-            temporal_block = format_temporal_context_block(temporal_context)
-        except Exception:
-            temporal_block = ""
-        enriched = ""
-    else:
-        temporal_block = format_temporal_context_block(temporal_context)
-
-    ctx_lines = [
-        f"Question: {question}",
-        f"Venue: {venue}",
-        f"Current crowd price (P_YES): {p_yes_market:.4f}  ({p_yes_market * 100:.1f}%)",
-        f"Current UTC: {temporal_context['current_utc']}",
-        f"Current date: {temporal_context['current_date']}",
-    ]
-    if updated:
-        ctx_lines.append(f"Last updated: {updated}")
-    if temporal_block:
-        ctx_lines.append("")
-        ctx_lines.append(temporal_block)
-    if enriched:
-        ctx_lines.append("")
-        ctx_lines.append(enriched)
-
-    user_prompt = "\n".join(ctx_lines) + (
-        "\n\nEstimate the true probability this market resolves YES. "
-        "Consider whether the crowd price is well-calibrated. "
-        "Only diverge significantly if you have clear, specific reasoning. "
-        "Verify every date and relative-time claim against the supplied current UTC time. "
-        "Do not rely on stale, guessed, impossible, or contradictory chronology. "
-        "Return JSON only."
+    temporal_context = context.get("temporal_context") or build_temporal_context(
+        snap,
+        question=question,
+        slug=str(context.get("slug") or ""),
+        now=now_utc,
     )
+    category = str(context.get("category") or classify_market(question))
+    system_prompt, user_prompt = build_forecast_prompts(
+        question=question,
+        venue=venue,
+        p_yes_market=p_yes_market,
+        market_snapshot=snap,
+        temporal_context=temporal_context,
+        category=category,
+    )
+    try:
+        from context.crypto import get_crypto_context
+
+        crypto_context = get_crypto_context(question)
+    except Exception:
+        crypto_context = ""
+    if crypto_context:
+        user_prompt = f"{user_prompt}\nVerified live context:\n{crypto_context}"
 
     try:
         resp = client.messages.create(
             model=model,
             max_tokens=350,
-            system=_SYSTEM_PROMPT,
+            system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
     except Exception as api_err:
@@ -190,12 +159,7 @@ def forecast_yes_probability(
             raise RuntimeError(f"Anthropic billing error — add credits at console.anthropic.com: {api_err}") from api_err
         raise
 
-    raw = resp.content[0].text.strip()
-    # Strip markdown fences if model wraps output despite instructions
-    raw = re.sub(r"^```[a-zA-Z]*\s*", "", raw)
-    raw = raw.rstrip("` \n")
-
-    data = json.loads(raw)
+    data = _parse_json_response(resp.content[0].text)
 
     p_yes = float(data["p_yes"])
     confidence = float(data.get("confidence", 0.70))
@@ -206,3 +170,42 @@ def forecast_yes_probability(
     confidence = max(0.50, min(0.95, confidence))
 
     return (p_yes, confidence, rationale)
+
+
+def review_forecast(
+    *,
+    question: str,
+    category: str,
+    p_yes_market: float,
+    p_yes_model: float,
+    confidence: float,
+    rationale: str,
+    temporal_context: dict[str, Any],
+) -> SkepticReview:
+    """Run a compact second pass over forecasts that are close to trade-worthy."""
+    client = _get_client()
+    system_prompt = (
+        "You are a skeptical prediction-market risk reviewer. Test temporal validity, "
+        "stale facts, malformed or novelty-driven wording, and whether apparent edge is "
+        "supported rather than explanation-driven. Return JSON only."
+    )
+    user_prompt = "\n".join(
+        [
+            f"Question: {question}",
+            f"Category: {category}",
+            f"Market P(YES): {p_yes_market:.4f}",
+            f"Forecast P(YES): {p_yes_model:.4f}",
+            f"Forecast confidence: {confidence:.3f}",
+            f"Forecast rationale: {rationale or 'none'}",
+            format_temporal_context_block(temporal_context),
+            "Choose ALLOW, DOWNGRADE, or REJECT. DOWNGRADE means shrink the forecast halfway toward the market.",
+            'Return: {"action":"ALLOW|DOWNGRADE|REJECT","reason":"short code","rationale":"short","temporal_valid":true,"stale_facts":false,"malformed_or_novelty":false,"edge_real":true}',
+        ]
+    )
+    resp = client.messages.create(
+        model=_model_name(),
+        max_tokens=240,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    return normalize_skeptic_review(_parse_json_response(resp.content[0].text))

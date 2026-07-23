@@ -23,6 +23,7 @@ from swarm_edge_io import merge_notes_blob
 DB_PATH   = ROOT / "memory" / "runs.sqlite"
 LOG_PATH  = ROOT / "logs" / "infer_loop.log"
 DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
+BRAIN_PATH= ROOT / "signals" / "swarm_brain_report.json"
 WATCH_PATH= ROOT / "markets" / "polymarket_watchlist.json"
 DATA_DIR  = ROOT / "data"
 
@@ -155,7 +156,19 @@ def check_loop():
             print(f"  WARNING  {len(pids)} instances running (pids {pid_list})")
             print(f"           fix: pkill -f run_live.sh && pkill -f live_runner.py && nohup caffeinate -i bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
         else:
-            print("  status   NOT RUNNING  ← restart: nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
+            launchd = subprocess.run(
+                [
+                    "launchctl",
+                    "print",
+                    f"gui/{os.getuid()}/com.swarmedge.runner",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if launchd.returncode == 0 and "state = running" in launchd.stdout:
+                print("  status   RUNNING  (launchd com.swarmedge.runner)")
+            else:
+                print("  status   NOT RUNNING  ← restart: nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
     except Exception:
         print("  status   UNKNOWN")
 
@@ -291,16 +304,69 @@ def check_last_eval():
         print(f"  could not load diagnostics: {e}")
 
 
+def check_loop_engine():
+    print()
+    print("LOOP ENGINE")
+    try:
+        brain = json.loads(BRAIN_PATH.read_text())
+        rankings = brain.get("opportunity_rankings", [])
+        markets = brain.get("market_records", [])
+        grades: dict[str, int] = {}
+        for row in rankings:
+            grade = str(row.get("opportunity_grade") or "?")
+            grades[grade] = grades.get(grade, 0) + 1
+        grade_summary = " ".join(
+            f"{grade}={grades[grade]}" for grade in ("A", "B", "C", "D", "F")
+            if grade in grades
+        ) or "none"
+        candidates = sum(
+            1 for row in markets if row.get("final_decision") == "CANDIDATE"
+        )
+        temporal_rejects = sum(
+            1 for row in markets if row.get("final_reason") == "temporal_inconsistency"
+        )
+        budget_skips = sum(
+            1 for row in markets if row.get("final_reason") == "budget_skipped"
+        )
+        print(
+            f"  ranked {len(rankings)}/{brain.get('sampled_markets', 0)} sampled"
+            f"  grades {grade_summary}"
+        )
+        print(
+            f"  calls  llm={brain.get('llm_calls_used', 0)}"
+            f"  skeptic={brain.get('skeptic_calls_used', 0)}"
+            f"  candidates={candidates}  temporal={temporal_rejects}"
+            f"  budget={budget_skips}"
+        )
+        print("  top opportunities")
+        for row in rankings[:5]:
+            question = str(row.get("question") or row.get("market_id") or "")[:34]
+            score = float(row.get("opportunity_score") or 0.0)
+            grade = row.get("opportunity_grade") or "?"
+            reason = row.get("final_reason") or ""
+            print(f"    {score:>5.1f} {grade}  {question:<34}  {reason}")
+        if not rankings:
+            print("    none ranked in latest run")
+    except FileNotFoundError:
+        print("  no brain report yet")
+    except Exception as e:
+        print(f"  could not load brain report: {e}")
+
+
 def check_api_cost():
     print()
     print("API COST ESTIMATE")
     try:
-        lines = LOG_PATH.read_text().splitlines()
-        cycles = len([l for l in lines if "infer loop ==" in l])
-        # ~5 Claude Haiku calls per cycle avg, ~$0.000025 per call
-        cost = cycles * 5 * 0.000025
-        print(f"  cycles run     {cycles}")
-        print(f"  est. API cost  ${cost:.4f}  (~${cost*30/max(cycles,1):.2f}/month at this rate)")
+        brain = json.loads(BRAIN_PATH.read_text())
+        calls = int(brain.get("llm_calls_used", 0)) + int(
+            brain.get("skeptic_calls_used", 0)
+        )
+        estimate = brain.get("estimated_cost")
+        print(f"  latest calls   {calls}")
+        if estimate is None:
+            print("  est. cost      unavailable (configure BGL_ESTIMATED_COST_PER_CALL_USD)")
+        else:
+            print(f"  est. cost      ${float(estimate):.6f}")
     except Exception:
         print("  unable to estimate")
 
@@ -322,6 +388,7 @@ def main():
     check_loop()
     check_positions()
     check_last_eval()
+    check_loop_engine()
     check_api_cost()
     footer()
 

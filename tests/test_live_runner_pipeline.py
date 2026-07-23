@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 import live_runner
+from loop_engine.skeptic import SkepticReview
 
 
 def _create_db(path: Path) -> sqlite3.Connection:
@@ -100,6 +101,19 @@ class PipelineTests(unittest.TestCase):
                     live_runner,
                     "forecast_yes_probability",
                     return_value=(0.70, 0.90, "fixture rationale"),
+                ),
+                mock.patch.object(
+                    live_runner,
+                    "review_forecast",
+                    return_value=SkepticReview(
+                        action="ALLOW",
+                        reason="supported",
+                        rationale="fixture critic",
+                        temporal_valid=True,
+                        stale_facts=False,
+                        malformed_or_novelty=False,
+                        edge_real=True,
+                    ),
                 ),
                 mock.patch.dict(os.environ, env, clear=False),
             ):

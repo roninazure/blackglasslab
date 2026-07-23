@@ -16,12 +16,21 @@ except Exception:
     get_adapter = None  # noqa
 
 try:
-    from llm.openai_client import openai_enabled, forecast_yes_probability
+    from llm.openai_client import (
+        openai_enabled,
+        forecast_yes_probability,
+        review_forecast,
+    )
 except Exception:
     openai_enabled = lambda: False  # type: ignore
     forecast_yes_probability = None  # type: ignore
+    review_forecast = None  # type: ignore
 
 from context.temporal import build_temporal_context, validate_temporal_rationale
+from loop_engine.config import LLMBudget, LoopEngineConfig
+from loop_engine.opportunity import score_opportunity
+from loop_engine.prompts import classify_market
+from loop_engine.skeptic import should_request_skeptic
 from models.baseline import score_market, market_yes_price
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
@@ -42,8 +51,16 @@ PIPELINE_SUMMARY_FIELDS = (
     "volume_rejected",
     "spread_rejected",
     "time_rejected",
+    "opportunity_scored",
+    "low_opportunity_score",
+    "weak_market_quality",
     "llm_attempted",
     "llm_failed",
+    "budget_skipped",
+    "skeptic_attempted",
+    "skeptic_failed",
+    "skeptic_reject",
+    "skeptic_downgrade",
     "edge_rejected",
     "disagreement_rejected",
     "temporal_inconsistency",
@@ -133,6 +150,22 @@ def _new_pipeline_report(watchlist: List[str], venue: str) -> Dict[str, Any]:
                 "decision": "SKIP",
                 "reason": "unclassified",
                 "details": {},
+                "brain": {
+                    "market_id": slug,
+                    "question": slug,
+                    "category": "novelty/other",
+                    "opportunity_score": None,
+                    "opportunity_grade": None,
+                    "p_yes_market": None,
+                    "p_yes_model": None,
+                    "edge": None,
+                    "llm_used": False,
+                    "skeptic_used": False,
+                    "temporal_status": "not_evaluated",
+                    "budget_status": "not_applicable",
+                    "scoring_components": {},
+                    "short_rationale_summary": None,
+                },
             }
             for slug in watchlist
         ],
@@ -151,6 +184,79 @@ def _finalize_pipeline_market(
     record["decision"] = decision
     record["reason"] = reason
     record["details"] = details or {}
+
+
+def _update_brain(record: Dict[str, Any], **values: Any) -> None:
+    record.setdefault("brain", {}).update(values)
+
+
+def _daily_usage_path() -> Path:
+    return SIGNALS_DIR / "llm_usage_daily.json"
+
+
+def _brain_report_path() -> Path:
+    return SIGNALS_DIR / "swarm_brain_report.json"
+
+
+def _build_brain_report(
+    report: Dict[str, Any],
+    *,
+    mode: str,
+    budget: LLMBudget,
+    config: LoopEngineConfig,
+) -> Dict[str, Any]:
+    markets: List[Dict[str, Any]] = []
+    for row in report["markets"]:
+        brain = dict(row.get("brain") or {})
+        brain["final_decision"] = row.get("decision", "SKIP")
+        brain["final_reason"] = row.get("reason", "unclassified")
+        markets.append(brain)
+
+    rankings = sorted(
+        (
+            {
+                "rank": 0,
+                "market_id": row["market_id"],
+                "question": row.get("question"),
+                "category": row.get("category"),
+                "opportunity_score": row.get("opportunity_score"),
+                "opportunity_grade": row.get("opportunity_grade"),
+                "final_decision": row.get("final_decision"),
+                "final_reason": row.get("final_reason"),
+            }
+            for row in markets
+            if row.get("opportunity_score") is not None
+            and "liquidity"
+            in ((row.get("scoring_components") or {}).get("raw") or {})
+        ),
+        key=lambda row: float(row["opportunity_score"]),
+        reverse=True,
+    )
+    for index, row in enumerate(rankings, start=1):
+        row["rank"] = index
+
+    return {
+        "run_id": report["run_id"],
+        "ts_utc": report["ts_utc"],
+        "mode": mode,
+        "watchlist_total": report["summary"]["watchlist_total"],
+        "sampled_markets": report["summary"]["fetch_attempted"],
+        "opportunity_rankings": rankings,
+        "llm_calls_used": budget.llm_calls_used,
+        "skeptic_calls_used": budget.skeptic_calls_used,
+        "daily_llm_calls_used": budget.daily_calls_used,
+        "estimated_cost": budget.estimated_cost,
+        "budget_config": config.as_dict(),
+        "market_records": markets,
+    }
+
+
+def _write_brain_report(payload: Dict[str, Any]) -> None:
+    SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
+    _brain_report_path().write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def _existing_position_slugs(conn: sqlite3.Connection, venue: str) -> set[str]:
@@ -175,11 +281,14 @@ def _print_pipeline_funnel(report: Dict[str, Any]) -> None:
         + s["edge_rejected"]
         + s["disagreement_rejected"]
         + s.get("temporal_inconsistency", 0)
+        + s.get("low_opportunity_score", 0)
+        + s.get("skeptic_reject", 0)
     )
     print(
         "PIPELINE "
         f"watchlist={s['watchlist_total']} fetched={s['fetch_attempted'] - s['fetch_failed']} "
-        f"llm={s['llm_attempted']} rejected={rejected_total} "
+        f"ranked={s.get('opportunity_scored', 0)} llm={s['llm_attempted']} "
+        f"skeptic={s.get('skeptic_attempted', 0)} rejected={rejected_total} "
         f"candidates={s['candidates_generated']}",
         flush=True,
     )
@@ -187,7 +296,9 @@ def _print_pipeline_funnel(report: Dict[str, Any]) -> None:
         "SKIPS "
         f"existing={s['blocked_existing_position']} category={s['skipped_category_cap']} "
         f"fetch_failed={s['fetch_failed']} inactive={s['inactive_or_closed']} "
-        f"tail={s['extreme_tail']} edge={s['edge_rejected']} temporal={s.get('temporal_inconsistency', 0)}",
+        f"quality={s.get('weak_market_quality', 0)} opportunity={s.get('low_opportunity_score', 0)} "
+        f"budget={s.get('budget_skipped', 0)} edge={s['edge_rejected']} "
+        f"temporal={s.get('temporal_inconsistency', 0)}",
         flush=True,
     )
 
@@ -439,34 +550,11 @@ def _infer_pick_slugs_batch(conn: sqlite3.Connection, watchlist: list[str], batc
 
 
 def _topic_label(question: str) -> str:
-    """Classify market question into a broad category for concentration tracking."""
-    q = question.lower()
-    checks = [
-        (["election", "ballot", "referendum", "primary", "vote"],      "politics"),
-        (["president", "congress", "senate", "parliament", "prime minister"], "politics"),
-        (["trump", "harris", "biden", "executive order", "impeach"],   "politics"),
-        (["federal reserve", "rate cut", "rate hike", "fomc",
-          "interest rate", "fed funds"],                                "macro/fed"),
-        (["recession", "inflation", "gdp", "tariff", "cpi",
-          "unemployment"],                                              "macro/econ"),
-        (["ceasefire", "invasion", "nuclear", "conflict",
-          "sanction", "coup"],                                          "geopolitics"),
-        (["supreme court", "scotus", "verdict", "indictment",
-          "lawsuit"],                                                   "legal"),
-        (["bitcoin", "btc", "ethereum", "eth", "crypto",
-          "solana"],                                                    "crypto"),
-        (["ipo", "acquisition", "merger", "bankruptcy"],               "corporate"),
-    ]
-    for keywords, label in checks:
-        if any(kw in q for kw in keywords):
-            return label
-    return "other"
+    """Classify market question for ranking, prompts, and concentration tracking."""
+    return classify_market(question)
 
 
-def _category_cap_ok(conn: sqlite3.Connection, category: str) -> bool:
-    """Return True if opening another position in this category is within the cap."""
-    max_per = int(os.environ.get("BGL_MAX_PER_CATEGORY", "3") or "3")
-    # Parse notes JSON in Python — LIKE on JSON text is order-sensitive and fragile
+def _category_exposure_count(conn: sqlite3.Connection, category: str) -> int:
     rows = conn.execute(
         "SELECT notes FROM paper_trades WHERE status IN ('OPEN', 'PENDING')"
     ).fetchall()
@@ -478,41 +566,31 @@ def _category_cap_ok(conn: sqlite3.Connection, category: str) -> bool:
                 count += 1
         except Exception:
             pass
-    return count < max_per
+    return count
+
+
+def _category_cap_ok(conn: sqlite3.Connection, category: str) -> bool:
+    """Return True if opening another position in this category is within the cap."""
+    max_per = int(os.environ.get("BGL_MAX_PER_CATEGORY", "3") or "3")
+    return _category_exposure_count(conn, category) < max_per
 
 
 def _infer_one(
-    *, conn: sqlite3.Connection, venue: str, paper_size: float
+    *,
+    conn: sqlite3.Connection,
+    venue: str,
+    paper_size: float,
+    persist_state: bool = False,
+    paper_mode: bool = False,
 ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
     watchlist = _load_watchlist()
     report = _new_pipeline_report(watchlist, venue)
     records = {row["market_id"]: row for row in report["markets"]}
     summary = report["summary"]
-    if not watchlist or get_adapter is None:
-        reason = "empty_watchlist" if not watchlist else "adapter_unavailable"
-        for record in report["markets"]:
-            _finalize_pipeline_market(
-                record,
-                final_stage="setup",
-                decision="SKIP",
-                reason=reason,
-            )
-        summary["finalized_markets"] = len(report["markets"])
-        return (None, report)
-
-    batch = int(os.environ.get("BGL_INFER_BATCH", "8") or "8")
-    cooldown_n = int(os.environ.get("BGL_INFER_COOLDOWN", "0") or "0")
-
-    slugs, next_cursor = _infer_pick_slugs_batch(conn, watchlist, batch)
-    _kv_set(conn, "infer_cursor", str(next_cursor))
-    conn.commit()
-
-    recent = set(_infer_recent_slugs(conn, venue, cooldown_n))
-    existing = _existing_position_slugs(conn, venue)
-    adapter = get_adapter(venue)
-
-    infer_diag_rows: list[dict] = []
-    infer_diag_counts = {
+    config = LoopEngineConfig.from_env()
+    budget = LLMBudget(config, _daily_usage_path())
+    infer_diag_rows: List[Dict[str, Any]] = []
+    infer_diag_counts: Dict[str, Any] = {
         "evaluated": 0,
         "passed": 0,
         "rejected": {
@@ -530,14 +608,95 @@ def _infer_one(
             "min_edge_abs": 0,
             "min_edge_vs_market": 0,
             "temporal_inconsistency": 0,
+            "low_opportunity_score": 0,
+            "weak_market_quality": 0,
+            "budget_skipped": 0,
+            "skeptic_reject": 0,
+            "skeptic_downgrade": 0,
         },
     }
+
+    def count_rejection(reason: str) -> None:
+        rejected = infer_diag_counts["rejected"]
+        rejected[reason] = int(rejected.get(reason, 0)) + 1
+
+    def finish(
+        candidate: Optional[Dict[str, Any]],
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        _write_infer_diagnostics(
+            {
+                "ts_utc": utc_now_iso(),
+                "source": venue,
+                "mode": "infer",
+                "settings": {
+                    "batch": int(os.environ.get("BGL_INFER_BATCH", "8") or "8"),
+                    "cooldown": int(
+                        os.environ.get("BGL_INFER_COOLDOWN", "0") or "0"
+                    ),
+                    "min_edge_abs": _filters()[0],
+                    "min_edge_vs_market": _filters()[1],
+                    "max_disagree": _filters()[2],
+                    "paper_size": paper_size,
+                    **config.as_dict(),
+                },
+                "summary": infer_diag_counts,
+                "rows": infer_diag_rows,
+            }
+        )
+        summary["diagnostics_written"] = len(infer_diag_rows)
+        summary["finalized_markets"] = sum(
+            1 for row in report["markets"] if row["reason"] != "unclassified"
+        )
+        brain_report = _build_brain_report(
+            report,
+            mode="paper_research" if paper_mode else "research",
+            budget=budget,
+            config=config,
+        )
+        report["brain_report"] = brain_report
+        _write_brain_report(brain_report)
+        return candidate, report
+
+    if not watchlist or get_adapter is None:
+        reason = "empty_watchlist" if not watchlist else "adapter_unavailable"
+        for record in report["markets"]:
+            _finalize_pipeline_market(
+                record,
+                final_stage="setup",
+                decision="SKIP",
+                reason=reason,
+            )
+        return finish(None)
+
+    batch = int(os.environ.get("BGL_INFER_BATCH", "8") or "8")
+    cooldown_n = int(os.environ.get("BGL_INFER_COOLDOWN", "0") or "0")
+
+    slugs, next_cursor = _infer_pick_slugs_batch(conn, watchlist, batch)
+    if persist_state:
+        _kv_set(conn, "infer_cursor", str(next_cursor))
+        conn.commit()
+
+    recent = set(_infer_recent_slugs(conn, venue, cooldown_n))
+    existing = _existing_position_slugs(conn, venue)
+    adapter = get_adapter(venue)
 
     selected = set(slugs)
     for slug in watchlist:
         record = records[slug]
         if slug in existing:
             summary["blocked_existing_position"] += 1
+            _update_brain(
+                record,
+                opportunity_score=0.0,
+                opportunity_grade="F",
+                budget_status="not_eligible",
+                scoring_components={
+                    "raw": {
+                        "duplicate_position": True,
+                        "existing_exposure": True,
+                    }
+                },
+            )
             _finalize_pipeline_market(
                 record,
                 final_stage="existing_position_filter",
@@ -553,13 +712,19 @@ def _infer_one(
                 details={"batch": batch},
             )
 
-    candidate: Optional[Dict[str, Any]] = None
-
+    ranked: List[Dict[str, Any]] = []
     for slug in slugs:
         record = records[slug]
         if slug in existing:
             continue
         if cooldown_n > 0 and slug in recent:
+            _update_brain(
+                record,
+                opportunity_score=0.0,
+                opportunity_grade="F",
+                budget_status="not_eligible",
+                scoring_components={"raw": {"recent_cooldown": True}},
+            )
             _finalize_pipeline_market(
                 record,
                 final_stage="cooldown_filter",
@@ -569,23 +734,13 @@ def _infer_one(
             )
             continue
 
-        if candidate is not None:
-            _finalize_pipeline_market(
-                record,
-                final_stage="candidate_limit",
-                decision="SKIP",
-                reason="candidate_limit_reached",
-                details={"max_candidates_per_run": 1},
-            )
-            continue
-
         summary["fetch_attempted"] += 1
         try:
             m = adapter.get_market(slug)  # type: ignore[attr-defined]
         except Exception as e:
             summary["fetch_failed"] += 1
             infer_diag_counts["evaluated"] += 1
-            infer_diag_counts["rejected"]["fetch_failed"] += 1
+            count_rejection("fetch_failed")
             infer_diag_rows.append({
                 "slug": slug,
                 "decision": "REJECT",
@@ -601,18 +756,25 @@ def _infer_one(
             )
             continue
 
+        question = str(m.get("question") or slug)
+        category = _topic_label(question)
+        _update_brain(record, question=question, category=category)
         temporal_context = build_temporal_context(
             m,
-            question=str(m.get("question") or slug),
+            question=question,
             slug=slug,
+        )
+        _update_brain(
+            record,
+            temporal_status=str(temporal_context.get("event_status") or "UNKNOWN"),
         )
         if temporal_context.get("requires_verified_temporal_context") and temporal_context.get("event_status") == "UNKNOWN":
             summary["temporal_inconsistency"] += 1
             infer_diag_counts["evaluated"] += 1
-            infer_diag_counts["rejected"]["temporal_inconsistency"] += 1
+            count_rejection("temporal_inconsistency")
             infer_diag_rows.append({
                 "slug": slug,
-                "question": str(m.get("question") or slug),
+                "question": question,
                 "decision": "REJECT",
                 "reason": "temporal_inconsistency",
                 "temporal_context": temporal_context,
@@ -635,10 +797,10 @@ def _infer_one(
         if pricing_source == "fallback":
             summary["invalid_price"] += 1
             infer_diag_counts["evaluated"] += 1
-            infer_diag_counts["rejected"]["invalid_price"] += 1
+            count_rejection("invalid_price")
             infer_diag_rows.append({
                 "slug": slug,
-                "question": str(m.get("question") or slug),
+                "question": question,
                 "decision": "REJECT",
                 "reason": "invalid_price",
                 "pricing_source": pricing_source,
@@ -652,37 +814,51 @@ def _infer_one(
             )
             continue
 
-        # Skip extreme tail markets — crowd < 3% or > 97% are too illiquid/noisy
+        _update_brain(record, p_yes_market=float(p_yes_market))
         min_crowd = _env_float("BGL_MIN_CROWD_PRICE", 0.03)
         max_crowd = 1.0 - min_crowd
         if p_yes_market < min_crowd or p_yes_market > max_crowd:
             summary["extreme_tail"] += 1
+            summary["weak_market_quality"] += 1
             infer_diag_counts["evaluated"] += 1
-            infer_diag_counts["rejected"]["extreme_tail"] += 1
+            count_rejection("extreme_tail")
             infer_diag_rows.append({
                 "slug": slug, "decision": "REJECT",
-                "reason": "extreme_tail",
+                "reason": "weak_market_quality",
+                "quality_reason": "extreme_tail",
                 "p_yes_market": float(p_yes_market),
             })
             _finalize_pipeline_market(
                 record,
                 final_stage="tail_filter",
                 decision="REJECT",
-                reason="extreme_tail",
-                details={"p_yes_market": float(p_yes_market)},
+                reason="weak_market_quality",
+                details={
+                    "quality_reason": "extreme_tail",
+                    "p_yes_market": float(p_yes_market),
+                },
             )
             continue
 
-        use_llm = (
-            _env_bool("BGL_INFER_USE_LLM", False)
-            and openai_enabled()
-            and (forecast_yes_probability is not None)
-        )
-
-        llm_rationale = ""
-        llm_conf = 0.0
         baseline = score_market(m)
-
+        category_exposure = _category_exposure_count(conn, category)
+        opportunity = score_opportunity(
+            m,
+            category=category,
+            p_yes_market=p_yes_market,
+            spread=spread,
+            temporal_context=temporal_context,
+            min_score_for_llm=config.min_opportunity_score_for_llm,
+            existing_exposure=category_exposure > 0,
+            quality_reject_reason=baseline.reject_reason,
+        )
+        summary["opportunity_scored"] += 1
+        _update_brain(
+            record,
+            opportunity_score=opportunity.opportunity_score,
+            opportunity_grade=opportunity.opportunity_grade,
+            scoring_components=opportunity.scoring_components,
+        )
         if baseline.reject_reason is not None:
             summary_key = {
                 "inactive_market": "inactive_or_closed",
@@ -694,11 +870,13 @@ def _infer_one(
             }.get(baseline.reject_reason)
             if summary_key:
                 summary[summary_key] += 1
+            summary["weak_market_quality"] += 1
             infer_diag_counts["evaluated"] += 1
-            infer_diag_counts["rejected"][baseline.reject_reason] += 1
+            count_rejection(baseline.reject_reason)
+            count_rejection("weak_market_quality")
             infer_diag_rows.append({
                 "slug": slug,
-                "question": str(m.get("question") or slug),
+                "question": question,
                 "p_yes_market": float(baseline.p_yes_market),
                 "p_yes_model": float(baseline.p_yes_model),
                 "edge_vs_market": float(baseline.p_yes_model - baseline.p_yes_market),
@@ -706,7 +884,8 @@ def _infer_one(
                 "disagreement": 1.0,
                 "side": "YES" if baseline.p_yes_model >= 0.5 else "NO",
                 "decision": "REJECT",
-                "reason": baseline.reject_reason,
+                "reason": "weak_market_quality",
+                "quality_reason": baseline.reject_reason,
                 "pricing_source": pricing_source,
                 "spread": float(spread),
                 "components": baseline.components,
@@ -715,27 +894,169 @@ def _infer_one(
                 record,
                 final_stage="market_quality_filter",
                 decision="REJECT",
-                reason=baseline.reject_reason,
+                reason="weak_market_quality",
                 details={
+                    "quality_reason": baseline.reject_reason,
                     "p_yes_market": float(baseline.p_yes_market),
                     "spread": float(spread),
                     "pricing_source": pricing_source,
+                    "opportunity_score": opportunity.opportunity_score,
                 },
             )
             continue
 
+        if not opportunity.eligible_for_llm:
+            summary["low_opportunity_score"] += 1
+            infer_diag_counts["evaluated"] += 1
+            count_rejection("low_opportunity_score")
+            infer_diag_rows.append(
+                {
+                    "slug": slug,
+                    "question": question,
+                    "decision": "REJECT",
+                    "reason": "low_opportunity_score",
+                    "opportunity_score": opportunity.opportunity_score,
+                    "opportunity_grade": opportunity.opportunity_grade,
+                    "components": opportunity.scoring_components,
+                }
+            )
+            _finalize_pipeline_market(
+                record,
+                final_stage="opportunity_ranker",
+                decision="REJECT",
+                reason="low_opportunity_score",
+                details={
+                    "opportunity_score": opportunity.opportunity_score,
+                    "minimum": config.min_opportunity_score_for_llm,
+                },
+            )
+            continue
+
+        if not _category_cap_ok(conn, category):
+            summary["skipped_category_cap"] += 1
+            infer_diag_counts["evaluated"] += 1
+            count_rejection("category_cap")
+            infer_diag_rows.append(
+                {
+                    "slug": slug,
+                    "question": question,
+                    "decision": "REJECT",
+                    "reason": "category_cap",
+                    "category": category,
+                    "opportunity_score": opportunity.opportunity_score,
+                }
+            )
+            print(f"  [infer] category cap reached for '{category}' - skipping {slug}", flush=True)
+            _finalize_pipeline_market(
+                record,
+                final_stage="category_cap",
+                decision="SKIP",
+                reason="category_cap_reached",
+                details={"category": category},
+            )
+            continue
+
+        ranked.append(
+            {
+                "slug": slug,
+                "record": record,
+                "market": m,
+                "question": question,
+                "category": category,
+                "temporal_context": temporal_context,
+                "p_yes_market": float(p_yes_market),
+                "spread": float(spread),
+                "pricing_source": pricing_source,
+                "baseline": baseline,
+                "opportunity": opportunity,
+            }
+        )
+
+    ranked.sort(
+        key=lambda item: item["opportunity"].opportunity_score,
+        reverse=True,
+    )
+    use_llm = (
+        _env_bool("BGL_INFER_USE_LLM", False)
+        and openai_enabled()
+        and forecast_yes_probability is not None
+    )
+    candidate: Optional[Dict[str, Any]] = None
+
+    for item in ranked:
+        slug = item["slug"]
+        record = item["record"]
+        m = item["market"]
+        question = item["question"]
+        category = item["category"]
+        temporal_context = item["temporal_context"]
+        p_yes_market = item["p_yes_market"]
+        spread = item["spread"]
+        pricing_source = item["pricing_source"]
+        baseline = item["baseline"]
+        opportunity = item["opportunity"]
+
+        if candidate is not None:
+            _finalize_pipeline_market(
+                record,
+                final_stage="candidate_limit",
+                decision="SKIP",
+                reason="candidate_limit_reached",
+                details={"max_candidates_per_run": 1},
+            )
+            continue
+
+        llm_rationale = ""
+        llm_conf = float(baseline.confidence)
+        p_yes_model = float(baseline.p_yes_model)
+        disagreement = float(max(0.0, min(1.0, 1.0 - baseline.confidence)))
+        components = baseline.components
         llm_used = False
         llm_error = ""
+        skeptic_used = False
+        skeptic_payload: Dict[str, Any] = {}
+
         if use_llm:
+            if not budget.reserve_primary():
+                summary["budget_skipped"] += 1
+                infer_diag_counts["evaluated"] += 1
+                count_rejection("budget_skipped")
+                budget_status = budget.primary_status()
+                _update_brain(record, budget_status=budget_status)
+                infer_diag_rows.append(
+                    {
+                        "slug": slug,
+                        "question": question,
+                        "decision": "SKIP",
+                        "reason": "budget_skipped",
+                        "budget_status": budget_status,
+                        "opportunity_score": opportunity.opportunity_score,
+                    }
+                )
+                _finalize_pipeline_market(
+                    record,
+                    final_stage="llm_budget",
+                    decision="SKIP",
+                    reason="budget_skipped",
+                    details={"budget_status": budget_status},
+                )
+                continue
+
             summary["llm_attempted"] += 1
+            _update_brain(record, budget_status="llm_reserved")
             ctx = {
                 "venue": venue,
                 "slug": slug,
-                "p_yes_market": float(p_yes_market),
+                "category": category,
+                "p_yes_market": p_yes_market,
+                "temporal_context": temporal_context,
                 "market_snapshot": {
                     "id": m.get("id"),
                     "question": m.get("question"),
                     "updatedAt": m.get("updatedAt"),
+                    "startDate": m.get("startDate"),
+                    "endDate": m.get("endDate"),
+                    "resolutionDate": m.get("resolutionDate"),
                     "outcomes": m.get("outcomes"),
                     "outcomePrices": m.get("outcomePrices"),
                     "bestBid": m.get("bestBid"),
@@ -748,157 +1069,366 @@ def _infer_one(
             }
             try:
                 p_yes_model, llm_conf, llm_rationale = forecast_yes_probability(
-                    question=str(m.get("question") or slug),
+                    question=question,
                     context=ctx,
                 )
                 p_yes_model = float(min(0.99, max(0.01, p_yes_model)))
-                disagreement = float(max(0.0, min(1.0, 1.0 - float(llm_conf))))
+                llm_conf = float(min(0.95, max(0.0, llm_conf)))
+                disagreement = float(max(0.0, min(1.0, 1.0 - llm_conf)))
                 components = {}
                 llm_used = True
-                valid_temporal, temporal_reason, temporal_details = validate_temporal_rationale(
-                    llm_rationale,
-                    temporal_context,
-                    question=str(m.get("question") or slug),
+                _update_brain(
+                    record,
+                    llm_used=True,
+                    budget_status="llm_used",
+                    short_rationale_summary=llm_rationale[:240] or None,
                 )
-                if not valid_temporal:
-                    summary["temporal_inconsistency"] += 1
-                    infer_diag_counts["evaluated"] += 1
-                    infer_diag_counts["rejected"]["temporal_inconsistency"] += 1
-                    infer_diag_rows.append({
+            except Exception as llm_err:
+                llm_error = str(llm_err)[:500]
+                summary["llm_failed"] += 1
+                _update_brain(record, budget_status="llm_failed")
+                print(
+                    f"[WARN] LLM call failed, falling back to baseline: {llm_error[:120]}",
+                    flush=True,
+                )
+                if "billing" in llm_error.lower() or "credit" in llm_error.lower():
+                    use_llm = False
+
+        if llm_used:
+            valid_temporal, temporal_reason, temporal_details = validate_temporal_rationale(
+                llm_rationale,
+                temporal_context,
+                question=question,
+            )
+            if not valid_temporal:
+                summary["temporal_inconsistency"] += 1
+                infer_diag_counts["evaluated"] += 1
+                count_rejection("temporal_inconsistency")
+                edge_vs_market = float(p_yes_model - p_yes_market)
+                _update_brain(
+                    record,
+                    p_yes_model=p_yes_model,
+                    edge=abs(edge_vs_market),
+                    temporal_status=temporal_reason,
+                )
+                infer_diag_rows.append(
+                    {
                         "slug": slug,
-                        "question": str(m.get("question") or slug),
-                        "p_yes_market": float(p_yes_market),
-                        "p_yes_model": float(p_yes_model),
-                        "edge_vs_market": float(p_yes_model - p_yes_market),
-                        "edge_abs": float(abs(p_yes_model - p_yes_market)),
-                        "disagreement": float(disagreement),
-                        "llm_confidence": float(llm_conf),
+                        "question": question,
+                        "p_yes_market": p_yes_market,
+                        "p_yes_model": p_yes_model,
+                        "edge_vs_market": edge_vs_market,
+                        "edge_abs": abs(edge_vs_market),
+                        "disagreement": disagreement,
+                        "llm_confidence": llm_conf,
                         "llm_rationale": llm_rationale,
-                        "llm_used": llm_used,
-                        "side": "YES" if p_yes_model >= 0.5 else "NO",
+                        "llm_used": True,
                         "decision": "REJECT",
                         "reason": "temporal_inconsistency",
-                        "pricing_source": pricing_source,
-                        "spread": float(spread),
-                        "components": components,
                         "temporal_validation": temporal_reason,
                         "temporal_details": temporal_details,
-                    })
+                    }
+                )
+                _finalize_pipeline_market(
+                    record,
+                    final_stage="temporal_validation",
+                    decision="REJECT",
+                    reason="temporal_inconsistency",
+                    details={
+                        "temporal_validation": temporal_reason,
+                        "temporal_details": temporal_details,
+                        "llm_used": True,
+                    },
+                )
+                continue
+
+        edge_vs_market = float(p_yes_model - p_yes_market)
+        edge_abs = abs(edge_vs_market)
+        reason = _infer_rejection_reason(
+            edge_abs=edge_abs,
+            edge_vs_market=edge_vs_market,
+            disagreement=disagreement,
+        )
+
+        skeptic_trigger, skeptic_trigger_reason = should_request_skeptic(
+            edge_abs=edge_abs,
+            confidence=llm_conf,
+            category=category,
+            temporal_context=temporal_context,
+            candidate_threshold=config.candidate_threshold_for_skeptic,
+            near_threshold_ratio=config.skeptic_near_threshold_ratio,
+            high_confidence=config.skeptic_high_confidence,
+        )
+        if llm_used and skeptic_trigger:
+            if review_forecast is None or not budget.reserve_skeptic():
+                summary["budget_skipped"] += 1
+                infer_diag_counts["evaluated"] += 1
+                count_rejection("budget_skipped")
+                budget_status = (
+                    "skeptic_unavailable"
+                    if review_forecast is None
+                    else budget.skeptic_status()
+                )
+                _update_brain(
+                    record,
+                    p_yes_model=p_yes_model,
+                    edge=edge_abs,
+                    budget_status=budget_status,
+                )
+                infer_diag_rows.append(
+                    {
+                        "slug": slug,
+                        "question": question,
+                        "decision": "SKIP",
+                        "reason": "budget_skipped",
+                        "budget_status": budget_status,
+                        "skeptic_trigger": skeptic_trigger_reason,
+                    }
+                )
+                _finalize_pipeline_market(
+                    record,
+                    final_stage="skeptic_budget",
+                    decision="SKIP",
+                    reason="budget_skipped",
+                    details={
+                        "budget_status": budget_status,
+                        "skeptic_trigger": skeptic_trigger_reason,
+                    },
+                )
+                continue
+
+            summary["skeptic_attempted"] += 1
+            skeptic_used = True
+            _update_brain(record, skeptic_used=True, budget_status="skeptic_reserved")
+            try:
+                review = review_forecast(
+                    question=question,
+                    category=category,
+                    p_yes_market=p_yes_market,
+                    p_yes_model=p_yes_model,
+                    confidence=llm_conf,
+                    rationale=llm_rationale,
+                    temporal_context=temporal_context,
+                )
+                skeptic_payload = {
+                    "action": review.action,
+                    "reason": review.reason,
+                    "rationale": review.rationale,
+                    "temporal_valid": review.temporal_valid,
+                    "stale_facts": review.stale_facts,
+                    "malformed_or_novelty": review.malformed_or_novelty,
+                    "edge_real": review.edge_real,
+                    "trigger": skeptic_trigger_reason,
+                }
+            except Exception as skeptic_err:
+                summary["skeptic_failed"] += 1
+                summary["skeptic_reject"] += 1
+                infer_diag_counts["evaluated"] += 1
+                count_rejection("skeptic_reject")
+                skeptic_payload = {
+                    "action": "REJECT",
+                    "reason": "critic_call_failed",
+                    "rationale": str(skeptic_err)[:300],
+                    "trigger": skeptic_trigger_reason,
+                }
+                _update_brain(
+                    record,
+                    p_yes_model=p_yes_model,
+                    edge=edge_abs,
+                    budget_status="skeptic_failed",
+                )
+                infer_diag_rows.append(
+                    {
+                        "slug": slug,
+                        "question": question,
+                        "decision": "REJECT",
+                        "reason": "skeptic_reject",
+                        "skeptic": skeptic_payload,
+                    }
+                )
+                _finalize_pipeline_market(
+                    record,
+                    final_stage="skeptic_review",
+                    decision="REJECT",
+                    reason="skeptic_reject",
+                    details={"skeptic": skeptic_payload},
+                )
+                continue
+
+            if review.action == "REJECT":
+                summary["skeptic_reject"] += 1
+                infer_diag_counts["evaluated"] += 1
+                count_rejection("skeptic_reject")
+                _update_brain(
+                    record,
+                    p_yes_model=p_yes_model,
+                    edge=edge_abs,
+                    budget_status="skeptic_used",
+                )
+                infer_diag_rows.append(
+                    {
+                        "slug": slug,
+                        "question": question,
+                        "decision": "REJECT",
+                        "reason": "skeptic_reject",
+                        "skeptic": skeptic_payload,
+                    }
+                )
+                _finalize_pipeline_market(
+                    record,
+                    final_stage="skeptic_review",
+                    decision="REJECT",
+                    reason="skeptic_reject",
+                    details={"skeptic": skeptic_payload},
+                )
+                continue
+            if review.action == "DOWNGRADE":
+                summary["skeptic_downgrade"] += 1
+                p_yes_model = (p_yes_model + p_yes_market) / 2.0
+                llm_conf = max(0.5, llm_conf - 0.15)
+                disagreement = max(disagreement, 1.0 - llm_conf)
+                edge_vs_market = float(p_yes_model - p_yes_market)
+                edge_abs = abs(edge_vs_market)
+                reason = _infer_rejection_reason(
+                    edge_abs=edge_abs,
+                    edge_vs_market=edge_vs_market,
+                    disagreement=disagreement,
+                )
+                if reason != "pass":
+                    infer_diag_counts["evaluated"] += 1
+                    count_rejection("skeptic_downgrade")
+                    _update_brain(
+                        record,
+                        p_yes_model=p_yes_model,
+                        edge=edge_abs,
+                        budget_status="skeptic_used",
+                    )
+                    infer_diag_rows.append(
+                        {
+                            "slug": slug,
+                            "question": question,
+                            "decision": "REJECT",
+                            "reason": "skeptic_downgrade",
+                            "post_downgrade_filter": reason,
+                            "skeptic": skeptic_payload,
+                        }
+                    )
                     _finalize_pipeline_market(
                         record,
-                        final_stage="temporal_validation",
+                        final_stage="skeptic_review",
                         decision="REJECT",
-                        reason="temporal_inconsistency",
+                        reason="skeptic_downgrade",
                         details={
-                            "temporal_validation": temporal_reason,
-                            "temporal_details": temporal_details,
-                            "llm_used": llm_used,
+                            "post_downgrade_filter": reason,
+                            "skeptic": skeptic_payload,
                         },
                     )
                     continue
-            except Exception as llm_err:
-                err_msg = str(llm_err)
-                llm_error = err_msg[:500]
-                summary["llm_failed"] += 1
-                print(f"[WARN] LLM call failed, falling back to baseline: {err_msg[:120]}", flush=True)
-                if "billing" in err_msg.lower() or "credit" in err_msg.lower():
-                    # Disable LLM for rest of this run to avoid spamming API errors
-                    use_llm = False
-                p_yes_model = float(baseline.p_yes_model)
-                llm_conf = float(baseline.confidence)
-                disagreement = float(max(0.0, min(1.0, 1.0 - baseline.confidence)))
-                components = baseline.components
-        else:
-            p_yes_model = float(baseline.p_yes_model)
-            llm_conf = float(baseline.confidence)
-            disagreement = float(max(0.0, min(1.0, 1.0 - baseline.confidence)))
-            components = baseline.components
+            _update_brain(record, budget_status="skeptic_used")
 
-        edge_vs_market = float(p_yes_model - p_yes_market)
-        # Fix: use edge vs market price, not vs 0.5
-        # abs(model - 0.5) was always huge (e.g. 0.46) so BGL_MIN_EDGE_ABS never blocked anything
-        edge_abs = abs(edge_vs_market)
         side = "YES" if edge_vs_market > 0 else "NO"
-
         infer_diag_counts["evaluated"] += 1
-        reason = _infer_rejection_reason(edge_abs=edge_abs, edge_vs_market=edge_vs_market, disagreement=disagreement)
-        infer_diag_rows.append({
+        diag_row = {
             "slug": slug,
-            "question": str(m.get("question") or slug),
-            "p_yes_market": float(p_yes_market),
-            "p_yes_model": float(p_yes_model),
-            "edge_vs_market": float(edge_vs_market),
-            "edge_abs": float(edge_abs),
-            "disagreement": float(disagreement),
-            "llm_confidence": float(llm_conf),
+            "question": question,
+            "category": category,
+            "opportunity_score": opportunity.opportunity_score,
+            "opportunity_grade": opportunity.opportunity_grade,
+            "p_yes_market": p_yes_market,
+            "p_yes_model": p_yes_model,
+            "edge_vs_market": edge_vs_market,
+            "edge_abs": edge_abs,
+            "disagreement": disagreement,
+            "llm_confidence": llm_conf,
             "llm_rationale": llm_rationale,
             "llm_used": llm_used,
+            "skeptic_used": skeptic_used,
+            "skeptic": skeptic_payload or None,
             "side": side,
             "decision": "PASS" if reason == "pass" else "REJECT",
             "reason": reason,
             "pricing_source": pricing_source,
-            "spread": float(spread),
+            "spread": spread,
             "components": components,
+            "scoring_components": opportunity.scoring_components,
             "temporal_context": temporal_context,
-        })
+        }
+        infer_diag_rows.append(diag_row)
+        _update_brain(
+            record,
+            p_yes_model=p_yes_model,
+            edge=edge_abs,
+            llm_used=llm_used,
+            skeptic_used=skeptic_used,
+        )
+
         if reason != "pass":
-            infer_diag_counts["rejected"][reason] += 1
+            count_rejection(reason)
             if reason == "max_disagree":
                 summary["disagreement_rejected"] += 1
             else:
                 summary["edge_rejected"] += 1
             details = {
-                "p_yes_market": float(p_yes_market),
-                "p_yes_model": float(p_yes_model),
-                "edge_vs_market": float(edge_vs_market),
-                "disagreement": float(disagreement),
+                "p_yes_market": p_yes_market,
+                "p_yes_model": p_yes_model,
+                "edge_vs_market": edge_vs_market,
+                "disagreement": disagreement,
                 "llm_used": llm_used,
+                "skeptic_used": skeptic_used,
             }
             if llm_error:
                 details["llm_error"] = llm_error
                 details["fallback"] = "baseline"
             _finalize_pipeline_market(
                 record,
-                final_stage="disagreement_filter" if reason == "max_disagree" else "edge_filter",
+                final_stage=(
+                    "disagreement_filter" if reason == "max_disagree" else "edge_filter"
+                ),
                 decision="REJECT",
                 reason=reason,
                 details=details,
             )
             continue
 
-        cand = {
+        candidate = {
             "ts_utc": utc_now_iso(),
             "run_id": report["run_id"],
             "market_id": slug,
-            "question": str(m.get("question") or slug),
+            "question": question,
             "venue": venue,
             "side": side,
-            "p_yes": float(p_yes_model),
-            "consensus_p_yes": float(p_yes_model),
-            "disagreement": float(disagreement),
-            "edge": float(abs(edge_vs_market)),
-            "size_usd": float(paper_size),
+            "p_yes": p_yes_model,
+            "consensus_p_yes": p_yes_model,
+            "disagreement": disagreement,
+            "edge": edge_abs,
+            "size_usd": paper_size,
             "reason": "infer",
             "status": "OPEN",
             "notes": {
-                "category": _topic_label(str(m.get("question") or slug)),
+                "category": category,
                 "adapter_venue": venue,
-                "p_yes_market": float(p_yes_market),
-                "edge_vs_market": float(edge_vs_market),
+                "p_yes_market": p_yes_market,
+                "edge_vs_market": edge_vs_market,
                 "pricing_source": pricing_source,
-                "spread": float(spread),
+                "spread": spread,
+                "opportunity_score": opportunity.opportunity_score,
+                "opportunity_grade": opportunity.opportunity_grade,
+                "scoring_components": opportunity.scoring_components,
                 "llm": {
-                    "enabled": bool(use_llm),
+                    "enabled": use_llm,
+                    "used": llm_used,
                     "model": os.environ.get("BGL_LLM_MODEL", ""),
-                    "confidence": float(llm_conf),
+                    "confidence": llm_conf,
                     "rationale": llm_rationale,
                 },
+                "skeptic": skeptic_payload,
                 "baseline_components": components,
                 "snapshot": {
                     "slug": slug,
                     "id": m.get("id"),
                     "question": m.get("question"),
                     "updatedAt": m.get("updatedAt"),
+                    "endDate": m.get("endDate"),
                     "volume": m.get("volume"),
                     "liquidity": m.get("liquidity"),
                     "bestBid": m.get("bestBid"),
@@ -907,63 +1437,25 @@ def _infer_one(
                 },
             },
         }
-
-        category = _topic_label(str(m.get("question") or slug))
-        if not _category_cap_ok(conn, category):
-            summary["skipped_category_cap"] += 1
-            infer_diag_counts["rejected"]["category_cap"] += 1
-            infer_diag_rows[-1]["decision"] = "REJECT"
-            infer_diag_rows[-1]["reason"] = "category_cap"
-            print(f"  [infer] category cap reached for '{category}' - skipping {slug}", flush=True)
-            _finalize_pipeline_market(
-                record,
-                final_stage="category_cap",
-                decision="SKIP",
-                reason="category_cap_reached",
-                details={"category": category},
-            )
-            continue
         infer_diag_counts["passed"] += 1
         summary["candidates_generated"] += 1
-        candidate = cand
-        details = {
-            "category": category,
-            "side": side,
-            "edge_vs_market": float(edge_vs_market),
-            "disagreement": float(disagreement),
-            "llm_used": llm_used,
-        }
-        if llm_error:
-            details["llm_error"] = llm_error
-            details["fallback"] = "baseline"
         _finalize_pipeline_market(
             record,
             final_stage="candidate_creation",
             decision="CANDIDATE",
             reason="candidate_generated",
-            details=details,
+            details={
+                "category": category,
+                "side": side,
+                "edge_vs_market": edge_vs_market,
+                "disagreement": disagreement,
+                "llm_used": llm_used,
+                "skeptic_used": skeptic_used,
+                "skeptic_action": skeptic_payload.get("action"),
+            },
         )
 
-    _write_infer_diagnostics({
-        "ts_utc": utc_now_iso(),
-        "source": venue,
-        "mode": "infer",
-        "settings": {
-            "batch": int(os.environ.get("BGL_INFER_BATCH", "8") or "8"),
-            "cooldown": int(os.environ.get("BGL_INFER_COOLDOWN", "0") or "0"),
-            "min_edge_abs": _filters()[0],
-            "min_edge_vs_market": _filters()[1],
-            "max_disagree": _filters()[2],
-            "paper_size": float(os.environ.get("BGL_PAPER_SIZE", "100") or "100"),
-        },
-        "summary": infer_diag_counts,
-        "rows": infer_diag_rows,
-    })
-    summary["diagnostics_written"] = len(infer_diag_rows)
-    summary["finalized_markets"] = sum(
-        1 for row in report["markets"] if row["reason"] != "unclassified"
-    )
-    return (candidate, report)
+    return finish(candidate)
 
 
 def main() -> int:
@@ -990,7 +1482,13 @@ def main() -> int:
         if mode == "arbiter":
             cand = _arbiter_candidate_from_db(conn=conn, venue=venue, paper_size=paper_size)
         else:
-            cand, pipeline_report = _infer_one(conn=conn, venue=venue, paper_size=paper_size)
+            cand, pipeline_report = _infer_one(
+                conn=conn,
+                venue=venue,
+                paper_size=paper_size,
+                persist_state=bool(args.paper),
+                paper_mode=bool(args.paper),
+            )
 
         cands: List[Dict[str, Any]] = [cand] if cand is not None else []
         _write_candidates(mode, cands)
