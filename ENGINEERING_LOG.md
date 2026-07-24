@@ -1,5 +1,21 @@
 # Swarm Edge Engineering Log
 
+## 2026-07-24 - Phase 3.2 institutional discovery expansion
+
+**Root cause:** Phase 3.1 correctly removed junk, but its question-only classifier labeled most active contracts as novelty/other, its single market query discarded useful event metadata, and one strict threshold set could not distinguish serious near-threshold research markets from weak markets. The resulting clean universe contained only 3 of 1,992 scanned markets.
+
+**Safety:** The running `com.swarmedge.runner` job was booted out and stopped through the wrapper before edits. No `run_live.sh` or `live_runner.py` process remained. The production SQLite database and 3-market watchlist were copied to `archive/phase3_2_institutional_discovery_expansion/`; apply also created a timestamped pre-apply watchlist backup. The daemon remains stopped.
+
+**Policy and discovery:** `institutional_v2` adds CORE, RESEARCH, WATCH, and BANNED tiers without weakening hard bans. Classification now uses market and event metadata and recognizes Fed, inflation, employment, GDP, recession, central-bank, major-election, geopolitical, BTC/ETH, energy, index, legal/regulatory, and high-liquidity corporate events. Discovery expands active Gamma events across `volume24hr`, `volume`, `liquidity`, and `endDate`, with balanced query budgets, pagination, deduplication, category caps, horizon balance, and a two-market-per-event cap.
+
+**Rebuild:** The final scan evaluated 5,000 unique markets from 10,419 raw candidates: 26 CORE, 70 RESEARCH, 751 WATCH, and 4,153 BANNED. The validated apply selected 22 markets, comprising 15 CORE and 7 RESEARCH across macro/Fed, major elections, geopolitics, crypto majors, oil/gas, and corporate/regulatory events. Average quality is 80.64. No WATCH or BANNED market was used, and the policy stopped below its 24-market target rather than force filler.
+
+**Loop integration:** Brain activity, the infer pipeline report, and morning status now expose `policy_tier`, `institutional_category`, institutional quality, watchlist tier counts, and rejection distribution. Existing hard-ban behavior remains 0/F with a rejection decision. Approval-gated paper insertion still defaults to `PENDING`.
+
+**Validation:** Focused tests pass and full discovery passes 47 tests. Python compilation, shell syntax, and `git diff --check` pass. An existing wrapper test used the Linux-only `/bin/true`; on macOS it fell back to real Python and touched the production cursor. The test now uses `/usr/bin/true`, the database was restored from the safety archive, and repeat full discovery leaves its hash unchanged. A controlled non-paper wrapper inference sampled and ranked 8 markets, used 5 primary calls and 1 skeptic call, budget-skipped 3 markets, rejected the other 5, and produced no candidate or paper trade. The SQLite file remains byte-identical to its Phase 3.2 backup at SHA-256 `676823731e30a18dcb584e28cec58732be5b062035a7083689afcc24d5338fdc`; counts remain `CLOSED=2`, `OPEN=4`, and `VOID=20`.
+
+**Next action:** Keep unattended operation stopped. Manually review the 22 selected contracts and their resolution rules, then run one attended approval-gated paper cycle before deciding whether to resume the daemon.
+
 ## 2026-07-24 - Phase 3.1 institutional market universe reset
 
 **Root cause:** The prior watchlist manager retained active markets indefinitely and filled slots from a volume/recency/topic heuristic with narrow sports exclusions. It had no formal resolution-quality gate, institutional category allowlist, spread/liquidity minimums, or hard default ban for novelty, entertainment, product-release comparisons, and thin local primaries.

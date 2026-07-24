@@ -300,7 +300,7 @@ class RuntimePublicationAndReportingTests(unittest.TestCase):
         env = os.environ.copy()
         env.update(
             {
-                "PYTHON_BIN": "/bin/true",
+                "PYTHON_BIN": "/usr/bin/true",
                 "LOOPS": "1",
                 "SLEEP_SECS": "0",
                 "RESOLVE_EVERY": "1",
@@ -319,8 +319,9 @@ class RuntimePublicationAndReportingTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("publication disabled", result.stdout)
+        self.assertIn("auto-export data", result.stdout)
         self.assertIn("watchlist apply disabled", result.stdout)
+        self.assertNotIn("PIPELINE", result.stdout)
 
     def test_export_and_database_fingerprint_remain_stable(self) -> None:
         with tempfile.TemporaryDirectory() as td:

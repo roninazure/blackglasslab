@@ -14,11 +14,14 @@
 - Latest-cycle brain activity is available as structured JSON and in the morning status summary.
 - Default discovery now enforces the `institutional_v1` market-universe policy and refuses junk backfill.
 - GTA VI/product comparisons, entertainment/album markets, memes, thin local primaries, malformed questions, and weak-resolution markets are rejected before LLM use.
+- `institutional_v2` expands serious category recognition and tiered CORE/RESEARCH/WATCH classification while retaining every Phase 3.1 hard ban.
+- Discovery now scans active event markets across four sort modes, preserves event metadata, caps event/category concentration, and permits a smaller clean result instead of filler.
 
 ## Open
 
-- The strict policy selected only 3 of 1,992 scanned active markets. This is safer than junk fill but limits opportunity breadth and category coverage.
 - Category and malformed-question detection remain keyword/grammar heuristics and can produce false positives or miss novel wording.
+- The 22-market universe is clean but concentrated in six available categories; no CPI, jobs, GDP, central-bank, index, or legal market cleared the current live scan.
+- Several selected contracts share the same underlying event. The two-market event cap limits concentration but does not model cross-market correlation or mutually exclusive outcomes.
 - Existing OPEN/PENDING historical positions can belong to classes now banned; they are preserved and excluded from new selection rather than rewritten.
 - Universe discovery depends on current Gamma API metadata and does not yet retain a replayable candidate snapshot beyond the rebuild report.
 - Opportunity-score weights are heuristic until enough resolved paper forecasts exist for calibration.

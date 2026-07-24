@@ -32,6 +32,8 @@ memory/*.sqlite-*
 *.tmp
 archive/phase3_1_market_universe_reset/*.sqlite
 archive/phase3_1_market_universe_reset/*.json
+archive/phase3_2_institutional_discovery_expansion/*.sqlite
+archive/phase3_2_institutional_discovery_expansion/*.json
 
 # python
 __pycache__/

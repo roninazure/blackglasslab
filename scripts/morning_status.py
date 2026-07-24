@@ -25,8 +25,9 @@ LOG_PATH  = ROOT / "logs" / "infer_loop.log"
 DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
 BRAIN_PATH= ROOT / "signals" / "swarm_brain_report.json"
 WATCH_PATH= ROOT / "markets" / "polymarket_watchlist.json"
-UNIVERSE_REPORT_PATH = ROOT / "reports" / "market_universe_rebuild.json"
-AUDIT_REPORT_PATH = ROOT / "reports" / "current_watchlist_audit.json"
+UNIVERSE_REPORT_PATH = (
+    ROOT / "reports" / "phase3_2_universe_expansion.json"
+)
 DATA_DIR  = ROOT / "data"
 
 PASS = "✓"
@@ -360,14 +361,9 @@ def check_market_universe():
     print("MARKET UNIVERSE")
     try:
         report = json.loads(UNIVERSE_REPORT_PATH.read_text())
-        audit = json.loads(AUDIT_REPORT_PATH.read_text())
         selected = report.get("selected_markets", [])
-        selected_classes: dict[str, int] = {}
-        for row in selected:
-            classification = str(row.get("classification") or "UNKNOWN_REQUIRES_REVIEW")
-            selected_classes[classification] = selected_classes.get(classification, 0) + 1
-        old_classes = (
-            audit.get("summary", {}).get("classification_counts", {})
+        tier_counts = report.get("selection_summary", {}).get(
+            "tier_counts", {}
         )
         scores = [
             float(row.get("institutional_quality_score") or 0.0)
@@ -381,15 +377,18 @@ def check_market_universe():
         )
         print(
             "  selected"
-            f"  institutional={selected_classes.get('INSTITUTIONAL_CORE', 0)}"
-            f"  research={selected_classes.get('ACCEPTABLE_RESEARCH', 0)}"
-            f"  speculative={selected_classes.get('SPECULATIVE', 0)}"
-            f"  junk={selected_classes.get('BANNED_JUNK', 0)}"
+            f"  core={tier_counts.get('CORE', 0)}"
+            f"  research={tier_counts.get('RESEARCH', 0)}"
+            f"  watch={tier_counts.get('WATCH', 0)}"
+            f"  banned={tier_counts.get('BANNED', 0)}"
         )
+        eligible = report.get("eligible_tier_counts", {})
         print(
-            "  old audit"
-            f"  banned={old_classes.get('BANNED_JUNK', 0)}"
-            f"  unknown={old_classes.get('UNKNOWN_REQUIRES_REVIEW', 0)}"
+            "  scanned"
+            f"  core={eligible.get('CORE', 0)}"
+            f"  research={eligible.get('RESEARCH', 0)}"
+            f"  watch={eligible.get('WATCH', 0)}"
+            f"  banned={eligible.get('BANNED', 0)}"
         )
     except FileNotFoundError:
         print("  no market universe report yet")

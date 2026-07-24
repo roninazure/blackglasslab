@@ -41,6 +41,7 @@ DB_PATH = os.path.join("memory", "runs.sqlite")
 SIGNALS_DIR = Path("signals")
 WATCHLIST_PATH = Path("markets") / "polymarket_watchlist.json"
 PIPELINE_REPORT_PATH = SIGNALS_DIR / "infer_pipeline_report.json"
+UNIVERSE_REPORT_PATH = Path("reports") / "phase3_2_universe_expansion.json"
 
 PIPELINE_SUMMARY_FIELDS = (
     "watchlist_total",
@@ -181,6 +182,8 @@ def _new_pipeline_report(watchlist: List[str], venue: str) -> Dict[str, Any]:
                     "policy_allowed": None,
                     "policy_reason": "not_evaluated",
                     "policy_classification": "UNKNOWN_REQUIRES_REVIEW",
+                    "policy_tier": "NOT_EVALUATED",
+                    "institutional_category": "novelty/other",
                     "institutional_quality_score": None,
                     "banned_class": None,
                 },
@@ -254,6 +257,34 @@ def _build_brain_report(
     for index, row in enumerate(rankings, start=1):
         row["rank"] = index
 
+    rejection_distribution: Dict[str, int] = {}
+    sampled_tiers: Dict[str, int] = {}
+    for row in markets:
+        reason = str(row.get("final_reason") or "unclassified")
+        rejection_distribution[reason] = (
+            rejection_distribution.get(reason, 0) + 1
+        )
+        if reason == "not_selected_in_batch":
+            continue
+        tier = str(row.get("policy_tier") or "NOT_EVALUATED")
+        sampled_tiers[tier] = sampled_tiers.get(tier, 0) + 1
+
+    watchlist_tiers = dict(sampled_tiers)
+    try:
+        expansion = json.loads(
+            UNIVERSE_REPORT_PATH.read_text(encoding="utf-8")
+        )
+        configured_tiers = (
+            expansion.get("selection_summary", {}).get("tier_counts", {})
+        )
+        if isinstance(configured_tiers, dict):
+            watchlist_tiers = {
+                str(key): int(value)
+                for key, value in configured_tiers.items()
+            }
+    except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+
     return {
         "run_id": report["run_id"],
         "ts_utc": report["ts_utc"],
@@ -269,6 +300,9 @@ def _build_brain_report(
         "market_universe_policy_mode": (
             universe_config.mode if universe_config else "unknown"
         ),
+        "watchlist_tier_counts": watchlist_tiers,
+        "sampled_tier_counts": sampled_tiers,
+        "rejection_distribution_summary": rejection_distribution,
         "market_records": markets,
     }
 
@@ -687,6 +721,14 @@ def _infer_one(
             config=config,
             universe_config=universe_config,
         )
+        report["market_universe"] = {
+            "policy_mode": universe_config.mode,
+            "watchlist_tier_counts": brain_report["watchlist_tier_counts"],
+            "sampled_tier_counts": brain_report["sampled_tier_counts"],
+            "rejection_distribution_summary": brain_report[
+                "rejection_distribution_summary"
+            ],
+        }
         report["brain_report"] = brain_report
         _write_brain_report(brain_report)
         return candidate, report
@@ -804,6 +846,8 @@ def _infer_one(
             policy_allowed=policy.policy_allowed,
             policy_reason=policy.policy_reason,
             policy_classification=policy.classification,
+            policy_tier=policy.policy_tier,
+            institutional_category=policy.institutional_category,
             institutional_quality_score=policy.institutional_quality_score,
             banned_class=policy.banned_class,
         )
