@@ -1,5 +1,21 @@
 # Swarm Edge Engineering Log
 
+## 2026-07-24 - Phase 3.1 institutional market universe reset
+
+**Root cause:** The prior watchlist manager retained active markets indefinitely and filled slots from a volume/recency/topic heuristic with narrow sports exclusions. It had no formal resolution-quality gate, institutional category allowlist, spread/liquidity minimums, or hard default ban for novelty, entertainment, product-release comparisons, and thin local primaries.
+
+**Safety:** The launchd service was booted out and the wrapper was stopped before inspection. No `run_live.sh` or `live_runner.py` process remained. `memory/runs.sqlite` and the 25-market watchlist were copied to `archive/phase3_1_market_universe_reset/`; the apply operation created a second timestamped watchlist backup.
+
+**Audit and policy:** All 25 entries were fetched and classified: 3 `INSTITUTIONAL_CORE`, 2 `ACCEPTABLE_RESEARCH`, 8 `SPECULATIVE`, and 12 `BANNED_JUNK`. The new `institutional_v1` policy requires a recognized institutional category, clean binary outcomes, known deadline, sufficient liquidity and volume, executable spread, acceptable probability/horizon, no duplicate exposure, and a minimum quality score. Novelty/other, entertainment, celebrity/album, product-release comparisons, meme markets, sports props, and thin local primaries are rejected by default.
+
+**Rebuild:** The dry run scanned 1,992 active Polymarket contracts and selected only 3 clean markets rather than filling the target of 20 with weak entries. After the report confirmed a materially cleaner universe, apply replaced the watchlist with one major-election, one rates, and one commodities/energy market. The selected set contains 2 institutional-core and 1 acceptable-research market, with no speculative or banned entry.
+
+**Loop integration and observability:** Institutional policy evaluation now precedes temporal analysis, opportunity scoring, and LLM reservation. Disallowed markets receive structured `banned_market_class`, `malformed_market`, `weak_resolution_quality`, or `low_institutional_quality` reasons; hard-banned records score 0/F. Brain activity includes policy allow/reason, institutional quality score, policy classification, and banned class. Morning status shows policy mode and compact universe-quality counts.
+
+**Validation:** Focused policy/pipeline/temporal tests pass, and full discovery passes 36 tests. Python compilation, shell syntax, and `git diff --check` pass. An explicit LLM-enabled non-paper wrapper inference fetched and ranked all 3 markets, reserved 3 primary calls, safely fell back to baseline for one malformed provider response, used no skeptic call, generated no candidate, and inserted no trade. Non-paper CLI connections are now enforced read-only. The SQLite file remains byte-identical to its archive at SHA-256 `a4c50594d485b061997a1df8616c2d911c1aab6475f3b5ce960d9e8e09f05da`; counts remain `CLOSED=2`, `OPEN=4`, `PENDING=1`, `VOID=19`, and cursor 22.
+
+**Next action:** Keep the daemon stopped. Review the three-market universe and the existing pending approval, then explicitly start `swarm-edge` for one attended paper-only cycle if the operator accepts the policy.
+
 ## 2026-07-23 - Phase 3 Loop Engine v1
 
 **Objective:** Convert the rotating hourly infer batch into an economical opportunity loop that ranks market quality before inference, routes forecasts by market family, applies a bounded critic pass, and publishes dashboard-ready brain activity.

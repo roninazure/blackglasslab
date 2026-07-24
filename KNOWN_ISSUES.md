@@ -12,14 +12,18 @@
 - Infer batches are ranked before LLM use, with per-cycle and daily call caps plus structured budget-skip reasons.
 - Prompt families and the bounded skeptic pass now cover the major market categories.
 - Latest-cycle brain activity is available as structured JSON and in the morning status summary.
+- Default discovery now enforces the `institutional_v1` market-universe policy and refuses junk backfill.
+- GTA VI/product comparisons, entertainment/album markets, memes, thin local primaries, malformed questions, and weak-resolution markets are rejected before LLM use.
 
 ## Open
 
-- Watchlist/category concentration is still heuristic and can cluster by topic.
+- The strict policy selected only 3 of 1,992 scanned active markets. This is safer than junk fill but limits opportunity breadth and category coverage.
+- Category and malformed-question detection remain keyword/grammar heuristics and can produce false positives or miss novel wording.
+- Existing OPEN/PENDING historical positions can belong to classes now banned; they are preserved and excluded from new selection rather than rewritten.
+- Universe discovery depends on current Gamma API metadata and does not yet retain a replayable candidate snapshot beyond the rebuild report.
 - Opportunity-score weights are heuristic until enough resolved paper forecasts exist for calibration.
 - Daily LLM usage is a local JSON counter designed for one runner process; it is not a transactional multi-process ledger.
 - Per-call cost is unavailable unless `BGL_ESTIMATED_COST_PER_CALL_USD` is configured.
-- The category classifier is keyword-based and can misroute novel wording.
 - The brain report is latest-cycle state only; historical dashboard storage and streaming are not implemented.
 - Legacy reporting CLIs still overlap with the current dashboard and should be retired or reconciled deliberately.
 - Calibration evidence is still too small to support an edge claim.

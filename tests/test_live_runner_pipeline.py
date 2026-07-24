@@ -91,6 +91,7 @@ class PipelineTests(unittest.TestCase):
                 "BGL_MIN_EDGE_ABS": "0.03",
                 "BGL_MIN_EDGE_VS_MARKET": "0.03",
                 "BGL_MAX_DISAGREEMENT": "0.60",
+                "BGL_MARKET_UNIVERSE_POLICY_MODE": "off",
             }
             with (
                 mock.patch.object(live_runner, "WATCHLIST_PATH", watchlist_path),

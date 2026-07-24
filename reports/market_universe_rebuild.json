@@ -1,0 +1,180 @@
+{
+  "added_market_ids": [
+    "will-renan-santos-win-the-2026-brazilian-presidential-election",
+    "will-there-be-no-change-in-fed-interest-rates-after-the-september-2026-meeting-615",
+    "will-wti-reach-100-in-july-2026-928"
+  ],
+  "applied": true,
+  "apply_backup_path": "archive/phase3_1_market_universe_reset/polymarket_watchlist.pre_apply.20260724T130711Z.json",
+  "apply_blocked_reason": null,
+  "dry_run": false,
+  "materially_cleaner": true,
+  "new_watchlist_size": 3,
+  "old_watchlist_size": 25,
+  "policy_config": {
+    "allow_sports": false,
+    "allow_thin_primaries": false,
+    "allowed_categories": [
+      "macro/fed",
+      "macro/econ",
+      "inflation/CPI",
+      "rates",
+      "recession",
+      "major elections",
+      "geopolitics",
+      "crypto majors",
+      "commodities/energy",
+      "legal/regulatory"
+    ],
+    "max_days_to_resolution": 365.0,
+    "max_per_category": 3,
+    "max_probability": 0.95,
+    "max_spread": 0.03,
+    "min_days_to_resolution": 2.0,
+    "min_liquidity": 5000.0,
+    "min_probability": 0.05,
+    "min_quality_score": 60.0,
+    "min_volume": 100000.0,
+    "mode": "institutional_v1",
+    "novelty_whitelist": [],
+    "require_deadline": true,
+    "scan_pages": 20,
+    "target_size": 20
+  },
+  "policy_mode": "institutional_v1",
+  "removed_market_ids": [
+    "blue-wave-in-2026",
+    "fed-emergency-rate-cut-before-2027",
+    "new-playboi-carti-album-before-gta-vi-421",
+    "new-rhianna-album-before-gta-vi-926",
+    "scotus-accepts-sports-event-contract-case-by-july-31-2026",
+    "us-recession-by-end-of-2026",
+    "will-1-fed-rate-cut-happen-in-2026",
+    "will-2-fed-rate-cuts-happen-in-2026",
+    "will-3-fed-rate-cuts-happen-in-2026",
+    "will-4-fed-rate-cuts-happen-in-2026",
+    "will-5-fed-rate-cuts-happen-in-2026",
+    "will-bitcoin-hit-1m-before-gta-vi-872-424",
+    "will-china-invade-taiwan-before-2027",
+    "will-china-invades-taiwan-before-gta-vi-716-644",
+    "will-cori-bush-be-the-democratic-nominee-for-mo-01",
+    "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election",
+    "will-gpt-6-be-released",
+    "will-jay-feely-be-the-republican-nominee-for-az-05",
+    "will-matt-gress-be-the-republican-nominee-for-az-01",
+    "will-no-fed-rate-cuts-happen-in-2026",
+    "will-paul-reevs-be-the-republican-nominee-for-az-01",
+    "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election",
+    "will-the-iranian-regime-fall-by-the-end-of-2026",
+    "will-the-us-confirm-that-aliens-exist-before-2027-789-924-249",
+    "will-the-us-invade-iran-before-2027"
+  ],
+  "report_type": "market_universe_rebuild",
+  "retained_market_ids": [],
+  "scan": {
+    "eligible_markets": 3,
+    "markets_scanned": 1992,
+    "pages_fetched": 20,
+    "pages_requested": 20,
+    "selected_markets": 3
+  },
+  "selected_markets": [
+    {
+      "banned_class": null,
+      "category": "major elections",
+      "classification": "INSTITUTIONAL_CORE",
+      "institutional_quality_score": 87.93,
+      "market_id": "will-renan-santos-win-the-2026-brazilian-presidential-election",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 71.45,
+        "duplicate_position": false,
+        "end_date": "2026-10-04T00:00:00+00:00",
+        "liquidity": 272359.3729,
+        "p_yes_market": 0.1145,
+        "spread": 0.0010000000000000009,
+        "volume": 8414485.144641863
+      },
+      "policy_allowed": true,
+      "policy_reason": "institutional_policy_pass",
+      "question": "Will Renan Santos win the 2026 Brazilian presidential election?",
+      "reason_codes": [],
+      "time_bucket": "46-120d"
+    },
+    {
+      "banned_class": null,
+      "category": "rates",
+      "classification": "INSTITUTIONAL_CORE",
+      "institutional_quality_score": 80.89,
+      "market_id": "will-there-be-no-change-in-fed-interest-rates-after-the-september-2026-meeting-615",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 53.45,
+        "duplicate_position": false,
+        "end_date": "2026-09-16T00:00:00+00:00",
+        "liquidity": 105797.0715,
+        "p_yes_market": 0.405,
+        "spread": 0.009999999999999953,
+        "volume": 860582.3549970004
+      },
+      "policy_allowed": true,
+      "policy_reason": "institutional_policy_pass",
+      "question": "Will there be no change in Fed interest rates after the September 2026 meeting?",
+      "reason_codes": [],
+      "time_bucket": "46-120d"
+    },
+    {
+      "banned_class": null,
+      "category": "commodities/energy",
+      "classification": "ACCEPTABLE_RESEARCH",
+      "institutional_quality_score": 61.85,
+      "market_id": "will-wti-reach-100-in-july-2026-928",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 7.62,
+        "duplicate_position": false,
+        "end_date": "2026-08-01T03:59:59.999000+00:00",
+        "liquidity": 31279.50647,
+        "p_yes_market": 0.2645,
+        "spread": 0.025000000000000022,
+        "volume": 919522.1027680004
+      },
+      "policy_allowed": true,
+      "policy_reason": "institutional_policy_pass",
+      "question": "Will WTI Crude Oil (WTI) hit (HIGH) $100 in July?",
+      "reason_codes": [],
+      "time_bucket": "2-14d"
+    }
+  ],
+  "selection_summary": {
+    "balance_rejections": {},
+    "category_counts": {
+      "commodities/energy": 1,
+      "major elections": 1,
+      "rates": 1
+    },
+    "classification_counts": {
+      "ACCEPTABLE_RESEARCH": 1,
+      "INSTITUTIONAL_CORE": 2
+    },
+    "horizon_counts": {
+      "2-14d": 1,
+      "46-120d": 2
+    },
+    "insufficient_clean_markets": true,
+    "insufficient_reason": "insufficient_clean_markets",
+    "rejection_reasons": {
+      "banned_market_class": 1630,
+      "low_institutional_quality": 150,
+      "malformed_market": 190,
+      "weak_resolution_quality": 19
+    }
+  },
+  "ts_utc": "2026-07-24T13:07:11.986953+00:00"
+}

@@ -31,6 +31,10 @@ from loop_engine.config import LLMBudget, LoopEngineConfig
 from loop_engine.opportunity import score_opportunity
 from loop_engine.prompts import classify_market
 from loop_engine.skeptic import should_request_skeptic
+from market_universe.policy import (
+    InstitutionalUniverseConfig,
+    evaluate_market as evaluate_market_policy,
+)
 from models.baseline import score_market, market_yes_price
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
@@ -54,6 +58,10 @@ PIPELINE_SUMMARY_FIELDS = (
     "opportunity_scored",
     "low_opportunity_score",
     "weak_market_quality",
+    "banned_market_class",
+    "malformed_market",
+    "weak_resolution_quality",
+    "low_institutional_quality",
     "llm_attempted",
     "llm_failed",
     "budget_skipped",
@@ -85,8 +93,13 @@ def utc_now_iso(now: Optional[datetime] = None) -> str:
     return (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
 
 
-def _connect_db(path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(path)
+def _connect_db(path: str, *, read_only: bool = False) -> sqlite3.Connection:
+    if read_only:
+        resolved = Path(path).resolve()
+        conn = sqlite3.connect(f"file:{resolved}?mode=ro", uri=True)
+        conn.execute("PRAGMA query_only=ON;")
+    else:
+        conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys=ON;")
     return conn
 
@@ -165,6 +178,11 @@ def _new_pipeline_report(watchlist: List[str], venue: str) -> Dict[str, Any]:
                     "budget_status": "not_applicable",
                     "scoring_components": {},
                     "short_rationale_summary": None,
+                    "policy_allowed": None,
+                    "policy_reason": "not_evaluated",
+                    "policy_classification": "UNKNOWN_REQUIRES_REVIEW",
+                    "institutional_quality_score": None,
+                    "banned_class": None,
                 },
             }
             for slug in watchlist
@@ -204,6 +222,7 @@ def _build_brain_report(
     mode: str,
     budget: LLMBudget,
     config: LoopEngineConfig,
+    universe_config: Optional[InstitutionalUniverseConfig] = None,
 ) -> Dict[str, Any]:
     markets: List[Dict[str, Any]] = []
     for row in report["markets"]:
@@ -247,6 +266,9 @@ def _build_brain_report(
         "daily_llm_calls_used": budget.daily_calls_used,
         "estimated_cost": budget.estimated_cost,
         "budget_config": config.as_dict(),
+        "market_universe_policy_mode": (
+            universe_config.mode if universe_config else "unknown"
+        ),
         "market_records": markets,
     }
 
@@ -283,6 +305,10 @@ def _print_pipeline_funnel(report: Dict[str, Any]) -> None:
         + s.get("temporal_inconsistency", 0)
         + s.get("low_opportunity_score", 0)
         + s.get("skeptic_reject", 0)
+        + s.get("banned_market_class", 0)
+        + s.get("malformed_market", 0)
+        + s.get("weak_resolution_quality", 0)
+        + s.get("low_institutional_quality", 0)
     )
     print(
         "PIPELINE "
@@ -297,6 +323,7 @@ def _print_pipeline_funnel(report: Dict[str, Any]) -> None:
         f"existing={s['blocked_existing_position']} category={s['skipped_category_cap']} "
         f"fetch_failed={s['fetch_failed']} inactive={s['inactive_or_closed']} "
         f"quality={s.get('weak_market_quality', 0)} opportunity={s.get('low_opportunity_score', 0)} "
+        f"policy={s.get('banned_market_class', 0) + s.get('malformed_market', 0) + s.get('weak_resolution_quality', 0) + s.get('low_institutional_quality', 0)} "
         f"budget={s.get('budget_skipped', 0)} edge={s['edge_rejected']} "
         f"temporal={s.get('temporal_inconsistency', 0)}",
         flush=True,
@@ -588,6 +615,7 @@ def _infer_one(
     records = {row["market_id"]: row for row in report["markets"]}
     summary = report["summary"]
     config = LoopEngineConfig.from_env()
+    universe_config = InstitutionalUniverseConfig.from_env()
     budget = LLMBudget(config, _daily_usage_path())
     infer_diag_rows: List[Dict[str, Any]] = []
     infer_diag_counts: Dict[str, Any] = {
@@ -613,6 +641,10 @@ def _infer_one(
             "budget_skipped": 0,
             "skeptic_reject": 0,
             "skeptic_downgrade": 0,
+            "banned_market_class": 0,
+            "malformed_market": 0,
+            "weak_resolution_quality": 0,
+            "low_institutional_quality": 0,
         },
     }
 
@@ -638,6 +670,7 @@ def _infer_one(
                     "max_disagree": _filters()[2],
                     "paper_size": paper_size,
                     **config.as_dict(),
+                    "market_universe_policy": universe_config.as_dict(),
                 },
                 "summary": infer_diag_counts,
                 "rows": infer_diag_rows,
@@ -652,6 +685,7 @@ def _infer_one(
             mode="paper_research" if paper_mode else "research",
             budget=budget,
             config=config,
+            universe_config=universe_config,
         )
         report["brain_report"] = brain_report
         _write_brain_report(brain_report)
@@ -759,6 +793,61 @@ def _infer_one(
         question = str(m.get("question") or slug)
         category = _topic_label(question)
         _update_brain(record, question=question, category=category)
+
+        policy = evaluate_market_policy(
+            m,
+            config=universe_config,
+            duplicate_position=False,
+        )
+        _update_brain(
+            record,
+            policy_allowed=policy.policy_allowed,
+            policy_reason=policy.policy_reason,
+            policy_classification=policy.classification,
+            institutional_quality_score=policy.institutional_quality_score,
+            banned_class=policy.banned_class,
+        )
+        if not policy.policy_allowed:
+            reason = policy.policy_reason
+            if reason not in {
+                "banned_market_class",
+                "malformed_market",
+                "weak_resolution_quality",
+                "low_institutional_quality",
+            }:
+                reason = "low_institutional_quality"
+            summary[reason] += 1
+            summary["weak_market_quality"] += 1
+            infer_diag_counts["evaluated"] += 1
+            count_rejection(reason)
+            infer_diag_rows.append(
+                {
+                    "slug": slug,
+                    "question": question,
+                    "decision": "REJECT",
+                    "reason": reason,
+                    "policy": policy.as_dict(),
+                }
+            )
+            _update_brain(
+                record,
+                opportunity_score=0.0,
+                opportunity_grade="F",
+                budget_status="not_eligible",
+                scoring_components={
+                    "policy": policy.as_dict(),
+                    "raw": policy.metrics,
+                },
+            )
+            _finalize_pipeline_market(
+                record,
+                final_stage="market_universe_policy",
+                decision="REJECT",
+                reason=reason,
+                details={"policy": policy.as_dict()},
+            )
+            continue
+
         temporal_context = build_temporal_context(
             m,
             question=question,
@@ -1473,7 +1562,7 @@ def main() -> int:
     paper_size = float(os.environ.get("BGL_PAPER_SIZE", "100") or "100")
     mode = args.mode or ("infer" if args.infer else "arbiter")
 
-    conn = _connect_db(args.db)
+    conn = _connect_db(args.db, read_only=not args.paper)
 
     for i in range(int(args.loops)):
         cand: Optional[Dict[str, Any]] = None

@@ -25,6 +25,8 @@ LOG_PATH  = ROOT / "logs" / "infer_loop.log"
 DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
 BRAIN_PATH= ROOT / "signals" / "swarm_brain_report.json"
 WATCH_PATH= ROOT / "markets" / "polymarket_watchlist.json"
+UNIVERSE_REPORT_PATH = ROOT / "reports" / "market_universe_rebuild.json"
+AUDIT_REPORT_PATH = ROOT / "reports" / "current_watchlist_audit.json"
 DATA_DIR  = ROOT / "data"
 
 PASS = "✓"
@@ -353,6 +355,48 @@ def check_loop_engine():
         print(f"  could not load brain report: {e}")
 
 
+def check_market_universe():
+    print()
+    print("MARKET UNIVERSE")
+    try:
+        report = json.loads(UNIVERSE_REPORT_PATH.read_text())
+        audit = json.loads(AUDIT_REPORT_PATH.read_text())
+        selected = report.get("selected_markets", [])
+        selected_classes: dict[str, int] = {}
+        for row in selected:
+            classification = str(row.get("classification") or "UNKNOWN_REQUIRES_REVIEW")
+            selected_classes[classification] = selected_classes.get(classification, 0) + 1
+        old_classes = (
+            audit.get("summary", {}).get("classification_counts", {})
+        )
+        scores = [
+            float(row.get("institutional_quality_score") or 0.0)
+            for row in selected
+        ]
+        average = sum(scores) / len(scores) if scores else 0.0
+        print(
+            f"  policy {report.get('policy_mode', 'unknown')}"
+            f"  watchlist={report.get('new_watchlist_size', len(selected))}"
+            f"  avg_quality={average:.1f}"
+        )
+        print(
+            "  selected"
+            f"  institutional={selected_classes.get('INSTITUTIONAL_CORE', 0)}"
+            f"  research={selected_classes.get('ACCEPTABLE_RESEARCH', 0)}"
+            f"  speculative={selected_classes.get('SPECULATIVE', 0)}"
+            f"  junk={selected_classes.get('BANNED_JUNK', 0)}"
+        )
+        print(
+            "  old audit"
+            f"  banned={old_classes.get('BANNED_JUNK', 0)}"
+            f"  unknown={old_classes.get('UNKNOWN_REQUIRES_REVIEW', 0)}"
+        )
+    except FileNotFoundError:
+        print("  no market universe report yet")
+    except Exception as e:
+        print(f"  could not load universe report: {e}")
+
+
 def check_api_cost():
     print()
     print("API COST ESTIMATE")
@@ -388,6 +432,7 @@ def main():
     check_loop()
     check_positions()
     check_last_eval()
+    check_market_universe()
     check_loop_engine()
     check_api_cost()
     footer()

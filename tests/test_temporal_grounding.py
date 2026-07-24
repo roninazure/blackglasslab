@@ -147,7 +147,7 @@ class TemporalGroundingTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(reason, "ok")
 
-    def test_unknown_resolution_dates_degrade_safely(self) -> None:
+    def test_unknown_resolution_dates_fail_institutional_policy(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             watchlist_path = root / "watchlist.json"
@@ -198,9 +198,14 @@ class TemporalGroundingTests(unittest.TestCase):
             ):
                 candidate, report = live_runner._infer_one(conn=conn, venue="polymarket", paper_size=100.0)
 
-            self.assertIsNotNone(candidate)
-            self.assertEqual(report["markets"][0]["reason"], "candidate_generated")
+            self.assertIsNone(candidate)
+            self.assertEqual(
+                report["markets"][0]["reason"], "weak_resolution_quality"
+            )
             self.assertEqual(report["summary"]["temporal_inconsistency"], 0)
+            self.assertEqual(
+                report["summary"]["weak_resolution_quality"], 1
+            )
             self.assertEqual(conn.total_changes, 0)
             conn.close()
 
@@ -244,8 +249,9 @@ class TemporalGroundingTests(unittest.TestCase):
             self.assertIsNone(candidate)
             self.assertEqual(llm.call_count, 0)
             reasons = {row["reason"] for row in report["markets"]}
-            self.assertEqual(reasons, {"temporal_inconsistency"})
-            self.assertEqual(report["summary"]["temporal_inconsistency"], 4)
+            self.assertEqual(reasons, {"banned_market_class"})
+            self.assertEqual(report["summary"]["banned_market_class"], 4)
+            self.assertEqual(report["summary"]["temporal_inconsistency"], 0)
             self.assertEqual(conn.total_changes, 0)
             conn.close()
 
