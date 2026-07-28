@@ -5,12 +5,24 @@ import argparse
 import json
 import os
 import sqlite3
+import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from loop_engine.shadow import (
+    brier_score as shadow_brier_score,
+    hypothetical_profit,
+    resolve_shadow_forecast,
+)
 
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
@@ -76,6 +88,44 @@ def fetch_market_by_slug(slug: str, timeout_s: int = 20) -> Dict[str, Any]:
     m["outcomes"] = _json_load_maybe(m.get("outcomes"))
     m["outcomePrices"] = _json_load_maybe(m.get("outcomePrices"))
     return m
+
+
+def fetch_market_by_id(market_id: Any, timeout_s: int = 20) -> Dict[str, Any]:
+    market_id_str = str(market_id or "").strip()
+    if not market_id_str.isdigit():
+        raise ValueError("Snapshot market ID is missing or non-numeric")
+
+    url = f"{GAMMA_BASE}/markets/{market_id_str}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
+        "Accept": "application/json,text/plain,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://polymarket.com/",
+        "Origin": "https://polymarket.com",
+    }
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        obj = json.loads(resp.read().decode("utf-8", errors="replace"))
+    if not isinstance(obj, dict):
+        raise ValueError("No market returned for snapshot ID")
+    returned_id = str(obj.get("id") or "").strip()
+    if returned_id and returned_id != market_id_str:
+        raise ValueError(
+            f"Market ID mismatch: requested={market_id_str} returned={returned_id}"
+        )
+    obj["outcomes"] = _json_load_maybe(obj.get("outcomes"))
+    obj["outcomePrices"] = _json_load_maybe(obj.get("outcomePrices"))
+    return obj
+
+
+def _notes_dict(notes: Any) -> Dict[str, Any]:
+    if not notes:
+        return {}
+    try:
+        parsed = json.loads(notes) if isinstance(notes, str) else notes
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 def infer_market_yes_prob(market: Dict[str, Any]) -> Optional[float]:
     """
@@ -184,6 +234,85 @@ def compute_profit_usd(
     return float(size_usd)
 
 
+def _shadow_table_exists(conn: sqlite3.Connection) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='shadow_forecasts'"
+    ).fetchone() is not None
+
+
+def resolve_shadow_forecasts(
+    conn: sqlite3.Connection,
+    *,
+    limit: int,
+    timeout_s: int,
+    sleep_s: float,
+    dry_run: bool,
+) -> tuple[int, int]:
+    if not _shadow_table_exists(conn):
+        return (0, 0)
+    rows = conn.execute(
+        """
+        SELECT id, market_id, market_probability, model_probability, side, metadata
+        FROM shadow_forecasts
+        WHERE status='OPEN' AND venue='polymarket'
+        ORDER BY id ASC LIMIT ?
+        """,
+        (max(0, int(limit)),),
+    ).fetchall()
+    checked = 0
+    changed = 0
+    mode_label = "DRY RUN" if dry_run else "WRITE"
+    for forecast_id, slug, market_probability, model_probability, side, metadata in rows:
+        checked += 1
+        try:
+            snap = fetch_market_by_slug(str(slug), timeout_s=timeout_s)
+            lookup_source = "slug"
+        except Exception as slug_error:
+            try:
+                parsed = json.loads(metadata or "{}")
+            except (TypeError, json.JSONDecodeError):
+                parsed = {}
+            snapshot_id = parsed.get("market_snapshot_id")
+            try:
+                snap = fetch_market_by_id(snapshot_id, timeout_s=timeout_s)
+                lookup_source = "snapshot_id"
+            except Exception as id_error:
+                print(
+                    f"SHADOW RESOLVER {mode_label}: id={forecast_id} slug={slug} "
+                    f"lookup_failed={slug_error}; snapshot_lookup_failed={id_error}"
+                )
+                time.sleep(sleep_s)
+                continue
+        is_resolved, outcome, why = resolved_outcome_from_snapshot(snap)
+        if not is_resolved or not outcome:
+            print(
+                f"SHADOW RESOLVER {mode_label}: id={forecast_id} slug={slug} "
+                f"lookup_source={lookup_source} OPEN (reason={why})"
+            )
+            time.sleep(sleep_s)
+            continue
+        score = shadow_brier_score(float(model_probability), outcome)
+        pnl = hypothetical_profit(
+            side=str(side),
+            stake_usd=100.0,
+            outcome=outcome,
+            market_probability=float(market_probability),
+        )
+        print(
+            f"SHADOW RESOLVER {mode_label}: id={forecast_id} slug={slug} "
+            f"lookup_source={lookup_source} RESOLVED outcome={outcome} "
+            f"brier={score:.6f} pnl_100={pnl:+.2f}"
+        )
+        if not dry_run and resolve_shadow_forecast(
+            conn, int(forecast_id), outcome
+        ):
+            changed += 1
+        elif dry_run:
+            changed += 1
+        time.sleep(sleep_s)
+    return (checked, changed)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Phase 1.4: resolve/close OPEN paper_trades and compute Brier.")
     ap.add_argument("--db", default=DB_PATH, help="Path to SQLite DB (default: memory/runs.sqlite)")
@@ -191,7 +320,12 @@ def main() -> int:
     ap.add_argument("--sleep", type=float, default=0.25, help="Sleep between API calls (seconds)")
     ap.add_argument("--dry-run", action="store_true", help="Do not write updates; print what would change")
     ap.add_argument("--timeout", type=int, default=20, help="HTTP timeout seconds")
+    ap.add_argument(
+        "--shadow-limit", type=int, default=100,
+        help="Max OPEN shadow forecasts to process per run",
+    )
     args = ap.parse_args()
+    mode_label = "DRY RUN" if args.dry_run else "WRITE"
 
     conn = _connect_db(args.db)
     cur = conn.cursor()
@@ -212,32 +346,44 @@ def main() -> int:
     rows = cur.fetchall()
 
     if not rows:
-        print("RESOLVER: no OPEN polymarket paper_trades to process.")
-        conn.close()
-        return 0
+        print(f"RESOLVER {mode_label}: no OPEN polymarket paper_trades to process.")
 
     changed = 0
     checked = 0
 
     for (trade_id, slug, consensus_p_yes, p_yes, side, size_usd, notes) in rows:
         checked += 1
+        notes_dict = _notes_dict(notes)
+        snapshot = notes_dict.get("snapshot")
+        snapshot_id = snapshot.get("id") if isinstance(snapshot, dict) else None
+        lookup_source = "slug"
 
         try:
             snap = fetch_market_by_slug(str(slug), timeout_s=int(args.timeout))
-        except urllib.error.HTTPError as e:
-            print(f"RESOLVER: id={trade_id} slug={slug} http_error={e.code} (skipping)")
-            time.sleep(args.sleep)
-            continue
-        except Exception as e:
-            print(f"RESOLVER: id={trade_id} slug={slug} error={e} (skipping)")
-            time.sleep(args.sleep)
-            continue
+        except Exception as slug_error:
+            print(
+                f"RESOLVER {mode_label}: id={trade_id} slug={slug} lookup_source=slug "
+                f"lookup_failed={slug_error}"
+            )
+            try:
+                snap = fetch_market_by_id(snapshot_id, timeout_s=int(args.timeout))
+                lookup_source = "snapshot_id"
+            except Exception as id_error:
+                print(
+                    f"RESOLVER {mode_label}: id={trade_id} slug={slug} lookup_source=snapshot_id "
+                    f"snapshot_id={snapshot_id} lookup_failed={id_error} (keeping OPEN)"
+                )
+                time.sleep(args.sleep)
+                continue
 
         is_resolved, outcome, why = resolved_outcome_from_snapshot(snap)
 
         if not is_resolved or not outcome:
             # Keep OPEN, but you may still want to observe drift in market price (optional later).
-            print(f"RESOLVER: id={trade_id} slug={slug} OPEN (reason={why})")
+            print(
+                f"RESOLVER {mode_label}: id={trade_id} slug={slug} lookup_source={lookup_source} "
+                f"OPEN (reason={why})"
+            )
             time.sleep(args.sleep)
             continue
 
@@ -245,21 +391,13 @@ def main() -> int:
         p_model = p_yes if p_yes is not None else consensus_p_yes
         if p_model is None:
             # Should not happen in your schema, but guard anyway.
-            print(f"RESOLVER: id={trade_id} slug={slug} cannot_score (no p_model) (keeping OPEN)")
+            print(f"RESOLVER {mode_label}: id={trade_id} slug={slug} cannot_score (no p_model) (keeping OPEN)")
             time.sleep(args.sleep)
             continue
 
         b = brier(float(p_model), outcome)
 
         # Compute profit_usd using entry market price from notes
-        notes_dict: Dict[str, Any] = {}
-        if notes:
-            try:
-                parsed = json.loads(notes) if isinstance(notes, str) else {}
-                if isinstance(parsed, dict):
-                    notes_dict = parsed
-            except Exception:
-                pass
         p_yes_entry = notes_dict.get("p_yes_market")
         profit_usd = compute_profit_usd(
             side=str(side or "YES"),
@@ -275,6 +413,7 @@ def main() -> int:
             "profit_usd": profit_usd,
             "resolver": "phase_2.4",
             "resolver_reason": why,
+            "lookup_source": lookup_source,
             "market_closed": bool(snap.get("closed")),
             "market_active": snap.get("active"),
             "umaResolutionStatus": snap.get("umaResolutionStatus"),
@@ -288,7 +427,10 @@ def main() -> int:
             # Preserve existing notes verbatim; append a JSON line.
             new_notes = str(notes).rstrip() + "\n" + json.dumps({"resolution": meta}, separators=(",", ":"))
 
-        print(f"RESOLVER: id={trade_id} slug={slug} CLOSED outcome={outcome} brier={b:.6f} profit_usd={profit_usd:+.2f}")
+        print(
+            f"RESOLVER {mode_label}: id={trade_id} slug={slug} lookup_source={lookup_source} "
+            f"CLOSED outcome={outcome} brier={b:.6f} profit_usd={profit_usd:+.2f}"
+        )
 
         if not args.dry_run:
             conn.execute(
@@ -307,8 +449,19 @@ def main() -> int:
         changed += 1
         time.sleep(args.sleep)
 
+    shadow_checked, shadow_changed = resolve_shadow_forecasts(
+        conn,
+        limit=args.shadow_limit,
+        timeout_s=int(args.timeout),
+        sleep_s=float(args.sleep),
+        dry_run=bool(args.dry_run),
+    )
     conn.close()
-    print(f"RESOLVER SUMMARY: checked={checked} closed={changed} dry_run={bool(args.dry_run)}")
+    print(
+        f"RESOLVER SUMMARY: checked={checked} closed={changed} "
+        f"shadow_checked={shadow_checked} shadow_resolved={shadow_changed} "
+        f"dry_run={bool(args.dry_run)}"
+    )
     return 0
 
 

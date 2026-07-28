@@ -1,0 +1,60 @@
+{
+  "after_paper_trades_sha256": "55d5b4d19a3d1f733b71cfe6670b2d5f25108b7ce852277f1ece90f4271334a6",
+  "before_paper_trades_sha256": "cc165675ad0fc13d9b0f6db7989486a4c7685e618f86e3c4eb605fb7643828a6",
+  "changed_rows": [
+    {
+      "columns": {
+        "brier": {
+          "after": 0.3364000000000001,
+          "before": null
+        },
+        "notes": {
+          "after": "{\"adapter_venue\": \"polymarket\", \"baseline_components\": {}, \"edge_vs_market\": -0.08000000000000002, \"llm\": {\"confidence\": 0.72, \"enabled\": true, \"model\": \"claude-haiku-4-5-20251001\", \"rationale\": \"Tariff refund litigation faces structural headwinds: courts historically defer to executive tariff authority under broad statutory grants; Trump administration's legal positioning on tariff power is strong; successful precedent (past tariff cases) favors government. The crowd's 50-50 reflects genuine uncertainty, but base rates and legal doctrine slightly favor the government. Recent tariff litigation outcomes support skepticism of forced refunds.\"}, \"p_yes_market\": 0.5, \"pricing_source\": \"mid\", \"snapshot\": {\"bestAsk\": 0.51, \"bestBid\": 0.49, \"id\": \"1126854\", \"lastTradePrice\": 0.52, \"liquidity\": \"26554.0701\", \"question\": \"Will the Court Force Trump to Refund Tariffs?\", \"slug\": \"will-the-court-force-trump-to-refund-tariffs-2026-06-30\", \"updatedAt\": \"2026-04-10T03:43:16.706819Z\", \"volume\": \"342650.3131300012\"}, \"spread\": 0.020000000000000018}\n{\"resolution\":{\"resolved_at_utc\":\"2026-07-11T13:16:09.756953+00:00\",\"resolved_outcome\":\"YES\",\"profit_usd\":-100.0,\"resolver\":\"phase_2.4\",\"resolver_reason\":\"binary_prices_yes\",\"lookup_source\":\"snapshot_id\",\"market_closed\":true,\"market_active\":true,\"umaResolutionStatus\":\"resolved\"}}",
+          "before": "{\"adapter_venue\": \"polymarket\", \"baseline_components\": {}, \"edge_vs_market\": -0.08000000000000002, \"llm\": {\"confidence\": 0.72, \"enabled\": true, \"model\": \"claude-haiku-4-5-20251001\", \"rationale\": \"Tariff refund litigation faces structural headwinds: courts historically defer to executive tariff authority under broad statutory grants; Trump administration's legal positioning on tariff power is strong; successful precedent (past tariff cases) favors government. The crowd's 50-50 reflects genuine uncertainty, but base rates and legal doctrine slightly favor the government. Recent tariff litigation outcomes support skepticism of forced refunds.\"}, \"p_yes_market\": 0.5, \"pricing_source\": \"mid\", \"snapshot\": {\"bestAsk\": 0.51, \"bestBid\": 0.49, \"id\": \"1126854\", \"lastTradePrice\": 0.52, \"liquidity\": \"26554.0701\", \"question\": \"Will the Court Force Trump to Refund Tariffs?\", \"slug\": \"will-the-court-force-trump-to-refund-tariffs-2026-06-30\", \"updatedAt\": \"2026-04-10T03:43:16.706819Z\", \"volume\": \"342650.3131300012\"}, \"spread\": 0.020000000000000018}"
+        },
+        "resolved_outcome": {
+          "after": "YES",
+          "before": null
+        },
+        "status": {
+          "after": "CLOSED",
+          "before": "OPEN"
+        }
+      },
+      "id": 6
+    },
+    {
+      "columns": {
+        "brier": {
+          "after": 0.0004,
+          "before": null
+        },
+        "notes": {
+          "after": "{\"adapter_venue\": \"polymarket\", \"approval\": {\"by\": \"approve_trades.py\", \"status\": \"approved\", \"ts_utc\": \"2026-05-02 19:44 UTC\"}, \"baseline_components\": {}, \"category\": \"other\", \"edge_vs_market\": -0.3005, \"llm\": {\"confidence\": 0.92, \"enabled\": true, \"model\": \"claude-haiku-4-5-20251001\", \"rationale\": \"Tottenham is a top-6 club with strong financial resources, established infrastructure, and managerial stability. Relegation requires catastrophic failure (like administrative points deduction or multiple managers). The 32% crowd price vastly overestimates this tail risk; historical precedent shows no top-6 club has been relegated in the modern Premier League era absent severe sanctions. The crowd is likely mispricing entertainment value or using outdated odds from earlier uncertainty.\"}, \"p_yes_market\": 0.3205, \"pricing_source\": \"mid\", \"snapshot\": {\"bestAsk\": 0.321, \"bestBid\": 0.32, \"id\": \"572847\", \"lastTradePrice\": 0.32, \"liquidity\": \"22503.76734\", \"question\": \"Will Tottenham be relegated from the English Premier League after the 2025\\u201326 season?\", \"slug\": \"will-tottenham-be-relegated-from-the-english-premier-league-after-the-202526-season\", \"updatedAt\": \"2026-04-17T23:07:14.834424Z\", \"volume\": \"504400.36135599995\"}, \"spread\": 0.0010000000000000009}\n{\"resolution\":{\"resolved_at_utc\":\"2026-07-11T13:16:09.868905+00:00\",\"resolved_outcome\":\"NO\",\"profit_usd\":47.167,\"resolver\":\"phase_2.4\",\"resolver_reason\":\"binary_prices_no\",\"lookup_source\":\"snapshot_id\",\"market_closed\":true,\"market_active\":true,\"umaResolutionStatus\":\"resolved\"}}",
+          "before": "{\"adapter_venue\": \"polymarket\", \"approval\": {\"by\": \"approve_trades.py\", \"status\": \"approved\", \"ts_utc\": \"2026-05-02 19:44 UTC\"}, \"baseline_components\": {}, \"category\": \"other\", \"edge_vs_market\": -0.3005, \"llm\": {\"confidence\": 0.92, \"enabled\": true, \"model\": \"claude-haiku-4-5-20251001\", \"rationale\": \"Tottenham is a top-6 club with strong financial resources, established infrastructure, and managerial stability. Relegation requires catastrophic failure (like administrative points deduction or multiple managers). The 32% crowd price vastly overestimates this tail risk; historical precedent shows no top-6 club has been relegated in the modern Premier League era absent severe sanctions. The crowd is likely mispricing entertainment value or using outdated odds from earlier uncertainty.\"}, \"p_yes_market\": 0.3205, \"pricing_source\": \"mid\", \"snapshot\": {\"bestAsk\": 0.321, \"bestBid\": 0.32, \"id\": \"572847\", \"lastTradePrice\": 0.32, \"liquidity\": \"22503.76734\", \"question\": \"Will Tottenham be relegated from the English Premier League after the 2025\\u201326 season?\", \"slug\": \"will-tottenham-be-relegated-from-the-english-premier-league-after-the-202526-season\", \"updatedAt\": \"2026-04-17T23:07:14.834424Z\", \"volume\": \"504400.36135599995\"}, \"spread\": 0.0010000000000000009}"
+        },
+        "resolved_outcome": {
+          "after": "NO",
+          "before": null
+        },
+        "status": {
+          "after": "CLOSED",
+          "before": "OPEN"
+        }
+      },
+      "id": 13
+    }
+  ],
+  "remaining_open_ids": [
+    2,
+    3,
+    4,
+    14
+  ],
+  "schema_unchanged": true,
+  "status_counts_after": {
+    "CLOSED": 2,
+    "OPEN": 4,
+    "VOID": 15
+  }
+}

@@ -1,0 +1,331 @@
+{
+  "banned_class_counts": {
+    "entertainment_celebrity": 6,
+    "low_signal_other": 2703,
+    "novelty_meme": 6,
+    "product_release": 10,
+    "product_release_comparison": 10,
+    "sports_prop": 1312,
+    "weak_resolution_quality": 106
+  },
+  "institutional_category_counts": {
+    "GDP/economic growth": 10,
+    "corporate/regulatory events": 131,
+    "crypto majors": 159,
+    "geopolitics": 62,
+    "legal/regulatory": 1,
+    "macro/fed": 33,
+    "major elections": 534,
+    "novelty/other": 4043,
+    "oil/gas": 27
+  },
+  "markets_scanned": 5000,
+  "policy_mode": "institutional_v2",
+  "reason_code_counts": {
+    "banned_market_class": 4047,
+    "duplicate_position": 1,
+    "entertainment_celebrity": 6,
+    "horizon_outside_range": 258,
+    "inactive_or_closed": 459,
+    "institutional_score_below_minimum": 561,
+    "low_institutional_quality": 751,
+    "low_liquidity": 467,
+    "low_volume": 489,
+    "missing_executable_spread": 76,
+    "missing_resolution_deadline": 4,
+    "novelty_meme": 6,
+    "probability_out_of_band": 274,
+    "product_release": 10,
+    "product_release_comparison": 10,
+    "sports_prop": 1312,
+    "unclean_binary_resolution": 30,
+    "unknown_category": 2703,
+    "weak_resolution_quality": 106,
+    "wide_spread": 443
+  },
+  "rejection_breakdown": {
+    "api_metadata_missing": {
+      "count": 76,
+      "market_ids": [
+        "bitcoin-above-66k-on-july-24-2026",
+        "bitcoin-above-68k-on-july-24-2026",
+        "bitcoin-above-70k-on-july-24-2026",
+        "bitcoin-above-72k-on-july-24-2026",
+        "bitcoin-above-74k-on-july-24-2026",
+        "will-wti-dip-to-50-in-july-2026-844-913",
+        "will-wti-dip-to-40-in-july-2026-719-985",
+        "will-wti-dip-to-30-in-july-2026-321-621",
+        "will-wti-dip-to-20-in-july-2026-174-471",
+        "will-wti-dip-to-10-in-july-2026-851-818",
+        "will-wti-dip-to-45-in-july-2026-954",
+        "will-bitcoin-reach-100k-in-july-2026",
+        "will-bitcoin-dip-to-40k-in-july-2026-457",
+        "will-bitcoin-dip-to-37pt5k-in-july-2026-944",
+        "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election",
+        "will-carlos-roberto-massa-jnior-win-the-2026-brazilian-presidential-election",
+        "will-eduardo-leite-win-the-2026-brazilian-presidential-election",
+        "will-aldo-rebelo-win-the-2026-brazilian-presidential-election",
+        "will-helder-barbalho-win-the-2026-brazilian-presidential-election",
+        "will-microsoft-be-the-largest-company-in-the-world-by-market-cap-on-july-31-20260624192329842"
+      ]
+    },
+    "category_ban": {
+      "count": 1344,
+      "market_ids": [
+        "cs2-hero-mglz-2026-07-24-game1",
+        "cs2-hero-mglz-2026-07-24-game2",
+        "cs2-hero-mglz-2026-07-24",
+        "cs2-hero-mglz-2026-07-24-total-games-2pt5",
+        "cs2-hero-mglz-2026-07-24-map-handicap-away-1pt5",
+        "cs2-hero-mglz-2026-07-24-game1-round-total-21pt5",
+        "cs2-hero-mglz-2026-07-24-game1-round-handicap-hero-3pt5",
+        "cs2-hero-mglz-2026-07-24-game2-round-handicap-hero-3pt5",
+        "cs2-hero-mglz-2026-07-24-game2-round-total-21pt5",
+        "cs2-hero-mglz-2026-07-24-game3-round-total-21pt5",
+        "cs2-hero-mglz-2026-07-24-game3-round-handicap-hero-3pt5",
+        "cs2-hero-mglz-2026-07-24-game1-round-total-18pt5",
+        "cs2-hero-mglz-2026-07-24-game1-round-total-24pt5",
+        "cs2-hero-mglz-2026-07-24-game1-round-handicap-mglz-3pt5",
+        "cs2-hero-mglz-2026-07-24-game1-round-handicap-hero-6pt5",
+        "cs2-hero-mglz-2026-07-24-game1-round-handicap-hero-9pt5",
+        "cs2-hero-mglz-2026-07-24-game2-round-handicap-mglz-3pt5",
+        "cs2-hero-mglz-2026-07-24-game2-round-handicap-hero-6pt5",
+        "cs2-hero-mglz-2026-07-24-game2-round-total-24pt5",
+        "cs2-hero-mglz-2026-07-24-game2-round-handicap-mglz-6pt5"
+      ]
+    },
+    "duplicate_exposure": {
+      "count": 1,
+      "market_ids": [
+        "will-2-fed-rate-cuts-happen-in-2026"
+      ]
+    },
+    "horizon_outside_range": {
+      "count": 258,
+      "market_ids": [
+        "will-abiy-ahmed-be-the-next-prime-minister-of-ethiopia",
+        "will-belete-molla-be-the-next-prime-minister-of-ethiopia",
+        "will-berhanu-nega-be-the-next-prime-minister-of-ethiopia",
+        "will-alesa-mengesha-be-the-next-prime-minister-of-ethiopia",
+        "will-demeke-mekonnen-be-the-next-prime-minister-of-ethiopia",
+        "will-shimelis-abdisa-be-the-next-prime-minister-of-ethiopia",
+        "will-adanech-abiebie-be-the-next-prime-minister-of-ethiopia",
+        "will-gedion-timothewos-be-the-next-prime-minister-of-ethiopia",
+        "will-person-c-be-the-next-prime-minister-of-ethiopia",
+        "will-person-d-be-the-next-prime-minister-of-ethiopia",
+        "will-person-e-be-the-next-prime-minister-of-ethiopia",
+        "will-person-f-be-the-next-prime-minister-of-ethiopia",
+        "will-person-g-be-the-next-prime-minister-of-ethiopia",
+        "will-person-h-be-the-next-prime-minister-of-ethiopia",
+        "will-person-i-be-the-next-prime-minister-of-ethiopia",
+        "will-person-j-be-the-next-prime-minister-of-ethiopia",
+        "will-person-k-be-the-next-prime-minister-of-ethiopia",
+        "will-person-l-be-the-next-prime-minister-of-ethiopia",
+        "will-person-m-be-the-next-prime-minister-of-ethiopia",
+        "will-person-n-be-the-next-prime-minister-of-ethiopia"
+      ]
+    },
+    "liquidity_below_threshold": {
+      "count": 467,
+      "market_ids": [
+        "will-person-c-be-the-next-prime-minister-of-ethiopia",
+        "will-person-d-be-the-next-prime-minister-of-ethiopia",
+        "will-person-e-be-the-next-prime-minister-of-ethiopia",
+        "will-person-f-be-the-next-prime-minister-of-ethiopia",
+        "will-person-g-be-the-next-prime-minister-of-ethiopia",
+        "will-person-h-be-the-next-prime-minister-of-ethiopia",
+        "will-person-i-be-the-next-prime-minister-of-ethiopia",
+        "will-person-j-be-the-next-prime-minister-of-ethiopia",
+        "will-person-k-be-the-next-prime-minister-of-ethiopia",
+        "will-person-l-be-the-next-prime-minister-of-ethiopia",
+        "will-person-m-be-the-next-prime-minister-of-ethiopia",
+        "will-person-n-be-the-next-prime-minister-of-ethiopia",
+        "will-person-o-be-the-next-prime-minister-of-ethiopia",
+        "will-person-p-be-the-next-prime-minister-of-ethiopia",
+        "will-person-q-be-the-next-prime-minister-of-ethiopia",
+        "will-person-r-be-the-next-prime-minister-of-ethiopia",
+        "will-person-s-be-the-next-prime-minister-of-ethiopia",
+        "will-person-t-be-the-next-prime-minister-of-ethiopia",
+        "will-person-u-be-the-next-prime-minister-of-ethiopia",
+        "will-person-v-be-the-next-prime-minister-of-ethiopia"
+      ]
+    },
+    "malformed_question": {
+      "count": 0,
+      "market_ids": []
+    },
+    "missing_or_unclear_deadline": {
+      "count": 4,
+      "market_ids": [
+        "will-russia-test-a-nuclear-weapon-by-november-30-2025",
+        "will-russia-test-a-nuclear-weapon-by-december-31-2025",
+        "will-the-us-test-a-nuclear-weapon-by-november-30-2025",
+        "will-the-us-test-a-nuclear-weapon-by-december-31-2025"
+      ]
+    },
+    "probability_out_of_band": {
+      "count": 274,
+      "market_ids": [
+        "will-the-fed-decrease-interest-rates-by-50-bps-after-the-july-2026-meeting",
+        "will-the-fed-decrease-interest-rates-by-25-bps-after-the-july-2026-meeting",
+        "will-the-fed-increase-interest-rates-by-50-bps-after-the-july-2026-meeting",
+        "will-belete-molla-be-the-next-prime-minister-of-ethiopia",
+        "will-berhanu-nega-be-the-next-prime-minister-of-ethiopia",
+        "will-alesa-mengesha-be-the-next-prime-minister-of-ethiopia",
+        "will-demeke-mekonnen-be-the-next-prime-minister-of-ethiopia",
+        "will-shimelis-abdisa-be-the-next-prime-minister-of-ethiopia",
+        "will-adanech-abiebie-be-the-next-prime-minister-of-ethiopia",
+        "will-gedion-timothewos-be-the-next-prime-minister-of-ethiopia",
+        "bitcoin-above-54k-on-july-24-2026",
+        "bitcoin-above-56k-on-july-24-2026",
+        "bitcoin-above-58k-on-july-24-2026",
+        "bitcoin-above-60k-on-july-24-2026",
+        "bitcoin-above-62k-on-july-24-2026",
+        "israel-x-iran-ceasefire-continues-through-july-18-20260716224448964",
+        "israel-x-iran-ceasefire-continues-through-july-20-20260716224448965",
+        "israel-x-iran-ceasefire-continues-through-july-22-20260716224448966",
+        "israel-x-iran-ceasefire-continues-through-july-23",
+        "will-wti-reach-130-in-july-2026"
+      ]
+    },
+    "quality_score_below_threshold": {
+      "count": 561,
+      "market_ids": [
+        "will-abiy-ahmed-be-the-next-prime-minister-of-ethiopia",
+        "will-alesa-mengesha-be-the-next-prime-minister-of-ethiopia",
+        "will-person-c-be-the-next-prime-minister-of-ethiopia",
+        "will-person-d-be-the-next-prime-minister-of-ethiopia",
+        "will-person-e-be-the-next-prime-minister-of-ethiopia",
+        "will-person-f-be-the-next-prime-minister-of-ethiopia",
+        "will-person-g-be-the-next-prime-minister-of-ethiopia",
+        "will-person-h-be-the-next-prime-minister-of-ethiopia",
+        "will-person-i-be-the-next-prime-minister-of-ethiopia",
+        "will-person-j-be-the-next-prime-minister-of-ethiopia",
+        "will-person-k-be-the-next-prime-minister-of-ethiopia",
+        "will-person-l-be-the-next-prime-minister-of-ethiopia",
+        "will-person-m-be-the-next-prime-minister-of-ethiopia",
+        "will-person-n-be-the-next-prime-minister-of-ethiopia",
+        "will-person-o-be-the-next-prime-minister-of-ethiopia",
+        "will-person-p-be-the-next-prime-minister-of-ethiopia",
+        "will-person-q-be-the-next-prime-minister-of-ethiopia",
+        "will-person-r-be-the-next-prime-minister-of-ethiopia",
+        "will-person-s-be-the-next-prime-minister-of-ethiopia",
+        "will-person-t-be-the-next-prime-minister-of-ethiopia"
+      ]
+    },
+    "spread_too_wide": {
+      "count": 443,
+      "market_ids": [
+        "will-person-c-be-the-next-prime-minister-of-ethiopia",
+        "will-person-d-be-the-next-prime-minister-of-ethiopia",
+        "will-person-e-be-the-next-prime-minister-of-ethiopia",
+        "will-person-f-be-the-next-prime-minister-of-ethiopia",
+        "will-person-g-be-the-next-prime-minister-of-ethiopia",
+        "will-person-h-be-the-next-prime-minister-of-ethiopia",
+        "will-person-i-be-the-next-prime-minister-of-ethiopia",
+        "will-person-j-be-the-next-prime-minister-of-ethiopia",
+        "will-person-k-be-the-next-prime-minister-of-ethiopia",
+        "will-person-l-be-the-next-prime-minister-of-ethiopia",
+        "will-person-m-be-the-next-prime-minister-of-ethiopia",
+        "will-person-n-be-the-next-prime-minister-of-ethiopia",
+        "will-person-o-be-the-next-prime-minister-of-ethiopia",
+        "will-person-p-be-the-next-prime-minister-of-ethiopia",
+        "will-person-q-be-the-next-prime-minister-of-ethiopia",
+        "will-person-r-be-the-next-prime-minister-of-ethiopia",
+        "will-person-s-be-the-next-prime-minister-of-ethiopia",
+        "will-person-t-be-the-next-prime-minister-of-ethiopia",
+        "will-person-u-be-the-next-prime-minister-of-ethiopia",
+        "will-person-v-be-the-next-prime-minister-of-ethiopia"
+      ]
+    },
+    "unknown_category": {
+      "count": 2703,
+      "market_ids": [
+        "lol-we-jdg-2026-07-24-game1",
+        "lol-we-jdg-2026-07-24-game2",
+        "lol-we-jdg-2026-07-24",
+        "lol-we-jdg-2026-07-24-total-games-2pt5",
+        "lol-we-jdg-2026-07-24-game-handicap-home-1pt5",
+        "lol-we-jdg-2026-07-24-game1-both-teams-slay-baron",
+        "lol-we-jdg-2026-07-24-game1-both-teams-slay-dragon",
+        "lol-we-jdg-2026-07-24-game1-both-teams-destroy-inhibitors",
+        "lol-we-jdg-2026-07-24-game1-any-player-quadra-kill",
+        "lol-we-jdg-2026-07-24-game1-any-player-penta-kill",
+        "lol-we-jdg-2026-07-24-game1-odd-even-total-kills",
+        "lol-we-jdg-2026-07-24-game2-both-teams-slay-baron",
+        "lol-we-jdg-2026-07-24-game2-both-teams-slay-dragon",
+        "lol-we-jdg-2026-07-24-game2-both-teams-destroy-inhibitors",
+        "lol-we-jdg-2026-07-24-game2-any-player-quadra-kill",
+        "lol-we-jdg-2026-07-24-game2-any-player-penta-kill",
+        "lol-we-jdg-2026-07-24-game2-odd-even-total-kills",
+        "lol-we-jdg-2026-07-24-game3-both-teams-slay-baron",
+        "lol-we-jdg-2026-07-24-game3-both-teams-slay-dragon",
+        "lol-we-jdg-2026-07-24-game3-both-teams-destroy-inhibitors"
+      ]
+    },
+    "volume_below_threshold": {
+      "count": 489,
+      "market_ids": [
+        "will-person-c-be-the-next-prime-minister-of-ethiopia",
+        "will-person-d-be-the-next-prime-minister-of-ethiopia",
+        "will-person-e-be-the-next-prime-minister-of-ethiopia",
+        "will-person-f-be-the-next-prime-minister-of-ethiopia",
+        "will-person-g-be-the-next-prime-minister-of-ethiopia",
+        "will-person-h-be-the-next-prime-minister-of-ethiopia",
+        "will-person-i-be-the-next-prime-minister-of-ethiopia",
+        "will-person-j-be-the-next-prime-minister-of-ethiopia",
+        "will-person-k-be-the-next-prime-minister-of-ethiopia",
+        "will-person-l-be-the-next-prime-minister-of-ethiopia",
+        "will-person-m-be-the-next-prime-minister-of-ethiopia",
+        "will-person-n-be-the-next-prime-minister-of-ethiopia",
+        "will-person-o-be-the-next-prime-minister-of-ethiopia",
+        "will-person-p-be-the-next-prime-minister-of-ethiopia",
+        "will-person-q-be-the-next-prime-minister-of-ethiopia",
+        "will-person-r-be-the-next-prime-minister-of-ethiopia",
+        "will-person-s-be-the-next-prime-minister-of-ethiopia",
+        "will-person-t-be-the-next-prime-minister-of-ethiopia",
+        "will-person-u-be-the-next-prime-minister-of-ethiopia",
+        "will-person-v-be-the-next-prime-minister-of-ethiopia"
+      ]
+    },
+    "weak_resolution_quality": {
+      "count": 106,
+      "market_ids": [
+        "bitcoin-above-66k-on-july-24-2026",
+        "bitcoin-above-68k-on-july-24-2026",
+        "bitcoin-above-70k-on-july-24-2026",
+        "bitcoin-above-72k-on-july-24-2026",
+        "bitcoin-above-74k-on-july-24-2026",
+        "will-wti-dip-to-50-in-july-2026-844-913",
+        "will-wti-dip-to-40-in-july-2026-719-985",
+        "will-wti-dip-to-30-in-july-2026-321-621",
+        "will-wti-dip-to-20-in-july-2026-174-471",
+        "will-wti-dip-to-10-in-july-2026-851-818",
+        "will-wti-dip-to-45-in-july-2026-954",
+        "will-bitcoin-reach-100k-in-july-2026",
+        "will-bitcoin-dip-to-40k-in-july-2026-457",
+        "will-bitcoin-dip-to-37pt5k-in-july-2026-944",
+        "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election",
+        "will-carlos-roberto-massa-jnior-win-the-2026-brazilian-presidential-election",
+        "will-eduardo-leite-win-the-2026-brazilian-presidential-election",
+        "will-aldo-rebelo-win-the-2026-brazilian-presidential-election",
+        "will-helder-barbalho-win-the-2026-brazilian-presidential-election",
+        "will-microsoft-be-the-largest-company-in-the-world-by-market-cap-on-july-31-20260624192329842"
+      ]
+    }
+  },
+  "report_type": "phase3_2_rejection_analysis",
+  "root_causes": [
+    "Phase 3.1 used question-only keyword classification, leaving most active markets as novelty/other.",
+    "Discovery used one volume-sorted market query and discarded event category/title context.",
+    "One threshold set forced serious near-threshold markets into the same rejection path as weak markets.",
+    "The previous malformed check treated missing terminal punctuation as malformed even when grammar was otherwise clear."
+  ],
+  "tier_counts": {
+    "BANNED": 4153,
+    "CORE": 26,
+    "RESEARCH": 70,
+    "WATCH": 751
+  },
+  "ts_utc": "2026-07-24T14:21:56.682634+00:00"
+}

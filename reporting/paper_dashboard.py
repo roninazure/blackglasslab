@@ -7,6 +7,14 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List, Tuple
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+
+from swarm_edge_io import merge_notes_blob
+from loop_engine.shadow import shadow_summary
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
 
@@ -22,13 +30,7 @@ def _connect_db(path: str) -> sqlite3.Connection:
 
 
 def _safe_json(s: Optional[str]) -> Dict[str, Any]:
-    if not s:
-        return {}
-    try:
-        obj = json.loads(s)
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
+    return merge_notes_blob(s)
 
 
 def _fmt(x: Any, nd: int = 6) -> str:
@@ -120,7 +122,7 @@ def main() -> int:
     cur.execute(f"SELECT COUNT(*) AS n FROM paper_trades {where} AND status='OPEN';", params)
     open_n = int(cur.fetchone()["n"] or 0)
 
-    cur.execute(f"SELECT COUNT(*) AS n FROM paper_trades {where} AND status!='OPEN';", params)
+    cur.execute(f"SELECT COUNT(*) AS n FROM paper_trades {where} AND status='CLOSED';", params)
     closed_n = int(cur.fetchone()["n"] or 0)
 
     cur.execute(f"SELECT AVG(edge) AS a FROM paper_trades {where};", params)
@@ -129,7 +131,7 @@ def main() -> int:
     cur.execute(f"SELECT AVG(disagreement) AS a FROM paper_trades {where};", params)
     avg_disagree = cur.fetchone()["a"]
 
-    cur.execute(f"SELECT AVG(brier) AS a FROM paper_trades {where} AND status!='OPEN' AND brier IS NOT NULL;", params)
+    cur.execute(f"SELECT AVG(brier) AS a FROM paper_trades {where} AND status='CLOSED' AND brier IS NOT NULL;", params)
     avg_brier = cur.fetchone()["a"]
 
     cur.execute(f"SELECT MIN(ts_utc) AS t FROM paper_trades {where};", params)
@@ -268,7 +270,7 @@ def main() -> int:
         tier_counts[tier(q)] += 1
 
     # Print
-    print(f"BLACK GLASS SWARM — PAPER DASHBOARD (Phase 2.4)")
+    print(f"BLACK GLASS SWARM — PAPER DASHBOARD (Phase 3.3)")
     print(f"- generated_at_utc: {utc_now_iso()}")
     print(f"- db: {args.db}")
     print(f"- venue: {args.venue}")
@@ -297,6 +299,36 @@ def main() -> int:
     print(f"- open_trades:       {open_n}")
     print(f"- open_exposure:     ${open_exposure:,.2f}  (at $100/trade)")
     print()
+
+    if cur.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='shadow_forecasts'"
+    ).fetchone():
+        shadow = shadow_summary(conn)
+        print("SHADOW FORECAST LEDGER")
+        print(
+            f"- forecasts_today:   {shadow['forecasts_today']}"
+            f"\n- forecasts_total:   {shadow['forecasts_total']}"
+            f"\n- latest_evaluations:{shadow['evaluations_per_cycle']}"
+            f"\n- latest_llm_calls:  {shadow['llm_calls_per_cycle']}"
+            f"\n- resolved:          {shadow['resolved_forecasts']}"
+            f"\n- best_threshold:    {shadow['best_performing_threshold'] or '-'}"
+            f"\n- freshness_minutes: {shadow['data_freshness_minutes']}"
+        )
+        print("- threshold_buckets:")
+        for bucket in shadow["threshold_buckets"]:
+            print(
+                f"  {bucket['label']}: forecasts={bucket['forecasts']}"
+                f" resolved={bucket['resolved']} pnl={bucket['pnl']:+.2f}"
+                f" roi={_fmt(bucket['roi'], 4)}"
+            )
+        print(
+            "- time_to_resolution: "
+            + " ".join(
+                f"{key}={value}"
+                for key, value in shadow["time_to_resolution_distribution"].items()
+            )
+        )
+        print()
 
     print("SIGNAL QUALITY (OPEN) — Tier Counts")
     print(f"- A (>=0.070): {tier_counts['A']}")

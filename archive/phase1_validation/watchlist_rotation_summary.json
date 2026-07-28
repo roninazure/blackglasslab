@@ -1,0 +1,1206 @@
+{
+  "acceptance": "PASS",
+  "aggregate_candidate_count": 0,
+  "aggregate_fetch_count": 14,
+  "aggregate_llm_attempt_count": 8,
+  "aggregate_pipeline_summary": {
+    "blocked_existing_position": 20,
+    "candidates_generated": 0,
+    "diagnostics_written": 14,
+    "disagreement_rejected": 0,
+    "edge_rejected": 8,
+    "extreme_tail": 6,
+    "fetch_attempted": 14,
+    "fetch_failed": 0,
+    "inactive_or_closed": 0,
+    "invalid_price": 0,
+    "liquidity_rejected": 0,
+    "llm_attempted": 8,
+    "llm_failed": 0,
+    "paper_duplicate": 0,
+    "paper_inserted": 0,
+    "paper_not_requested": 0,
+    "paper_pending": 0,
+    "skipped_category_cap": 0,
+    "spread_rejected": 0,
+    "time_rejected": 0,
+    "volume_rejected": 0
+  },
+  "aggregate_sampled_terminal_reason_counts": {
+    "existing_open_or_pending_position": 4,
+    "extreme_tail": 6,
+    "min_edge_abs": 8,
+    "recent_infer_cooldown": 7
+  },
+  "aggregate_terminal_reason_counts_all_125_records": {
+    "existing_open_or_pending_position": 20,
+    "extreme_tail": 6,
+    "min_edge_abs": 8,
+    "not_selected_in_batch": 84,
+    "recent_infer_cooldown": 7
+  },
+  "cursor_transitions": [
+    {
+      "after": 5,
+      "before": 0,
+      "cycle": 1
+    },
+    {
+      "after": 10,
+      "before": 5,
+      "cycle": 2
+    },
+    {
+      "after": 15,
+      "before": 10,
+      "cycle": 3
+    },
+    {
+      "after": 20,
+      "before": 15,
+      "cycle": 4
+    },
+    {
+      "after": 0,
+      "before": 20,
+      "cycle": 5
+    }
+  ],
+  "cycles": [
+    {
+      "candidate_file_count": 0,
+      "cursor_after": 5,
+      "cursor_before": 0,
+      "cycle": 1,
+      "diagnostics_rows": 5,
+      "sampled_markets": [
+        "will-bitcoin-hit-1m-before-gta-vi-872-424",
+        "scotus-accepts-sports-event-contract-case-by-july-31-2026",
+        "will-china-invades-taiwan-before-gta-vi-716-644",
+        "new-rhianna-album-before-gta-vi-926",
+        "new-playboi-carti-album-before-gta-vi-421"
+      ],
+      "summary": {
+        "blocked_existing_position": 4,
+        "candidates_generated": 0,
+        "diagnostics_written": 5,
+        "disagreement_rejected": 0,
+        "edge_rejected": 4,
+        "extreme_tail": 1,
+        "fetch_attempted": 5,
+        "fetch_failed": 0,
+        "finalized_markets": 25,
+        "inactive_or_closed": 0,
+        "invalid_price": 0,
+        "liquidity_rejected": 0,
+        "llm_attempted": 4,
+        "llm_failed": 0,
+        "paper_duplicate": 0,
+        "paper_inserted": 0,
+        "paper_not_requested": 0,
+        "paper_pending": 0,
+        "skipped_category_cap": 0,
+        "spread_rejected": 0,
+        "time_rejected": 0,
+        "volume_rejected": 0,
+        "watchlist_total": 25
+      }
+    },
+    {
+      "candidate_file_count": 0,
+      "cursor_after": 10,
+      "cursor_before": 5,
+      "cycle": 2,
+      "diagnostics_rows": 5,
+      "sampled_markets": [
+        "will-gpt-6-be-released",
+        "will-paul-reevs-be-the-republican-nominee-for-az-01",
+        "will-matt-gress-be-the-republican-nominee-for-az-01",
+        "will-jay-feely-be-the-republican-nominee-for-az-05",
+        "will-cori-bush-be-the-democratic-nominee-for-mo-01"
+      ],
+      "summary": {
+        "blocked_existing_position": 4,
+        "candidates_generated": 0,
+        "diagnostics_written": 5,
+        "disagreement_rejected": 0,
+        "edge_rejected": 2,
+        "extreme_tail": 3,
+        "fetch_attempted": 5,
+        "fetch_failed": 0,
+        "finalized_markets": 25,
+        "inactive_or_closed": 0,
+        "invalid_price": 0,
+        "liquidity_rejected": 0,
+        "llm_attempted": 2,
+        "llm_failed": 0,
+        "paper_duplicate": 0,
+        "paper_inserted": 0,
+        "paper_not_requested": 0,
+        "paper_pending": 0,
+        "skipped_category_cap": 0,
+        "spread_rejected": 0,
+        "time_rejected": 0,
+        "volume_rejected": 0,
+        "watchlist_total": 25
+      }
+    },
+    {
+      "candidate_file_count": 0,
+      "cursor_after": 15,
+      "cursor_before": 10,
+      "cycle": 3,
+      "diagnostics_rows": 0,
+      "sampled_markets": [
+        "blue-wave-in-2026",
+        "us-recession-by-end-of-2026",
+        "fed-emergency-rate-cut-before-2027",
+        "will-no-fed-rate-cuts-happen-in-2026",
+        "will-1-fed-rate-cut-happen-in-2026"
+      ],
+      "summary": {
+        "blocked_existing_position": 4,
+        "candidates_generated": 0,
+        "diagnostics_written": 0,
+        "disagreement_rejected": 0,
+        "edge_rejected": 0,
+        "extreme_tail": 0,
+        "fetch_attempted": 0,
+        "fetch_failed": 0,
+        "finalized_markets": 25,
+        "inactive_or_closed": 0,
+        "invalid_price": 0,
+        "liquidity_rejected": 0,
+        "llm_attempted": 0,
+        "llm_failed": 0,
+        "paper_duplicate": 0,
+        "paper_inserted": 0,
+        "paper_not_requested": 0,
+        "paper_pending": 0,
+        "skipped_category_cap": 0,
+        "spread_rejected": 0,
+        "time_rejected": 0,
+        "volume_rejected": 0,
+        "watchlist_total": 25
+      }
+    },
+    {
+      "candidate_file_count": 0,
+      "cursor_after": 20,
+      "cursor_before": 15,
+      "cycle": 4,
+      "diagnostics_rows": 1,
+      "sampled_markets": [
+        "will-2-fed-rate-cuts-happen-in-2026",
+        "will-3-fed-rate-cuts-happen-in-2026",
+        "will-4-fed-rate-cuts-happen-in-2026",
+        "will-5-fed-rate-cuts-happen-in-2026",
+        "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
+      ],
+      "summary": {
+        "blocked_existing_position": 4,
+        "candidates_generated": 0,
+        "diagnostics_written": 1,
+        "disagreement_rejected": 0,
+        "edge_rejected": 0,
+        "extreme_tail": 1,
+        "fetch_attempted": 1,
+        "fetch_failed": 0,
+        "finalized_markets": 25,
+        "inactive_or_closed": 0,
+        "invalid_price": 0,
+        "liquidity_rejected": 0,
+        "llm_attempted": 0,
+        "llm_failed": 0,
+        "paper_duplicate": 0,
+        "paper_inserted": 0,
+        "paper_not_requested": 0,
+        "paper_pending": 0,
+        "skipped_category_cap": 0,
+        "spread_rejected": 0,
+        "time_rejected": 0,
+        "volume_rejected": 0,
+        "watchlist_total": 25
+      }
+    },
+    {
+      "candidate_file_count": 0,
+      "cursor_after": 0,
+      "cursor_before": 20,
+      "cycle": 5,
+      "diagnostics_rows": 3,
+      "sampled_markets": [
+        "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election",
+        "will-the-us-confirm-that-aliens-exist-before-2027-789-924-249",
+        "will-the-us-invade-iran-before-2027",
+        "will-china-invade-taiwan-before-2027",
+        "will-the-iranian-regime-fall-by-the-end-of-2026"
+      ],
+      "summary": {
+        "blocked_existing_position": 4,
+        "candidates_generated": 0,
+        "diagnostics_written": 3,
+        "disagreement_rejected": 0,
+        "edge_rejected": 2,
+        "extreme_tail": 1,
+        "fetch_attempted": 3,
+        "fetch_failed": 0,
+        "finalized_markets": 25,
+        "inactive_or_closed": 0,
+        "invalid_price": 0,
+        "liquidity_rejected": 0,
+        "llm_attempted": 2,
+        "llm_failed": 0,
+        "paper_duplicate": 0,
+        "paper_inserted": 0,
+        "paper_not_requested": 0,
+        "paper_pending": 0,
+        "skipped_category_cap": 0,
+        "spread_rejected": 0,
+        "time_rejected": 0,
+        "volume_rejected": 0,
+        "watchlist_total": 25
+      }
+    }
+  ],
+  "markets_evaluated_more_than_once": [],
+  "markets_never_sampled": [],
+  "markets_sampled_more_than_once": [],
+  "paper_trades_fingerprint_after_rotation": "cc165675ad0fc13d9b0f6db7989486a4c7685e618f86e3c4eb605fb7643828a6",
+  "paper_trades_unchanged_during_rotation": true,
+  "per_market_cycle_outcomes": {
+    "blue-wave-in-2026": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": true
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      }
+    ],
+    "fed-emergency-rate-cut-before-2027": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": true
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      }
+    ],
+    "new-playboi-carti-album-before-gta-vi-421": [
+      {
+        "cycle": 1,
+        "decision": "REJECT",
+        "final_stage": "edge_filter",
+        "reason": "min_edge_abs",
+        "sampled": true
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "new-rhianna-album-before-gta-vi-926": [
+      {
+        "cycle": 1,
+        "decision": "REJECT",
+        "final_stage": "edge_filter",
+        "reason": "min_edge_abs",
+        "sampled": true
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "scotus-accepts-sports-event-contract-case-by-july-31-2026": [
+      {
+        "cycle": 1,
+        "decision": "REJECT",
+        "final_stage": "tail_filter",
+        "reason": "extreme_tail",
+        "sampled": true
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "us-recession-by-end-of-2026": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": true
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      }
+    ],
+    "will-1-fed-rate-cut-happen-in-2026": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "cooldown_filter",
+        "reason": "recent_infer_cooldown",
+        "sampled": true
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-2-fed-rate-cuts-happen-in-2026": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": true
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "existing_position_filter",
+        "reason": "existing_open_or_pending_position",
+        "sampled": false
+      }
+    ],
+    "will-3-fed-rate-cuts-happen-in-2026": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "cooldown_filter",
+        "reason": "recent_infer_cooldown",
+        "sampled": true
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-4-fed-rate-cuts-happen-in-2026": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "cooldown_filter",
+        "reason": "recent_infer_cooldown",
+        "sampled": true
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-5-fed-rate-cuts-happen-in-2026": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "cooldown_filter",
+        "reason": "recent_infer_cooldown",
+        "sampled": true
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-bitcoin-hit-1m-before-gta-vi-872-424": [
+      {
+        "cycle": 1,
+        "decision": "REJECT",
+        "final_stage": "edge_filter",
+        "reason": "min_edge_abs",
+        "sampled": true
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-china-invade-taiwan-before-2027": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "REJECT",
+        "final_stage": "edge_filter",
+        "reason": "min_edge_abs",
+        "sampled": true
+      }
+    ],
+    "will-china-invades-taiwan-before-gta-vi-716-644": [
+      {
+        "cycle": 1,
+        "decision": "REJECT",
+        "final_stage": "edge_filter",
+        "reason": "min_edge_abs",
+        "sampled": true
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-cori-bush-be-the-democratic-nominee-for-mo-01": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "REJECT",
+        "final_stage": "edge_filter",
+        "reason": "min_edge_abs",
+        "sampled": true
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "REJECT",
+        "final_stage": "tail_filter",
+        "reason": "extreme_tail",
+        "sampled": true
+      }
+    ],
+    "will-gpt-6-be-released": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "REJECT",
+        "final_stage": "edge_filter",
+        "reason": "min_edge_abs",
+        "sampled": true
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-jay-feely-be-the-republican-nominee-for-az-05": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "REJECT",
+        "final_stage": "tail_filter",
+        "reason": "extreme_tail",
+        "sampled": true
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-matt-gress-be-the-republican-nominee-for-az-01": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "REJECT",
+        "final_stage": "tail_filter",
+        "reason": "extreme_tail",
+        "sampled": true
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-no-fed-rate-cuts-happen-in-2026": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "cooldown_filter",
+        "reason": "recent_infer_cooldown",
+        "sampled": true
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-paul-reevs-be-the-republican-nominee-for-az-01": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "REJECT",
+        "final_stage": "tail_filter",
+        "reason": "extreme_tail",
+        "sampled": true
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "REJECT",
+        "final_stage": "tail_filter",
+        "reason": "extreme_tail",
+        "sampled": true
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      }
+    ],
+    "will-the-iranian-regime-fall-by-the-end-of-2026": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "REJECT",
+        "final_stage": "edge_filter",
+        "reason": "min_edge_abs",
+        "sampled": true
+      }
+    ],
+    "will-the-us-confirm-that-aliens-exist-before-2027-789-924-249": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "cooldown_filter",
+        "reason": "recent_infer_cooldown",
+        "sampled": true
+      }
+    ],
+    "will-the-us-invade-iran-before-2027": [
+      {
+        "cycle": 1,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 2,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 3,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 4,
+        "decision": "SKIP",
+        "final_stage": "batch_selection",
+        "reason": "not_selected_in_batch",
+        "sampled": false
+      },
+      {
+        "cycle": 5,
+        "decision": "SKIP",
+        "final_stage": "cooldown_filter",
+        "reason": "recent_infer_cooldown",
+        "sampled": true
+      }
+    ]
+  },
+  "reconciliation_mismatches": [],
+  "status_counts_after_rotation": {
+    "OPEN": 6,
+    "VOID": 15
+  },
+  "ts_utc": "2026-07-11T13:15:31.038729+00:00",
+  "unique_watchlist_markets_covered": 25,
+  "watchlist_total": 25
+}

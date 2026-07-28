@@ -1,0 +1,3 @@
+PIPELINE watchlist=25 fetched=3 llm=2 rejected=3 candidates=0
+SKIPS existing=4 category=0 fetch_failed=0 inactive=0 tail=1 edge=2
+LIVE_RUNNER OK candidates=0 (infer no trade candidate passed filters) -> signals/trade_candidates_infer.json

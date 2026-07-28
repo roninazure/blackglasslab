@@ -1,0 +1,88 @@
+{
+  "mode": "infer",
+  "rows": [
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.28,
+      "edge_abs": 0.040000000000000036,
+      "edge_vs_market": -0.040000000000000036,
+      "llm_confidence": 0.72,
+      "llm_rationale": "GTA VI has a confirmed Fall 2025 release window; GPT-6 timeline is highly uncertain with no official date. OpenAI's release cadence (GPT-3.5 to GPT-4 took ~1.5 years) suggests GPT-6 is likely 2026-2027 at earliest. The crowd at 52% appears slightly overweighting AI acceleration narratives relative to Rockstar's concrete commitment.",
+      "llm_used": true,
+      "p_yes_market": 0.52,
+      "p_yes_model": 0.48,
+      "pricing_source": "mid",
+      "question": "Will GPT-6 be released before GTA VI?",
+      "reason": "min_edge_abs",
+      "side": "NO",
+      "slug": "will-gpt-6-be-released",
+      "spread": 0.020000000000000018
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-paul-reevs-be-the-republican-nominee-for-az-01"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-matt-gress-be-the-republican-nominee-for-az-01"
+    },
+    {
+      "decision": "REJECT",
+      "p_yes_market": 0.01,
+      "reason": "extreme_tail",
+      "slug": "will-jay-feely-be-the-republican-nominee-for-az-05"
+    },
+    {
+      "components": {},
+      "decision": "REJECT",
+      "disagreement": 0.28,
+      "edge_abs": 0.025000000000000022,
+      "edge_vs_market": -0.025000000000000022,
+      "llm_confidence": 0.72,
+      "llm_rationale": "Cori Bush is the incumbent progressive representative for MO-01 with strong support in her district, but faces moderate uncertainty from primary challengers, redistricting dynamics, and potential increased scrutiny. The crowd price of 60.5% is reasonably calibrated; slight downward adjustment reflects realistic primary vulnerability without strong countervailing evidence.",
+      "llm_used": true,
+      "p_yes_market": 0.605,
+      "p_yes_model": 0.58,
+      "pricing_source": "mid",
+      "question": "Will Cori Bush be the Democratic nominee for MO-01?",
+      "reason": "min_edge_abs",
+      "side": "NO",
+      "slug": "will-cori-bush-be-the-democratic-nominee-for-mo-01",
+      "spread": 0.010000000000000009
+    }
+  ],
+  "settings": {
+    "batch": 5,
+    "cooldown": 43,
+    "max_disagree": 0.45,
+    "min_edge_abs": 0.05,
+    "min_edge_vs_market": 0.05,
+    "paper_size": 100.0
+  },
+  "source": "polymarket",
+  "summary": {
+    "evaluated": 5,
+    "passed": 0,
+    "rejected": {
+      "category_cap": 0,
+      "closed_market": 0,
+      "extreme_tail": 3,
+      "fetch_failed": 0,
+      "inactive_market": 0,
+      "invalid_price": 0,
+      "low_liquidity": 0,
+      "low_volume": 0,
+      "max_disagree": 0,
+      "min_edge_abs": 2,
+      "min_edge_vs_market": 0,
+      "time_rejected": 0,
+      "wide_spread": 0
+    }
+  },
+  "ts_utc": "2026-07-11T13:13:13.113162+00:00"
+}

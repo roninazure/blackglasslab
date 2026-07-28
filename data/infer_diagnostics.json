@@ -1,38 +1,12 @@
 {
+  "generated_at_utc": "2026-07-11T15:10:28.724334+00:00",
   "mode": "infer",
   "rows": [
     {
       "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-the-fed-decrease-interest-rates-by-50-bps-after-the-april-2026-meeting"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-the-fed-increase-interest-rates-by-25-bps-after-the-april-2026-meeting"
-    },
-    {
-      "decision": "REJECT",
-      "p_yes_market": 0.01,
-      "reason": "extreme_tail",
-      "slug": "will-the-fed-decrease-interest-rates-by-25-bps-after-the-april-2026-meeting"
-    },
-    {
-      "components": {},
-      "decision": "REJECT",
-      "disagreement": 1.0,
-      "edge_abs": 0.42,
-      "edge_vs_market": 0.0,
-      "p_yes_market": 0.08,
-      "p_yes_model": 0.08,
-      "pricing_source": "mid",
-      "question": "Will Kim Kardashian pass the bar exam by May 3?",
-      "reason": "wide_spread",
-      "side": "NO",
-      "slug": "will-kim-kardashian-pass-the-bar-exam-by-may-3",
-      "spread": 0.04000000000000001
+      "error": "fetch failed for market slug=will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election: <urlopen error [Errno 8] nodename nor servname provided, or not known>",
+      "reason": "fetch_failed",
+      "slug": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election"
     }
   ],
   "settings": {
@@ -44,20 +18,25 @@
     "paper_size": 100.0
   },
   "source": "polymarket",
+  "source_db_path": "/Users/scottsteele/blackglasslab/memory/runs.sqlite",
   "summary": {
-    "evaluated": 4,
+    "evaluated": 1,
     "passed": 0,
     "rejected": {
+      "category_cap": 0,
       "closed_market": 0,
-      "fetch_failed": 0,
+      "extreme_tail": 0,
+      "fetch_failed": 1,
       "inactive_market": 0,
-      "low_liquidity": 3,
+      "invalid_price": 0,
+      "low_liquidity": 0,
       "low_volume": 0,
       "max_disagree": 0,
       "min_edge_abs": 0,
       "min_edge_vs_market": 0,
-      "wide_spread": 1
+      "time_rejected": 0,
+      "wide_spread": 0
     }
   },
-  "ts_utc": "2026-04-26T13:53:11.174949+00:00"
+  "ts_utc": "2026-07-11T15:10:27.511649+00:00"
 }

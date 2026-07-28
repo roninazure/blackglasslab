@@ -13,12 +13,22 @@ import sqlite3
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 
 ROOT      = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+
+from swarm_edge_io import merge_notes_blob
+from loop_engine.shadow import shadow_summary
+
 DB_PATH   = ROOT / "memory" / "runs.sqlite"
 LOG_PATH  = ROOT / "logs" / "infer_loop.log"
 DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
+BRAIN_PATH= ROOT / "signals" / "swarm_brain_report.json"
 WATCH_PATH= ROOT / "markets" / "polymarket_watchlist.json"
+UNIVERSE_REPORT_PATH = (
+    ROOT / "reports" / "phase3_2_universe_expansion.json"
+)
 DATA_DIR  = ROOT / "data"
 
 PASS = "✓"
@@ -134,25 +144,35 @@ def check_loop():
     print("LOOP")
     try:
         result = subprocess.run(
-            ["ps", "aux"],
+            ["pgrep", "-fl", "run_live.sh|live_runner.py"],
             capture_output=True, text=True
         )
-        # Only count bash/sh processes — caffeinate wrapping run_live.sh
-        # creates a parent process that also matches, causing false duplicates
         pids = [l for l in result.stdout.strip().splitlines()
                 if "run_live.sh" in l
                 and "morning_status" not in l
                 and "grep" not in l
                 and "caffeinate" not in l]
         if len(pids) == 1:
-            pid = pids[0].split()[1]
+            pid = pids[0].split()[0]
             print(f"  status   RUNNING  (pid {pid})")
         elif len(pids) > 1:
-            pid_list = " ".join(l.split()[1] for l in pids)
+            pid_list = " ".join(l.split()[0] for l in pids)
             print(f"  WARNING  {len(pids)} instances running (pids {pid_list})")
             print(f"           fix: pkill -f run_live.sh && pkill -f live_runner.py && nohup caffeinate -i bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
         else:
-            print("  status   NOT RUNNING  ← restart: nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
+            launchd = subprocess.run(
+                [
+                    "launchctl",
+                    "print",
+                    f"gui/{os.getuid()}/com.swarmedge.runner",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if launchd.returncode == 0 and "state = running" in launchd.stdout:
+                print("  status   RUNNING  (launchd com.swarmedge.runner)")
+            else:
+                print("  status   NOT RUNNING  ← restart: nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &")
     except Exception:
         print("  status   UNKNOWN")
 
@@ -197,9 +217,7 @@ def check_positions():
         print()
         print(f"!! PENDING APPROVAL  [{len(pending)} trade(s)] — run: python3 scripts/approve_trades.py")
         for r in pending:
-            notes = {}
-            try: notes = json.loads(r["notes"] or "{}")
-            except: pass
+            notes = merge_notes_blob(r["notes"])
             crowd = float(notes.get("p_yes_market") or r["p_yes"] or 0.5)
             claude = float(r["p_yes"] or 0.5)
             rationale = (notes.get("llm") or {}).get("rationale", "")[:80]
@@ -227,11 +245,7 @@ def check_positions():
             days_held = "?"
 
         # Crowd price from notes (same source as dashboard)
-        notes = {}
-        try:
-            notes = json.loads(r["notes"] or "{}")
-        except Exception:
-            pass
+        notes = merge_notes_blob(r["notes"])
         crowd_raw = notes.get("p_yes_market") or notes.get("crowd_p_yes")
         try:
             crowd_p_yes = float(crowd_raw) if crowd_raw is not None else p_yes_claude
@@ -264,11 +278,7 @@ def check_positions():
             slug = (r["market_id"] or "")[:38]
             outcome = r["resolved_outcome"] or "?"
             brier = r["brier"]
-            notes = {}
-            try:
-                notes = json.loads(r["notes"] or "{}")
-            except Exception:
-                pass
+            notes = merge_notes_blob(r["notes"])
             profit = notes.get("profit_usd") or (notes.get("resolution") or {}).get("profit_usd") or 0
             total_profit += float(profit)
             brier_s = f"{brier:.4f}" if brier is not None else "    ?"
@@ -298,16 +308,168 @@ def check_last_eval():
         print(f"  could not load diagnostics: {e}")
 
 
+def check_shadow_forecasts():
+    print()
+    print("SHADOW FORECASTS")
+    if not DB_PATH.exists():
+        print("  database not found")
+        return
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='shadow_forecasts'"
+        ).fetchone() is None:
+            print("  ledger not initialized")
+            return
+        summary = shadow_summary(conn, now=now_utc())
+        print(
+            f"  forecasts today={summary['forecasts_today']}"
+            f" total={summary['forecasts_total']}"
+            f" resolved={summary['resolved_forecasts']}"
+        )
+        print(
+            f"  latest cycle evaluations={summary['evaluations_per_cycle']}"
+            f" llm_calls={summary['llm_calls_per_cycle']}"
+            f" freshness={summary['data_freshness_minutes']}m"
+        )
+        print("  threshold buckets")
+        for bucket in summary["threshold_buckets"]:
+            roi = "-" if bucket["roi"] is None else f"{bucket['roi']:.1%}"
+            print(
+                f"    {bucket['label']:<28} forecasts={bucket['forecasts']}"
+                f" resolved={bucket['resolved']} wins={bucket['wins']}"
+                f" losses={bucket['losses']} roi={roi}"
+            )
+        print(
+            "  best threshold "
+            f"{summary['best_performing_threshold'] or 'insufficient resolved data'}"
+        )
+        horizons = " ".join(
+            f"{label}={count}"
+            for label, count in summary["time_to_resolution_distribution"].items()
+        )
+        print(f"  resolution horizons {horizons}")
+        print("  decision dimensions")
+        for column, label in (
+            ("contract_validity", "contract validity"),
+            ("opportunity_quality", "opportunity quality"),
+            ("model_edge", "model edge"),
+            ("production_decision", "production decision"),
+        ):
+            counts = conn.execute(
+                f"SELECT {column}, COUNT(*) FROM shadow_forecasts GROUP BY {column} ORDER BY COUNT(*) DESC"
+            ).fetchall()
+            rendered = " ".join(f"{value}={count}" for value, count in counts)
+            print(f"    {label:<21} {rendered or 'none'}")
+    except Exception as error:
+        print(f"  could not load shadow ledger: {error}")
+    finally:
+        conn.close()
+
+
+def check_loop_engine():
+    print()
+    print("LOOP ENGINE")
+    try:
+        brain = json.loads(BRAIN_PATH.read_text())
+        rankings = brain.get("opportunity_rankings", [])
+        markets = brain.get("market_records", [])
+        grades: dict[str, int] = {}
+        for row in rankings:
+            grade = str(row.get("opportunity_grade") or "?")
+            grades[grade] = grades.get(grade, 0) + 1
+        grade_summary = " ".join(
+            f"{grade}={grades[grade]}" for grade in ("A", "B", "C", "D", "F")
+            if grade in grades
+        ) or "none"
+        candidates = sum(
+            1 for row in markets if row.get("final_decision") == "CANDIDATE"
+        )
+        temporal_rejects = sum(
+            1 for row in markets if row.get("final_reason") == "temporal_inconsistency"
+        )
+        budget_skips = sum(
+            1 for row in markets if row.get("final_reason") == "budget_skipped"
+        )
+        print(
+            f"  ranked {len(rankings)}/{brain.get('sampled_markets', 0)} sampled"
+            f"  grades {grade_summary}"
+        )
+        print(
+            f"  calls  llm={brain.get('llm_calls_used', 0)}"
+            f"  skeptic={brain.get('skeptic_calls_used', 0)}"
+            f"  candidates={candidates}  temporal={temporal_rejects}"
+            f"  budget={budget_skips}"
+        )
+        print("  top opportunities")
+        for row in rankings[:5]:
+            question = str(row.get("question") or row.get("market_id") or "")[:34]
+            score = float(row.get("opportunity_score") or 0.0)
+            grade = row.get("opportunity_grade") or "?"
+            reason = row.get("final_reason") or ""
+            print(f"    {score:>5.1f} {grade}  {question:<34}  {reason}")
+        if not rankings:
+            print("    none ranked in latest run")
+    except FileNotFoundError:
+        print("  no brain report yet")
+    except Exception as e:
+        print(f"  could not load brain report: {e}")
+
+
+def check_market_universe():
+    print()
+    print("MARKET UNIVERSE")
+    try:
+        report = json.loads(UNIVERSE_REPORT_PATH.read_text())
+        selected = report.get("selected_markets", [])
+        tier_counts = report.get("selection_summary", {}).get(
+            "tier_counts", {}
+        )
+        scores = [
+            float(row.get("institutional_quality_score") or 0.0)
+            for row in selected
+        ]
+        average = sum(scores) / len(scores) if scores else 0.0
+        print(
+            f"  policy {report.get('policy_mode', 'unknown')}"
+            f"  watchlist={report.get('new_watchlist_size', len(selected))}"
+            f"  avg_quality={average:.1f}"
+        )
+        print(
+            "  selected"
+            f"  core={tier_counts.get('CORE', 0)}"
+            f"  research={tier_counts.get('RESEARCH', 0)}"
+            f"  watch={tier_counts.get('WATCH', 0)}"
+            f"  banned={tier_counts.get('BANNED', 0)}"
+        )
+        eligible = report.get("eligible_tier_counts", {})
+        print(
+            "  scanned"
+            f"  core={eligible.get('CORE', 0)}"
+            f"  research={eligible.get('RESEARCH', 0)}"
+            f"  watch={eligible.get('WATCH', 0)}"
+            f"  banned={eligible.get('BANNED', 0)}"
+        )
+    except FileNotFoundError:
+        print("  no market universe report yet")
+    except Exception as e:
+        print(f"  could not load universe report: {e}")
+
+
 def check_api_cost():
     print()
     print("API COST ESTIMATE")
     try:
-        lines = LOG_PATH.read_text().splitlines()
-        cycles = len([l for l in lines if "infer loop ==" in l])
-        # ~5 Claude Haiku calls per cycle avg, ~$0.000025 per call
-        cost = cycles * 5 * 0.000025
-        print(f"  cycles run     {cycles}")
-        print(f"  est. API cost  ${cost:.4f}  (~${cost*30/max(cycles,1):.2f}/month at this rate)")
+        brain = json.loads(BRAIN_PATH.read_text())
+        calls = int(brain.get("llm_calls_used", 0)) + int(
+            brain.get("skeptic_calls_used", 0)
+        )
+        estimate = brain.get("estimated_cost")
+        print(f"  latest calls   {calls}")
+        if estimate is None:
+            print("  est. cost      unavailable (configure BGL_ESTIMATED_COST_PER_CALL_USD)")
+        else:
+            print(f"  est. cost      ${float(estimate):.6f}")
     except Exception:
         print("  unable to estimate")
 
@@ -328,7 +490,10 @@ def main():
     check_health()
     check_loop()
     check_positions()
+    check_shadow_forecasts()
     check_last_eval()
+    check_market_universe()
+    check_loop_engine()
     check_api_cost()
     footer()
 

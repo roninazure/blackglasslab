@@ -1,0 +1,85 @@
+{
+  "acceptance": "PASS",
+  "branch": "claude/review-blackglass-lab-XCVFO",
+  "changed_trade_ids": [
+    6,
+    13
+  ],
+  "infer_cursor": 0,
+  "open_count": 4,
+  "paper_trades_row_count": 21,
+  "paper_trades_sha256_after": "55d5b4d19a3d1f733b71cfe6670b2d5f25108b7ce852277f1ece90f4271334a6",
+  "paper_trades_sha256_before": "cc165675ad0fc13d9b0f6db7989486a4c7685e618f86e3c4eb605fb7643828a6",
+  "pending_count": 0,
+  "resolved_trades": [
+    {
+      "brier": 0.3364000000000001,
+      "id": 6,
+      "lookup_source": "snapshot_id",
+      "outcome": "YES",
+      "profit_usd": -100.0,
+      "status": "CLOSED"
+    },
+    {
+      "brier": 0.0004,
+      "id": 13,
+      "lookup_source": "snapshot_id",
+      "outcome": "NO",
+      "profit_usd": 47.167,
+      "status": "CLOSED"
+    }
+  ],
+  "rotation_acceptance": "PASS",
+  "rotation_reconciliation_mismatches": [],
+  "rotation_unique_covered": 25,
+  "run_live_or_runner_process_active": false,
+  "schema_unchanged": true,
+  "sqlite_schema_sha256_after": "590243a3ac0dcc565a5f4fbe826ada85846c2412793f20b29dba53d4cf37de2c",
+  "sqlite_schema_sha256_before": "590243a3ac0dcc565a5f4fbe826ada85846c2412793f20b29dba53d4cf37de2c",
+  "status_counts": {
+    "CLOSED": 2,
+    "OPEN": 4,
+    "VOID": 15
+  },
+  "tests": {
+    "full_unittest_discovery": {
+      "failed": 0,
+      "passed": 3
+    },
+    "integrity_check": {
+      "passed": 7,
+      "warnings": 4
+    },
+    "python_compilation": "PASS",
+    "scoped_diff_check": "PASS",
+    "targeted_pipeline": {
+      "failed": 0,
+      "passed": 2
+    },
+    "targeted_resolver": {
+      "failed": 0,
+      "passed": 1
+    }
+  },
+  "threshold_configuration_after": {
+    "BGL_INFER_BATCH": "5",
+    "BGL_INFER_COOLDOWN": "43",
+    "BGL_MAX_DISAGREE": "0.45",
+    "BGL_MAX_DISAGREEMENT": "0.45",
+    "BGL_MIN_EDGE_ABS": "0.05",
+    "BGL_MIN_EDGE_VS_MARKET": "0.05"
+  },
+  "threshold_configuration_before": {
+    "BGL_INFER_BATCH": "5",
+    "BGL_INFER_COOLDOWN": "43",
+    "BGL_MAX_DISAGREE": "0.45",
+    "BGL_MAX_DISAGREEMENT": "0.45",
+    "BGL_MIN_EDGE_ABS": "0.05",
+    "BGL_MIN_EDGE_VS_MARKET": "0.05"
+  },
+  "thresholds_unchanged": true,
+  "ts_utc": "2026-07-11T13:18:51.744351+00:00",
+  "watchlist_sha256_after": "a682d56639fac2d2c37269f70a42a48b715e8c1dacc7947588cd9935ab2ae374",
+  "watchlist_sha256_before": "a682d56639fac2d2c37269f70a42a48b715e8c1dacc7947588cd9935ab2ae374",
+  "watchlist_unchanged": true
+}

@@ -1,0 +1,603 @@
+{
+  "markets": [
+    {
+      "banned_class": "product_release_comparison",
+      "category": "crypto majors",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "will-bitcoin-hit-1m-before-gta-vi-872-424",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "Will bitcoin hit $1m before GTA VI?",
+      "reason_codes": [
+        "banned_market_class",
+        "product_release_comparison"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": null,
+      "category": "legal/regulatory",
+      "classification": "SPECULATIVE",
+      "institutional_quality_score": 60.52,
+      "market_id": "scotus-accepts-sports-event-contract-case-by-july-31-2026",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 6.45,
+        "duplicate_position": false,
+        "end_date": "2026-07-31T00:00:00+00:00",
+        "liquidity": 10613.55197,
+        "p_yes_market": 0.012,
+        "spread": 0.004,
+        "volume": 947946.7437009986
+      },
+      "policy_allowed": false,
+      "policy_reason": "low_institutional_quality",
+      "question": "SCOTUS accepts sports event contract case by July 31, 2026?",
+      "reason_codes": [
+        "low_institutional_quality",
+        "extreme_probability"
+      ],
+      "time_bucket": "2-14d"
+    },
+    {
+      "banned_class": "product_release_comparison",
+      "category": "geopolitics",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "will-china-invades-taiwan-before-gta-vi-716-644",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "Will China invades Taiwan before GTA VI?",
+      "reason_codes": [
+        "banned_market_class",
+        "product_release_comparison"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": "product_release_comparison",
+      "category": "novelty/other",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "new-rhianna-album-before-gta-vi-926",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "New Rihanna Album before GTA VI?",
+      "reason_codes": [
+        "banned_market_class",
+        "product_release_comparison"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": "product_release_comparison",
+      "category": "novelty/other",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "new-playboi-carti-album-before-gta-vi-421",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "New Playboi Carti Album before GTA VI?",
+      "reason_codes": [
+        "banned_market_class",
+        "product_release_comparison"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": "product_release_comparison",
+      "category": "novelty/other",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "will-gpt-6-be-released",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "Will GPT-6 be released before GTA VI?",
+      "reason_codes": [
+        "banned_market_class",
+        "product_release_comparison"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": "thin_local_primary",
+      "category": "novelty/other",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "will-paul-reevs-be-the-republican-nominee-for-az-01",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "Will Paul Reevs be the Republican nominee for AZ-01?",
+      "reason_codes": [
+        "banned_market_class",
+        "thin_local_primary"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": "thin_local_primary",
+      "category": "novelty/other",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "will-matt-gress-be-the-republican-nominee-for-az-01",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "Will Matt Gress be the Republican nominee for AZ-01?",
+      "reason_codes": [
+        "banned_market_class",
+        "thin_local_primary"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": "thin_local_primary",
+      "category": "novelty/other",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "will-jay-feely-be-the-republican-nominee-for-az-05",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "Will Jay Feely be the Republican nominee for AZ-05?",
+      "reason_codes": [
+        "banned_market_class",
+        "thin_local_primary"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": "thin_local_primary",
+      "category": "novelty/other",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "will-cori-bush-be-the-democratic-nominee-for-mo-01",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "Will Cori Bush be the Democratic nominee for MO-01?",
+      "reason_codes": [
+        "banned_market_class",
+        "thin_local_primary"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": "low_signal_other",
+      "category": "novelty/other",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "blue-wave-in-2026",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "Blue wave in 2026?",
+      "reason_codes": [
+        "banned_market_class",
+        "low_signal_other"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": null,
+      "category": "recession",
+      "classification": "ACCEPTABLE_RESEARCH",
+      "institutional_quality_score": 62.65,
+      "market_id": "us-recession-by-end-of-2026",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 190.45,
+        "duplicate_position": false,
+        "end_date": "2027-01-31T00:00:00+00:00",
+        "liquidity": 19217.4551,
+        "p_yes_market": 0.10500000000000001,
+        "spread": 0.009999999999999995,
+        "volume": 1684110.8488839979
+      },
+      "policy_allowed": true,
+      "policy_reason": "institutional_policy_pass",
+      "question": "US recession by end of 2026?",
+      "reason_codes": [],
+      "time_bucket": "121-365d"
+    },
+    {
+      "banned_class": null,
+      "category": "rates",
+      "classification": "SPECULATIVE",
+      "institutional_quality_score": 39.66,
+      "market_id": "fed-emergency-rate-cut-before-2027",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 159.45,
+        "duplicate_position": false,
+        "end_date": "2026-12-31T00:00:00+00:00",
+        "liquidity": 10519.7961,
+        "p_yes_market": 0.08,
+        "spread": 0.01999999999999999,
+        "volume": 122367.69308100003
+      },
+      "policy_allowed": false,
+      "policy_reason": "low_institutional_quality",
+      "question": "Fed emergency rate cut before 2027?",
+      "reason_codes": [
+        "low_institutional_quality",
+        "institutional_score_below_minimum"
+      ],
+      "time_bucket": "121-365d"
+    },
+    {
+      "banned_class": null,
+      "category": "rates",
+      "classification": "INSTITUTIONAL_CORE",
+      "institutional_quality_score": 84.22,
+      "market_id": "will-no-fed-rate-cuts-happen-in-2026",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 159.45,
+        "duplicate_position": false,
+        "end_date": "2026-12-31T00:00:00+00:00",
+        "liquidity": 144645.63638,
+        "p_yes_market": 0.85,
+        "spread": 0.0020000000000000018,
+        "volume": 6375472.346663995
+      },
+      "policy_allowed": true,
+      "policy_reason": "institutional_policy_pass",
+      "question": "Will no Fed rate cuts happen in 2026?",
+      "reason_codes": [],
+      "time_bucket": "121-365d"
+    },
+    {
+      "banned_class": null,
+      "category": "rates",
+      "classification": "ACCEPTABLE_RESEARCH",
+      "institutional_quality_score": 74.64,
+      "market_id": "will-1-fed-rate-cut-happen-in-2026",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 159.45,
+        "duplicate_position": false,
+        "end_date": "2026-12-31T00:00:00+00:00",
+        "liquidity": 98245.7912,
+        "p_yes_market": 0.095,
+        "spread": 0.010000000000000009,
+        "volume": 2181828.3178719673
+      },
+      "policy_allowed": true,
+      "policy_reason": "institutional_policy_pass",
+      "question": "Will 1 Fed rate cut happen in 2026?",
+      "reason_codes": [],
+      "time_bucket": "121-365d"
+    },
+    {
+      "banned_class": null,
+      "category": "rates",
+      "classification": "SPECULATIVE",
+      "institutional_quality_score": 76.66,
+      "market_id": "will-2-fed-rate-cuts-happen-in-2026",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 159.45,
+        "duplicate_position": false,
+        "end_date": "2026-12-31T00:00:00+00:00",
+        "liquidity": 77763.88089,
+        "p_yes_market": 0.0275,
+        "spread": 0.0010000000000000009,
+        "volume": 2214920.5935159605
+      },
+      "policy_allowed": false,
+      "policy_reason": "low_institutional_quality",
+      "question": "Will 2 Fed rate cuts happen in 2026?",
+      "reason_codes": [
+        "low_institutional_quality",
+        "extreme_probability"
+      ],
+      "time_bucket": "121-365d"
+    },
+    {
+      "banned_class": null,
+      "category": "rates",
+      "classification": "SPECULATIVE",
+      "institutional_quality_score": 78.35,
+      "market_id": "will-3-fed-rate-cuts-happen-in-2026",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 159.45,
+        "duplicate_position": false,
+        "end_date": "2026-12-31T00:00:00+00:00",
+        "liquidity": 140213.44914,
+        "p_yes_market": 0.010499999999999999,
+        "spread": 0.0009999999999999992,
+        "volume": 2219151.207424974
+      },
+      "policy_allowed": false,
+      "policy_reason": "low_institutional_quality",
+      "question": "Will 3 Fed rate cuts happen in 2026?",
+      "reason_codes": [
+        "low_institutional_quality",
+        "extreme_probability"
+      ],
+      "time_bucket": "121-365d"
+    },
+    {
+      "banned_class": null,
+      "category": "rates",
+      "classification": "SPECULATIVE",
+      "institutional_quality_score": 77.79,
+      "market_id": "will-4-fed-rate-cuts-happen-in-2026",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 159.45,
+        "duplicate_position": false,
+        "end_date": "2026-12-31T00:00:00+00:00",
+        "liquidity": 197157.43588,
+        "p_yes_market": 0.004,
+        "spread": 0.002,
+        "volume": 2193720.286380967
+      },
+      "policy_allowed": false,
+      "policy_reason": "low_institutional_quality",
+      "question": "Will 4 Fed rate cuts happen in 2026?",
+      "reason_codes": [
+        "low_institutional_quality",
+        "extreme_probability"
+      ],
+      "time_bucket": "121-365d"
+    },
+    {
+      "banned_class": null,
+      "category": "rates",
+      "classification": "SPECULATIVE",
+      "institutional_quality_score": 78.84,
+      "market_id": "will-5-fed-rate-cuts-happen-in-2026",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 159.45,
+        "duplicate_position": false,
+        "end_date": "2026-12-31T00:00:00+00:00",
+        "liquidity": 233867.22965,
+        "p_yes_market": 0.0025,
+        "spread": 0.001,
+        "volume": 2441372.392857963
+      },
+      "policy_allowed": false,
+      "policy_reason": "low_institutional_quality",
+      "question": "Will 5 Fed rate cuts happen in 2026?",
+      "reason_codes": [
+        "low_institutional_quality",
+        "extreme_probability"
+      ],
+      "time_bucket": "121-365d"
+    },
+    {
+      "banned_class": null,
+      "category": "major elections",
+      "classification": "SPECULATIVE",
+      "institutional_quality_score": 86.5,
+      "market_id": "will-tarcisio-de-frietas-win-the-2026-brazilian-presidential-election",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 71.45,
+        "duplicate_position": false,
+        "end_date": "2026-10-04T00:00:00+00:00",
+        "liquidity": 443815.73187,
+        "p_yes_market": 0.0015,
+        "spread": 0.001,
+        "volume": 13557560.329295563
+      },
+      "policy_allowed": false,
+      "policy_reason": "low_institutional_quality",
+      "question": "Will Tarcisio de Freitas win the 2026 Brazilian presidential election?",
+      "reason_codes": [
+        "low_institutional_quality",
+        "extreme_probability"
+      ],
+      "time_bucket": "46-120d"
+    },
+    {
+      "banned_class": "weak_resolution_quality",
+      "category": "major elections",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "will-eduardo-bolsonaro-win-the-2026-brazilian-presidential-election",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 71.45,
+        "duplicate_position": false,
+        "end_date": "2026-10-04T00:00:00+00:00",
+        "liquidity": 912632.95998,
+        "p_yes_market": 0.0005,
+        "spread": null,
+        "volume": 10350166.142770998
+      },
+      "policy_allowed": false,
+      "policy_reason": "weak_resolution_quality",
+      "question": "Will Eduardo Bolsonaro win the 2026 Brazilian presidential election?",
+      "reason_codes": [
+        "weak_resolution_quality",
+        "missing_executable_spread"
+      ],
+      "time_bucket": "46-120d"
+    },
+    {
+      "banned_class": "novelty_meme",
+      "category": "novelty/other",
+      "classification": "BANNED_JUNK",
+      "institutional_quality_score": 0.0,
+      "market_id": "will-the-us-confirm-that-aliens-exist-before-2027-789-924-249",
+      "metrics": {},
+      "policy_allowed": false,
+      "policy_reason": "banned_market_class",
+      "question": "Will the US confirm that aliens exist before 2027?",
+      "reason_codes": [
+        "banned_market_class",
+        "novelty_meme"
+      ],
+      "time_bucket": "not_eligible"
+    },
+    {
+      "banned_class": null,
+      "category": "geopolitics",
+      "classification": "INSTITUTIONAL_CORE",
+      "institutional_quality_score": 83.22,
+      "market_id": "will-the-us-invade-iran-before-2027",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 159.45,
+        "duplicate_position": false,
+        "end_date": "2026-12-31T00:00:00+00:00",
+        "liquidity": 802849.8376,
+        "p_yes_market": 0.28500000000000003,
+        "spread": 0.009999999999999953,
+        "volume": 46608990.86465731
+      },
+      "policy_allowed": true,
+      "policy_reason": "institutional_policy_pass",
+      "question": "Will the U.S. invade Iran before 2027?",
+      "reason_codes": [],
+      "time_bucket": "121-365d"
+    },
+    {
+      "banned_class": null,
+      "category": "geopolitics",
+      "classification": "SPECULATIVE",
+      "institutional_quality_score": 82.5,
+      "market_id": "will-china-invade-taiwan-before-2027",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 159.45,
+        "duplicate_position": false,
+        "end_date": "2026-12-31T00:00:00+00:00",
+        "liquidity": 584226.90603,
+        "p_yes_market": 0.0375,
+        "spread": 0.0010000000000000009,
+        "volume": 38980403.56940288
+      },
+      "policy_allowed": false,
+      "policy_reason": "low_institutional_quality",
+      "question": "Will China invade Taiwan by end of 2026?",
+      "reason_codes": [
+        "low_institutional_quality",
+        "extreme_probability"
+      ],
+      "time_bucket": "121-365d"
+    },
+    {
+      "banned_class": null,
+      "category": "geopolitics",
+      "classification": "INSTITUTIONAL_CORE",
+      "institutional_quality_score": 79.22,
+      "market_id": "will-the-iranian-regime-fall-by-the-end-of-2026",
+      "metrics": {
+        "active": true,
+        "clean_binary_resolution": true,
+        "closed": false,
+        "days_to_resolution": 159.45,
+        "duplicate_position": false,
+        "end_date": "2026-12-31T00:00:00+00:00",
+        "liquidity": 680087.9753,
+        "p_yes_market": 0.10500000000000001,
+        "spread": 0.009999999999999995,
+        "volume": 23013001.308245264
+      },
+      "policy_allowed": true,
+      "policy_reason": "institutional_policy_pass",
+      "question": "Will the Iranian regime fall before 2027?",
+      "reason_codes": [],
+      "time_bucket": "121-365d"
+    }
+  ],
+  "policy_config": {
+    "allow_sports": false,
+    "allow_thin_primaries": false,
+    "allowed_categories": [
+      "macro/fed",
+      "macro/econ",
+      "inflation/CPI",
+      "rates",
+      "recession",
+      "major elections",
+      "geopolitics",
+      "crypto majors",
+      "commodities/energy",
+      "legal/regulatory"
+    ],
+    "max_days_to_resolution": 365.0,
+    "max_per_category": 3,
+    "max_probability": 0.95,
+    "max_spread": 0.03,
+    "min_days_to_resolution": 2.0,
+    "min_liquidity": 5000.0,
+    "min_probability": 0.05,
+    "min_quality_score": 60.0,
+    "min_volume": 100000.0,
+    "mode": "institutional_v1",
+    "novelty_whitelist": [],
+    "require_deadline": true,
+    "scan_pages": 20,
+    "target_size": 20
+  },
+  "policy_mode": "institutional_v1",
+  "report_type": "current_watchlist_audit",
+  "summary": {
+    "banned_class_counts": {
+      "low_signal_other": 1,
+      "novelty_meme": 1,
+      "product_release_comparison": 5,
+      "thin_local_primary": 4,
+      "weak_resolution_quality": 1
+    },
+    "category_counts": {
+      "crypto majors": 1,
+      "geopolitics": 4,
+      "legal/regulatory": 1,
+      "major elections": 2,
+      "novelty/other": 9,
+      "rates": 7,
+      "recession": 1
+    },
+    "classification_counts": {
+      "ACCEPTABLE_RESEARCH": 2,
+      "BANNED_JUNK": 12,
+      "INSTITUTIONAL_CORE": 3,
+      "SPECULATIVE": 8
+    },
+    "policy_allowed": 5,
+    "policy_rejected": 20
+  },
+  "ts_utc": "2026-07-24T13:07:05.669108+00:00",
+  "watchlist_size": 25
+}

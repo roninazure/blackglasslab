@@ -8,6 +8,8 @@ __pycache__/
 
 # env
 .env
+.env.*
+!.env.example
 .venv/
 venv/
 
@@ -19,18 +21,31 @@ signals/
 logs/
 memory/*.sqlite
 memory/*.sqlite-*
+*.sqlite-wal
+*.sqlite-shm
 *.log
 
 # local backups
 *.bak.*
+*.backup.*
 *.bak
 *.tmp
+archive/phase3_1_market_universe_reset/*.sqlite
+archive/phase3_1_market_universe_reset/*.json
+archive/phase3_2_institutional_discovery_expansion/*.sqlite
+archive/phase3_2_institutional_discovery_expansion/*.json
 
 # python
 __pycache__/
 *.pyc
 .venv/
 markets/_pm_search2/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+htmlcov/
+/KILL
 
 # runtime artifacts
 signals/infer_diagnostics.json

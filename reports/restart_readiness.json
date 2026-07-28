@@ -1,0 +1,42 @@
+{
+  "classification": "READY_WITH_MANUAL_MONITORING",
+  "remaining_blockers": [
+    "Controlled validation in this sandbox hit fetch_failed on the live infer path, so live network fetch behavior was not fully re-proven here.",
+    "git diff --check still reports an existing trailing-whitespace issue in swarm_edge_flyer.pdf, which is outside this cleanup pass.",
+    "The daemon is still stopped by design."
+  ],
+  "safe_defaults": {
+    "SWARM_EDGE_PUBLISH_ENABLED": "0",
+    "SWARM_EDGE_WATCHLIST_APPLY": "0",
+    "PYTHON_BIN": ".venv/bin/python"
+  },
+  "startup_command": "SWARM_EDGE_PUBLISH_ENABLED=0 SWARM_EDGE_WATCHLIST_APPLY=0 nohup bash scripts/run_live.sh >> logs/infer_loop.log 2>&1 &",
+  "monitoring_commands": [
+    "tail -f logs/infer_loop.log",
+    "python3 scripts/morning_status.py"
+  ],
+  "shutdown_command": "pkill -f run_live.sh && pkill -f live_runner.py",
+  "expected_cycle_outputs": [
+    "signals/infer_pipeline_report.json",
+    "signals/infer_diagnostics.json",
+    "signals/trade_candidates_infer.json",
+    "logs/infer_loop.log",
+    "memory/runs.sqlite cursor updates and, only when paper trades are actually inserted or resolved, legitimate trade-row changes",
+    "data/paper_trades.json and data/infer_diagnostics.json on export cycles"
+  ],
+  "must_not_change": [
+    "markets/polymarket_watchlist.json unless watchlist apply is explicitly enabled",
+    ".env",
+    "historical SQLite rows beyond the legitimate cursor and paper-trade workflow updates",
+    "archived validation evidence",
+    "control documents and tests"
+  ],
+  "first_runtime_window": "2 hours, or until one full cycle is observed cleanly and one follow-up summary confirms matching SQLite-backed counts.",
+  "rollback": [
+    "Stop the loop with pkill -f run_live.sh && pkill -f live_runner.py.",
+    "Inspect logs/infer_loop.log and the latest signals/ artifacts.",
+    "Verify memory/runs.sqlite fingerprint and row counts.",
+    "Leave historical rows intact; only discard generated snapshots if they are inconsistent.",
+    "Re-run the validation commands against a temp database copy if the fetch failure repeats."
+  ]
+}
