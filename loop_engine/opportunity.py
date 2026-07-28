@@ -85,6 +85,7 @@ def score_opportunity(
     duplicate_position: bool = False,
     recent_cooldown: bool = False,
     quality_reject_reason: Optional[str] = None,
+    time_to_resolution_weight: float = 1.0,
 ) -> OpportunityScore:
     liquidity = max(0.0, _number(market.get("liquidity")))
     volume = max(0.0, _number(market.get("volume")))
@@ -121,12 +122,16 @@ def score_opportunity(
     novelty_quality = -14.0 if novelty else 6.0
     exposure_quality = 0.0 if existing_exposure else 8.0
 
+    weighted_resolution_score = resolution_score * max(
+        0.0, float(time_to_resolution_weight)
+    )
+
     components: dict[str, Any] = {
         "liquidity_quality": round(liquidity_score, 2),
         "volume_quality": round(volume_score, 2),
         "spread_quality": round(spread_score, 2),
         "probability_band_quality": round(probability_score, 2),
-        "resolution_horizon_quality": round(resolution_score, 2),
+        "resolution_horizon_quality": round(weighted_resolution_score, 2),
         "category_quality": round(category_score, 2),
         "temporal_metadata_quality": round(temporal_score, 2),
         "novelty_quality": round(novelty_quality, 2),
@@ -137,6 +142,9 @@ def score_opportunity(
             "spread": spread,
             "p_yes_market": probability,
             "time_remaining_hours": hours_remaining,
+            "time_to_resolution_weight": max(
+                0.0, float(time_to_resolution_weight)
+            ),
             "category": category,
             "novelty_detected": novelty,
             "existing_exposure": existing_exposure,
@@ -150,7 +158,7 @@ def score_opportunity(
         + volume_score
         + spread_score
         + probability_score
-        + resolution_score
+        + weighted_resolution_score
         + category_score
         + temporal_score
         + novelty_quality

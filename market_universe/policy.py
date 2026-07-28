@@ -100,7 +100,7 @@ def _env_with_fallback(
 @dataclass(frozen=True)
 class InstitutionalUniverseConfig:
     mode: str = "institutional_v2"
-    target_size: int = 24
+    target_size: int = 75
     max_pages: int = 8
     max_candidates: int = 5_000
     sort_modes: tuple[str, ...] = (
@@ -140,7 +140,10 @@ class InstitutionalUniverseConfig:
                 "BGL_MARKET_UNIVERSE_POLICY_MODE",
                 "institutional_v2",
             ).strip(),
-            target_size=_env_int("BGL_UNIVERSE_TARGET_SIZE", 24),
+            target_size=_env_int(
+                "BGL_ACTIVE_UNIVERSE_SIZE",
+                _env_int("BGL_UNIVERSE_TARGET_SIZE", 75),
+            ),
             max_pages=_env_int(
                 "BGL_UNIVERSE_MAX_PAGES",
                 _env_int("BGL_UNIVERSE_SCAN_PAGES", 8),

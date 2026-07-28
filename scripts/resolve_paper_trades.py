@@ -5,12 +5,24 @@ import argparse
 import json
 import os
 import sqlite3
+import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from loop_engine.shadow import (
+    brier_score as shadow_brier_score,
+    hypothetical_profit,
+    resolve_shadow_forecast,
+)
 
 
 DB_PATH = os.path.join("memory", "runs.sqlite")
@@ -222,6 +234,85 @@ def compute_profit_usd(
     return float(size_usd)
 
 
+def _shadow_table_exists(conn: sqlite3.Connection) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='shadow_forecasts'"
+    ).fetchone() is not None
+
+
+def resolve_shadow_forecasts(
+    conn: sqlite3.Connection,
+    *,
+    limit: int,
+    timeout_s: int,
+    sleep_s: float,
+    dry_run: bool,
+) -> tuple[int, int]:
+    if not _shadow_table_exists(conn):
+        return (0, 0)
+    rows = conn.execute(
+        """
+        SELECT id, market_id, market_probability, model_probability, side, metadata
+        FROM shadow_forecasts
+        WHERE status='OPEN' AND venue='polymarket'
+        ORDER BY id ASC LIMIT ?
+        """,
+        (max(0, int(limit)),),
+    ).fetchall()
+    checked = 0
+    changed = 0
+    mode_label = "DRY RUN" if dry_run else "WRITE"
+    for forecast_id, slug, market_probability, model_probability, side, metadata in rows:
+        checked += 1
+        try:
+            snap = fetch_market_by_slug(str(slug), timeout_s=timeout_s)
+            lookup_source = "slug"
+        except Exception as slug_error:
+            try:
+                parsed = json.loads(metadata or "{}")
+            except (TypeError, json.JSONDecodeError):
+                parsed = {}
+            snapshot_id = parsed.get("market_snapshot_id")
+            try:
+                snap = fetch_market_by_id(snapshot_id, timeout_s=timeout_s)
+                lookup_source = "snapshot_id"
+            except Exception as id_error:
+                print(
+                    f"SHADOW RESOLVER {mode_label}: id={forecast_id} slug={slug} "
+                    f"lookup_failed={slug_error}; snapshot_lookup_failed={id_error}"
+                )
+                time.sleep(sleep_s)
+                continue
+        is_resolved, outcome, why = resolved_outcome_from_snapshot(snap)
+        if not is_resolved or not outcome:
+            print(
+                f"SHADOW RESOLVER {mode_label}: id={forecast_id} slug={slug} "
+                f"lookup_source={lookup_source} OPEN (reason={why})"
+            )
+            time.sleep(sleep_s)
+            continue
+        score = shadow_brier_score(float(model_probability), outcome)
+        pnl = hypothetical_profit(
+            side=str(side),
+            stake_usd=100.0,
+            outcome=outcome,
+            market_probability=float(market_probability),
+        )
+        print(
+            f"SHADOW RESOLVER {mode_label}: id={forecast_id} slug={slug} "
+            f"lookup_source={lookup_source} RESOLVED outcome={outcome} "
+            f"brier={score:.6f} pnl_100={pnl:+.2f}"
+        )
+        if not dry_run and resolve_shadow_forecast(
+            conn, int(forecast_id), outcome
+        ):
+            changed += 1
+        elif dry_run:
+            changed += 1
+        time.sleep(sleep_s)
+    return (checked, changed)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Phase 1.4: resolve/close OPEN paper_trades and compute Brier.")
     ap.add_argument("--db", default=DB_PATH, help="Path to SQLite DB (default: memory/runs.sqlite)")
@@ -229,6 +320,10 @@ def main() -> int:
     ap.add_argument("--sleep", type=float, default=0.25, help="Sleep between API calls (seconds)")
     ap.add_argument("--dry-run", action="store_true", help="Do not write updates; print what would change")
     ap.add_argument("--timeout", type=int, default=20, help="HTTP timeout seconds")
+    ap.add_argument(
+        "--shadow-limit", type=int, default=100,
+        help="Max OPEN shadow forecasts to process per run",
+    )
     args = ap.parse_args()
     mode_label = "DRY RUN" if args.dry_run else "WRITE"
 
@@ -252,8 +347,6 @@ def main() -> int:
 
     if not rows:
         print(f"RESOLVER {mode_label}: no OPEN polymarket paper_trades to process.")
-        conn.close()
-        return 0
 
     changed = 0
     checked = 0
@@ -356,8 +449,19 @@ def main() -> int:
         changed += 1
         time.sleep(args.sleep)
 
+    shadow_checked, shadow_changed = resolve_shadow_forecasts(
+        conn,
+        limit=args.shadow_limit,
+        timeout_s=int(args.timeout),
+        sleep_s=float(args.sleep),
+        dry_run=bool(args.dry_run),
+    )
     conn.close()
-    print(f"RESOLVER SUMMARY: checked={checked} closed={changed} dry_run={bool(args.dry_run)}")
+    print(
+        f"RESOLVER SUMMARY: checked={checked} closed={changed} "
+        f"shadow_checked={shadow_checked} shadow_resolved={shadow_changed} "
+        f"dry_run={bool(args.dry_run)}"
+    )
     return 0
 
 

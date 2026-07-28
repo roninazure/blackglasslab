@@ -19,6 +19,7 @@ ROOT      = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from swarm_edge_io import merge_notes_blob
+from loop_engine.shadow import shadow_summary
 
 DB_PATH   = ROOT / "memory" / "runs.sqlite"
 LOG_PATH  = ROOT / "logs" / "infer_loop.log"
@@ -307,6 +308,65 @@ def check_last_eval():
         print(f"  could not load diagnostics: {e}")
 
 
+def check_shadow_forecasts():
+    print()
+    print("SHADOW FORECASTS")
+    if not DB_PATH.exists():
+        print("  database not found")
+        return
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='shadow_forecasts'"
+        ).fetchone() is None:
+            print("  ledger not initialized")
+            return
+        summary = shadow_summary(conn, now=now_utc())
+        print(
+            f"  forecasts today={summary['forecasts_today']}"
+            f" total={summary['forecasts_total']}"
+            f" resolved={summary['resolved_forecasts']}"
+        )
+        print(
+            f"  latest cycle evaluations={summary['evaluations_per_cycle']}"
+            f" llm_calls={summary['llm_calls_per_cycle']}"
+            f" freshness={summary['data_freshness_minutes']}m"
+        )
+        print("  threshold buckets")
+        for bucket in summary["threshold_buckets"]:
+            roi = "-" if bucket["roi"] is None else f"{bucket['roi']:.1%}"
+            print(
+                f"    {bucket['label']:<28} forecasts={bucket['forecasts']}"
+                f" resolved={bucket['resolved']} wins={bucket['wins']}"
+                f" losses={bucket['losses']} roi={roi}"
+            )
+        print(
+            "  best threshold "
+            f"{summary['best_performing_threshold'] or 'insufficient resolved data'}"
+        )
+        horizons = " ".join(
+            f"{label}={count}"
+            for label, count in summary["time_to_resolution_distribution"].items()
+        )
+        print(f"  resolution horizons {horizons}")
+        print("  decision dimensions")
+        for column, label in (
+            ("contract_validity", "contract validity"),
+            ("opportunity_quality", "opportunity quality"),
+            ("model_edge", "model edge"),
+            ("production_decision", "production decision"),
+        ):
+            counts = conn.execute(
+                f"SELECT {column}, COUNT(*) FROM shadow_forecasts GROUP BY {column} ORDER BY COUNT(*) DESC"
+            ).fetchall()
+            rendered = " ".join(f"{value}={count}" for value, count in counts)
+            print(f"    {label:<21} {rendered or 'none'}")
+    except Exception as error:
+        print(f"  could not load shadow ledger: {error}")
+    finally:
+        conn.close()
+
+
 def check_loop_engine():
     print()
     print("LOOP ENGINE")
@@ -430,6 +490,7 @@ def main():
     check_health()
     check_loop()
     check_positions()
+    check_shadow_forecasts()
     check_last_eval()
     check_market_universe()
     check_loop_engine()

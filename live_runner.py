@@ -29,6 +29,7 @@ except Exception:
 from context.temporal import build_temporal_context, validate_temporal_rationale
 from loop_engine.config import LLMBudget, LoopEngineConfig
 from loop_engine.opportunity import score_opportunity
+from loop_engine.shadow import ensure_shadow_schema, insert_shadow_forecast
 from loop_engine.prompts import classify_market
 from loop_engine.skeptic import should_request_skeptic
 from market_universe.policy import (
@@ -79,6 +80,8 @@ PIPELINE_SUMMARY_FIELDS = (
     "paper_pending",
     "paper_duplicate",
     "paper_not_requested",
+    "shadow_inserted",
+    "shadow_duplicate",
 )
 
 
@@ -416,7 +419,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def _filters() -> Tuple[float, float, float]:
-    min_edge_abs = _env_float("BGL_MIN_EDGE_ABS", _env_float("BGL_MIN_EDGE", 0.03))
+    min_edge_abs = _env_float("BGL_MIN_EDGE_ABS", _env_float("BGL_MIN_EDGE", 0.04))
     min_edge_vs_market = _env_float("BGL_MIN_EDGE_VS_MARKET", 0.0)
     max_disagree = _env_float("BGL_MAX_DISAGREEMENT", _env_float("BGL_MAX_DISAGREE", 0.60))
     return (min_edge_abs, min_edge_vs_market, max_disagree)
@@ -651,6 +654,20 @@ def _infer_one(
     config = LoopEngineConfig.from_env()
     universe_config = InstitutionalUniverseConfig.from_env()
     budget = LLMBudget(config, _daily_usage_path())
+    default_batch = max(config.evaluations_per_cycle * 2, config.evaluations_per_cycle)
+    shadow_backup_path: Optional[str] = None
+    if paper_mode and config.shadow_ledger_enabled:
+        db_row = conn.execute("PRAGMA database_list").fetchone()
+        db_path = str(db_row[2]) if db_row and db_row[2] else ":memory:"
+        backup_dir = (
+            Path(db_path).parent / "backups" if db_path != ":memory:" else "backups"
+        )
+        backup_path = ensure_shadow_schema(
+            conn,
+            db_path=db_path,
+            backup_dir=backup_dir,
+        )
+        shadow_backup_path = str(backup_path) if backup_path else None
     infer_diag_rows: List[Dict[str, Any]] = []
     infer_diag_counts: Dict[str, Any] = {
         "evaluated": 0,
@@ -686,6 +703,77 @@ def _infer_one(
         rejected = infer_diag_counts["rejected"]
         rejected[reason] = int(rejected.get(reason, 0)) + 1
 
+    def record_shadow(
+        *,
+        item: Dict[str, Any],
+        model_probability: float,
+        edge_abs: float,
+        side: str,
+        production_decision: str,
+        rejection_reason: Optional[str],
+        temporal_validation: str,
+        llm_used: bool,
+        skeptic_result: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not paper_mode or not config.shadow_ledger_enabled:
+            return
+        opportunity = item["opportunity"]
+        record = item["record"]
+        policy_quality = record.get("brain", {}).get(
+            "institutional_quality_score"
+        )
+        production_threshold = _filters()[0]
+        result = insert_shadow_forecast(
+            conn,
+            {
+                "run_id": report["run_id"],
+                "timestamp_utc": report["ts_utc"],
+                "venue": venue,
+                "market_id": item["slug"],
+                "slug": item["slug"],
+                "question": item["question"],
+                "category": item["category"],
+                "market_probability": item["p_yes_market"],
+                "model_probability": model_probability,
+                "side": side,
+                "absolute_edge": edge_abs,
+                "opportunity_score": opportunity.opportunity_score,
+                "quality_score": policy_quality,
+                "grade": opportunity.opportunity_grade,
+                "contract_validity": "valid",
+                "opportunity_quality": "qualified",
+                "model_edge": (
+                    "meets_production_threshold"
+                    if edge_abs >= production_threshold
+                    else "below_production_threshold"
+                ),
+                "production_decision": production_decision,
+                "rejection_reason": rejection_reason,
+                "temporal_validation": temporal_validation,
+                "skeptic_result": skeptic_result,
+                "market_end_date": item["temporal_context"].get(
+                    "market_end_date"
+                ),
+                "llm_used": llm_used,
+                "model_name": (
+                    os.environ.get("BGL_LLM_MODEL", "")
+                    if llm_used
+                    else "baseline"
+                ),
+                "metadata": {
+                    "pricing_source": item["pricing_source"],
+                    "spread": item["spread"],
+                    "market_snapshot_id": item["market"].get("id"),
+                    "temporal_context": item["temporal_context"],
+                    "scoring_components": opportunity.scoring_components,
+                },
+            },
+            thresholds=config.threshold_buckets,
+            production_threshold=production_threshold,
+            hypothetical_stake_usd=paper_size,
+        )
+        summary["shadow_inserted" if result.inserted else "shadow_duplicate"] += 1
+
     def finish(
         candidate: Optional[Dict[str, Any]],
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
@@ -695,7 +783,12 @@ def _infer_one(
                 "source": venue,
                 "mode": "infer",
                 "settings": {
-                    "batch": int(os.environ.get("BGL_INFER_BATCH", "8") or "8"),
+                    "batch": int(
+                        os.environ.get(
+                            "BGL_INFER_BATCH", str(default_batch)
+                        )
+                        or str(default_batch)
+                    ),
                     "cooldown": int(
                         os.environ.get("BGL_INFER_COOLDOWN", "0") or "0"
                     ),
@@ -730,6 +823,12 @@ def _infer_one(
             ],
         }
         report["brain_report"] = brain_report
+        report["shadow_ledger"] = {
+            "enabled": config.shadow_ledger_enabled,
+            "inserted": summary["shadow_inserted"],
+            "duplicates": summary["shadow_duplicate"],
+            "migration_backup_path": shadow_backup_path,
+        }
         _write_brain_report(brain_report)
         return candidate, report
 
@@ -744,7 +843,12 @@ def _infer_one(
             )
         return finish(None)
 
-    batch = int(os.environ.get("BGL_INFER_BATCH", "8") or "8")
+    batch = int(
+        os.environ.get(
+            "BGL_INFER_BATCH", str(default_batch)
+        )
+        or str(default_batch)
+    )
     cooldown_n = int(os.environ.get("BGL_INFER_COOLDOWN", "0") or "0")
 
     slugs, next_cursor = _infer_pick_slugs_batch(conn, watchlist, batch)
@@ -984,6 +1088,7 @@ def _infer_one(
             min_score_for_llm=config.min_opportunity_score_for_llm,
             existing_exposure=category_exposure > 0,
             quality_reject_reason=baseline.reject_reason,
+            time_to_resolution_weight=config.time_to_resolution_weight,
         )
         summary["opportunity_scored"] += 1
         _update_brain(
@@ -1109,6 +1214,15 @@ def _infer_one(
         key=lambda item: item["opportunity"].opportunity_score,
         reverse=True,
     )
+    for item in ranked[config.evaluations_per_cycle :]:
+        _finalize_pipeline_market(
+            item["record"],
+            final_stage="evaluation_limit",
+            decision="SKIP",
+            reason="evaluation_limit_reached",
+            details={"evaluations_per_cycle": config.evaluations_per_cycle},
+        )
+    ranked = ranked[: config.evaluations_per_cycle]
     use_llm = (
         _env_bool("BGL_INFER_USE_LLM", False)
         and openai_enabled()
@@ -1129,16 +1243,6 @@ def _infer_one(
         baseline = item["baseline"]
         opportunity = item["opportunity"]
 
-        if candidate is not None:
-            _finalize_pipeline_market(
-                record,
-                final_stage="candidate_limit",
-                decision="SKIP",
-                reason="candidate_limit_reached",
-                details={"max_candidates_per_run": 1},
-            )
-            continue
-
         llm_rationale = ""
         llm_conf = float(baseline.confidence)
         p_yes_model = float(baseline.p_yes_model)
@@ -1156,6 +1260,19 @@ def _infer_one(
                 count_rejection("budget_skipped")
                 budget_status = budget.primary_status()
                 _update_brain(record, budget_status=budget_status)
+                baseline_edge = float(baseline.p_yes_model - p_yes_market)
+                record_shadow(
+                    item=item,
+                    model_probability=float(baseline.p_yes_model),
+                    edge_abs=abs(baseline_edge),
+                    side="YES" if baseline_edge > 0 else "NO",
+                    production_decision="not_evaluated_for_production",
+                    rejection_reason="budget_skipped",
+                    temporal_validation=str(
+                        temporal_context.get("event_status") or "UNKNOWN"
+                    ),
+                    llm_used=False,
+                )
                 infer_diag_rows.append(
                     {
                         "slug": slug,
@@ -1262,6 +1379,16 @@ def _infer_one(
                         "temporal_details": temporal_details,
                     }
                 )
+                record_shadow(
+                    item=item,
+                    model_probability=p_yes_model,
+                    edge_abs=abs(edge_vs_market),
+                    side="YES" if edge_vs_market > 0 else "NO",
+                    production_decision="rejected",
+                    rejection_reason="temporal_inconsistency",
+                    temporal_validation=temporal_reason,
+                    llm_used=True,
+                )
                 _finalize_pipeline_market(
                     record,
                     final_stage="temporal_validation",
@@ -1307,6 +1434,21 @@ def _infer_one(
                     p_yes_model=p_yes_model,
                     edge=edge_abs,
                     budget_status=budget_status,
+                )
+                record_shadow(
+                    item=item,
+                    model_probability=p_yes_model,
+                    edge_abs=edge_abs,
+                    side="YES" if edge_vs_market > 0 else "NO",
+                    production_decision="not_evaluated_for_production",
+                    rejection_reason="budget_skipped",
+                    temporal_validation="valid",
+                    llm_used=llm_used,
+                    skeptic_result={
+                        "action": "NOT_RUN",
+                        "reason": budget_status,
+                        "trigger": skeptic_trigger_reason,
+                    },
                 )
                 infer_diag_rows.append(
                     {
@@ -1370,6 +1512,17 @@ def _infer_one(
                     edge=edge_abs,
                     budget_status="skeptic_failed",
                 )
+                record_shadow(
+                    item=item,
+                    model_probability=p_yes_model,
+                    edge_abs=edge_abs,
+                    side="YES" if edge_vs_market > 0 else "NO",
+                    production_decision="rejected",
+                    rejection_reason="skeptic_reject",
+                    temporal_validation="valid",
+                    llm_used=llm_used,
+                    skeptic_result=skeptic_payload,
+                )
                 infer_diag_rows.append(
                     {
                         "slug": slug,
@@ -1397,6 +1550,17 @@ def _infer_one(
                     p_yes_model=p_yes_model,
                     edge=edge_abs,
                     budget_status="skeptic_used",
+                )
+                record_shadow(
+                    item=item,
+                    model_probability=p_yes_model,
+                    edge_abs=edge_abs,
+                    side="YES" if edge_vs_market > 0 else "NO",
+                    production_decision="rejected",
+                    rejection_reason="skeptic_reject",
+                    temporal_validation="valid",
+                    llm_used=llm_used,
+                    skeptic_result=skeptic_payload,
                 )
                 infer_diag_rows.append(
                     {
@@ -1435,6 +1599,17 @@ def _infer_one(
                         p_yes_model=p_yes_model,
                         edge=edge_abs,
                         budget_status="skeptic_used",
+                    )
+                    record_shadow(
+                        item=item,
+                        model_probability=p_yes_model,
+                        edge_abs=edge_abs,
+                        side="YES" if edge_vs_market > 0 else "NO",
+                        production_decision="rejected",
+                        rejection_reason="skeptic_downgrade",
+                        temporal_validation="valid",
+                        llm_used=llm_used,
+                        skeptic_result=skeptic_payload,
                     )
                     infer_diag_rows.append(
                         {
@@ -1495,6 +1670,27 @@ def _infer_one(
             skeptic_used=skeptic_used,
         )
 
+        production_selected = reason == "pass" and candidate is None
+        record_shadow(
+            item=item,
+            model_probability=p_yes_model,
+            edge_abs=edge_abs,
+            side=side,
+            production_decision=(
+                "candidate_pending_approval"
+                if production_selected
+                else ("candidate_limit_reached" if reason == "pass" else "rejected")
+            ),
+            rejection_reason=(
+                None
+                if production_selected
+                else ("candidate_limit_reached" if reason == "pass" else reason)
+            ),
+            temporal_validation="valid",
+            llm_used=llm_used,
+            skeptic_result=skeptic_payload or None,
+        )
+
         if reason != "pass":
             count_rejection(reason)
             if reason == "max_disagree":
@@ -1523,7 +1719,7 @@ def _infer_one(
             )
             continue
 
-        candidate = {
+        next_candidate = {
             "ts_utc": utc_now_iso(),
             "run_id": report["run_id"],
             "market_id": slug,
@@ -1571,6 +1767,16 @@ def _infer_one(
             },
         }
         infer_diag_counts["passed"] += 1
+        if candidate is not None:
+            _finalize_pipeline_market(
+                record,
+                final_stage="candidate_limit",
+                decision="SHADOW",
+                reason="candidate_limit_reached",
+                details={"max_candidates_per_run": 1},
+            )
+            continue
+        candidate = next_candidate
         summary["candidates_generated"] += 1
         _finalize_pipeline_market(
             record,

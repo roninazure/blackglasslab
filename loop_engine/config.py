@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from loop_engine.shadow import DEFAULT_THRESHOLDS, parse_thresholds
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -22,8 +24,22 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 @dataclass(frozen=True)
 class LoopEngineConfig:
+    active_universe_size: int = 75
+    evaluations_per_cycle: int = 15
     max_llm_calls_per_cycle: int = 3
     max_skeptic_calls_per_cycle: int = 1
     max_daily_llm_calls: int = 24
@@ -32,10 +48,20 @@ class LoopEngineConfig:
     skeptic_near_threshold_ratio: float = 0.75
     skeptic_high_confidence: float = 0.85
     estimated_cost_per_call_usd: float = 0.0
+    threshold_buckets: tuple[float, ...] = DEFAULT_THRESHOLDS
+    time_to_resolution_weight: float = 1.0
+    shadow_ledger_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> "LoopEngineConfig":
         return cls(
+            active_universe_size=_env_int(
+                "BGL_ACTIVE_UNIVERSE_SIZE",
+                _env_int("BGL_UNIVERSE_TARGET_SIZE", 75),
+            ),
+            evaluations_per_cycle=max(
+                1, _env_int("BGL_EVALUATIONS_PER_CYCLE", 15)
+            ),
             max_llm_calls_per_cycle=_env_int("BGL_MAX_LLM_CALLS_PER_CYCLE", 3),
             max_skeptic_calls_per_cycle=_env_int("BGL_MAX_SKEPTIC_CALLS_PER_CYCLE", 1),
             max_daily_llm_calls=_env_int("BGL_MAX_DAILY_LLM_CALLS", 24),
@@ -55,10 +81,19 @@ class LoopEngineConfig:
             estimated_cost_per_call_usd=max(
                 0.0, _env_float("BGL_ESTIMATED_COST_PER_CALL_USD", 0.0)
             ),
+            threshold_buckets=parse_thresholds(
+                os.environ.get("BGL_SHADOW_THRESHOLD_BUCKETS")
+            ),
+            time_to_resolution_weight=max(
+                0.0, _env_float("BGL_TIME_TO_RESOLUTION_WEIGHT", 1.0)
+            ),
+            shadow_ledger_enabled=_env_bool("BGL_SHADOW_LEDGER_ENABLED", True),
         )
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "active_universe_size": self.active_universe_size,
+            "evaluations_per_cycle": self.evaluations_per_cycle,
             "max_llm_calls_per_cycle": self.max_llm_calls_per_cycle,
             "max_skeptic_calls_per_cycle": self.max_skeptic_calls_per_cycle,
             "max_daily_llm_calls": self.max_daily_llm_calls,
@@ -67,6 +102,9 @@ class LoopEngineConfig:
             "skeptic_near_threshold_ratio": self.skeptic_near_threshold_ratio,
             "skeptic_high_confidence": self.skeptic_high_confidence,
             "estimated_cost_per_call_usd": self.estimated_cost_per_call_usd,
+            "threshold_buckets": list(self.threshold_buckets),
+            "time_to_resolution_weight": self.time_to_resolution_weight,
+            "shadow_ledger_enabled": self.shadow_ledger_enabled,
         }
 
 
