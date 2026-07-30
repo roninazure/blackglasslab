@@ -309,6 +309,10 @@ def main() -> int:
         print(
             f"- forecasts_today:   {shadow['forecasts_today']}"
             f"\n- forecasts_total:   {shadow['forecasts_total']}"
+            f"\n- forecasts_total:   {shadow['forecasts_total']}"
+            f"\n- unique_contracts:   {shadow['unique_contracts']}"
+            f"\n- unresolved_unique:  {shadow['unresolved_unique_contracts']}"
+            f"\n- resolved_unique:    {shadow['resolved_unique_contracts']}"
             f"\n- latest_evaluations:{shadow['evaluations_per_cycle']}"
             f"\n- latest_llm_calls:  {shadow['llm_calls_per_cycle']}"
             f"\n- resolved:          {shadow['resolved_forecasts']}"
