@@ -417,6 +417,13 @@ class RuntimePublicationAndReportingTests(unittest.TestCase):
                 run_mock.call_args_list[-1].args[0],
             )
 
+    def test_publication_refused_in_production_worktree(self) -> None:
+        with mock.patch.object(export_data, "PUBLISH_ENABLED", True), mock.patch.dict(
+            os.environ, {"BGL_PRODUCTION_MODE": "1"}, clear=False
+        ), mock.patch("scripts.export_data.subprocess.run") as run_mock:
+            export_data.git_push()
+        run_mock.assert_not_called()
+
     def test_export_entrypoint_works_with_compatibility_defaults(self) -> None:
         repo_root = Path(__file__).resolve().parent.parent
         with tempfile.TemporaryDirectory() as td:

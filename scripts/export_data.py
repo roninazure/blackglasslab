@@ -89,6 +89,11 @@ def git_push() -> None:
     if not PUBLISH_ENABLED:
         print("  [export] publication disabled (SWARM_EDGE_PUBLISH_ENABLED=0)")
         return
+    if os.getenv("BGL_PRODUCTION_MODE", "").strip().lower() in {"1", "true", "yes", "on"} or os.getenv(
+        "BGL_RUNTIME_MODE", ""
+    ).strip().lower() in {"production", "prod"}:
+        print("  [export] publication refused in production worktree")
+        return
     files = []
     if TRADES_OUT.exists():
         files.append("data/paper_trades.json")
