@@ -23,9 +23,10 @@ from loop_engine.shadow import (
     hypothetical_profit,
     resolve_shadow_forecast,
 )
+from swarm_edge_runtime import RUNTIME_PATHS
 
 
-DB_PATH = os.path.join("memory", "runs.sqlite")
+DB_PATH = str(RUNTIME_PATHS.db_path)
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 
 

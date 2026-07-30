@@ -15,10 +15,11 @@ import plotly.graph_objects as go
 import streamlit as st
 import sys
 
-ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
-
 from swarm_edge_io import load_paper_trades_export, merge_notes_blob
+from swarm_edge_runtime import RUNTIME_PATHS
+
+ROOT = RUNTIME_PATHS.root
+sys.path.insert(0, str(ROOT))
 
 # ---------------------------------------------------------------------------
 # Page config + Bloomberg CSS
@@ -92,9 +93,9 @@ st.markdown("""
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DB_PATH = ROOT / "memory" / "runs.sqlite"
-DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
-LOG_PATH = ROOT / "logs" / "infer_loop.log"
+DB_PATH = RUNTIME_PATHS.db_path
+DIAG_PATH = RUNTIME_PATHS.signals_dir / "infer_diagnostics.json"
+LOG_PATH = RUNTIME_PATHS.log_dir / "infer_loop.log"
 CUTOFF = "2026-03-28T21:00"
 
 MARKET_EXPIRY = {
@@ -138,7 +139,7 @@ def load_trades(statuses: tuple = ("OPEN",)) -> pd.DataFrame:
             f"SELECT * FROM paper_trades WHERE ts_utc > '{CUTOFF}' AND status IN ({placeholders}) ORDER BY ts_utc DESC", conn)
         conn.close()
     else:
-        json_path = ROOT / "data" / "paper_trades.json"
+        json_path = RUNTIME_PATHS.data_dir / "paper_trades.json"
         if not json_path.exists():
             return pd.DataFrame()
         _meta, records = load_paper_trades_export(json_path)
@@ -149,7 +150,7 @@ def load_trades(statuses: tuple = ("OPEN",)) -> pd.DataFrame:
 
 @st.cache_data(ttl=15)
 def load_diagnostics() -> dict:
-    for p in [DIAG_PATH, ROOT / "data" / "infer_diagnostics.json"]:
+    for p in [DIAG_PATH, RUNTIME_PATHS.data_dir / "infer_diagnostics.json"]:
         if p.exists():
             try: return json.loads(p.read_text())
             except: pass

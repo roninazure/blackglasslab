@@ -21,11 +21,13 @@ from typing import Any, Dict, Optional
 import sys
 from pathlib import Path
 
-DB_PATH = os.path.join("memory", "runs.sqlite")
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from swarm_edge_io import merge_notes_blob
+from swarm_edge_runtime import RUNTIME_PATHS
+
+DB_PATH = str(RUNTIME_PATHS.db_path)
 
 
 def _connect_db(path: str) -> sqlite3.Connection:

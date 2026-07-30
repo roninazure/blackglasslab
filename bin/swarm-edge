@@ -1,0 +1,124 @@
+#!/bin/bash
+set -euo pipefail
+
+APP_DIR="$HOME/swarm-runtime/swarm-edge"
+PID_FILE="$APP_DIR/runtime/swarm-edge.pid"
+LOG_FILE="$APP_DIR/logs/infer_loop.log"
+BACKUP_DIR="$APP_DIR/backups"
+WATCHLIST_PATH="$APP_DIR/markets/polymarket_watchlist.json"
+
+cd "$APP_DIR"
+
+load_env() {
+  source "$APP_DIR/.venv/bin/activate"
+  set -a
+  local env_file="${BGL_RUNTIME_ENV_FILE:-$APP_DIR/.env.runtime}"
+  if [[ -f "$env_file" ]]; then
+    source "$env_file"
+  elif [[ -f "$APP_DIR/.env" ]]; then
+    source "$APP_DIR/.env"
+  fi
+  set +a
+}
+
+configure_paths() {
+  local log_dir="${BGL_LOG_DIR:-$APP_DIR/logs}"
+  local runtime_dir="${BGL_RUNTIME_DIR:-$APP_DIR/runtime}"
+  BACKUP_DIR="${BGL_BACKUP_DIR:-$APP_DIR/backups}"
+  WATCHLIST_PATH="${BGL_WATCHLIST_PATH:-$APP_DIR/markets/polymarket_watchlist.json}"
+  PID_FILE="$runtime_dir/swarm-edge.pid"
+  LOG_FILE="$log_dir/infer_loop.log"
+}
+
+is_running() {
+  pgrep -f "bash .*scripts/run_live.sh|live_runner.py" >/dev/null 2>&1
+}
+
+case "${1:-status}" in
+  start)
+    if is_running; then
+      echo "Swarm Edge already running"
+      pgrep -af "bash .*scripts/run_live.sh|live_runner.py" || true
+      exit 0
+    fi
+
+    load_env
+    configure_paths
+    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$PID_FILE")"
+    nohup bash "$APP_DIR/scripts/run_live.sh" >> "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+    echo "Swarm Edge started"
+    ;;
+
+  run)
+    load_env
+    configure_paths
+    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$PID_FILE")"
+    echo $$ > "$PID_FILE"
+    exec bash "$APP_DIR/scripts/run_live.sh"
+    ;;
+
+  stop)
+    pkill -f "bash .*scripts/run_live.sh" 2>/dev/null || true
+    pkill -f "live_runner.py" 2>/dev/null || true
+    rm -f "$PID_FILE"
+    echo "Swarm Edge stopped"
+    ;;
+
+  restart)
+    "$0" stop
+    sleep 2
+    "$0" start
+    ;;
+
+  status)
+    load_env
+    configure_paths
+    python3 "$APP_DIR/scripts/morning_status.py"
+    ;;
+
+  ps)
+    pgrep -af "bash .*scripts/run_live.sh|live_runner.py" || echo "No Swarm Edge processes"
+    ;;
+
+  logs)
+    load_env
+    configure_paths
+    mkdir -p "$(dirname "$LOG_FILE")"
+    touch "$LOG_FILE"
+    tail -f "$LOG_FILE"
+    ;;
+
+  tail)
+    load_env
+    configure_paths
+    mkdir -p "$(dirname "$LOG_FILE")"
+    touch "$LOG_FILE"
+    tail -80 "$LOG_FILE"
+    ;;
+
+  infer)
+    load_env
+    python3 "$APP_DIR/live_runner.py" --infer
+    ;;
+
+  resolve)
+    load_env
+    python3 "$APP_DIR/scripts/resolve_paper_trades.py" --dry-run
+    ;;
+
+  backup)
+    load_env
+    configure_paths
+    TS=$(date +%Y%m%d_%H%M%S)
+    mkdir -p "$BACKUP_DIR"
+    cp "${BGL_DB_PATH:-$APP_DIR/memory/runs.sqlite}" "$BACKUP_DIR/runs.sqlite.$TS"
+    cp "$WATCHLIST_PATH" "$BACKUP_DIR/polymarket_watchlist.$TS.json"
+    echo "Backup written to $BACKUP_DIR"
+    ;;
+
+  *)
+    echo "Usage: swarm-edge {start|run|stop|restart|status|ps|logs|tail|infer|resolve|backup}"
+    exit 1
+    ;;
+esac

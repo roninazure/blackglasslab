@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from swarm_edge_runtime import RUNTIME_PATHS
 from typing import Optional
 
 from .base import MarketAdapter, MarketSnapshot
@@ -14,7 +15,7 @@ class FakeAdapter:
     venue = "fake"
 
     def __init__(self, markets_path: Path | None = None) -> None:
-        self._path = markets_path or (Path("markets") / "fake_markets.json")
+        self._path = markets_path or (RUNTIME_PATHS.root / "markets" / "fake_markets.json")
         self._cache = None
 
     def _load(self):

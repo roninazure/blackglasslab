@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from loop_engine.shadow import DEFAULT_THRESHOLDS, parse_thresholds
+from swarm_edge_runtime import RUNTIME_PATHS
+
+
+DEFAULT_LLM_USAGE_PATH = RUNTIME_PATHS.signals_dir / "llm_usage_daily.json"
 
 
 def _env_int(name: str, default: int) -> int:

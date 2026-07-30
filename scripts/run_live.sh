@@ -3,8 +3,13 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Load .env if present
-if [[ -f .env ]]; then
+# Load the shared runtime environment.  .env remains the legacy fallback.
+RUNTIME_ENV_FILE="${BGL_RUNTIME_ENV_FILE:-.env.runtime}"
+if [[ -f "$RUNTIME_ENV_FILE" ]]; then
+  set -o allexport
+  source "$RUNTIME_ENV_FILE"
+  set +o allexport
+elif [[ -f .env ]]; then
   set -o allexport
   source .env
   set +o allexport

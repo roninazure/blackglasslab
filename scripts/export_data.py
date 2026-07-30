@@ -14,14 +14,21 @@ import json
 import sqlite3
 import subprocess
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT     = Path(__file__).parent.parent
-DB_PATH  = ROOT / "memory" / "runs.sqlite"
-DATA_DIR = ROOT / "data"
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from swarm_edge_runtime import RUNTIME_PATHS
+
+ROOT     = RUNTIME_PATHS.root
+DB_PATH  = RUNTIME_PATHS.db_path
+DATA_DIR = RUNTIME_PATHS.data_dir
 TRADES_OUT  = DATA_DIR / "paper_trades.json"
-DIAG_SRC    = ROOT / "signals" / "infer_diagnostics.json"
+DIAG_SRC    = RUNTIME_PATHS.signals_dir / "infer_diagnostics.json"
 DIAG_OUT    = DATA_DIR / "infer_diagnostics.json"
 CUTOFF      = "2026-03-28T21:00"
 PUBLISH_ENABLED = os.getenv("SWARM_EDGE_PUBLISH_ENABLED", "0").strip() in {"1", "true", "TRUE", "yes", "YES"}
@@ -33,6 +40,11 @@ def utc_now_iso() -> str:
 
 def utc_now_label() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def now_utc() -> str:
+    """Return a commit-safe UTC timestamp for optional publication."""
+    return utc_now_iso()
 
 
 def export_trades() -> int:
@@ -98,7 +110,12 @@ def git_push() -> None:
         return
 
     ts = now_utc()
-    run(["git", "commit", "-m", f"data: snapshot {ts}"])
+    commit_status = run(["git", "commit", "-m", f"data: snapshot {ts}"])
+    if commit_status != 0:
+        # A failed publication must not leave generated files staged.
+        run(["git", "reset", "--quiet", "--"] + files)
+        print("  [export] commit failed — generated files unstaged")
+        return
 
     # Pull rebase first to avoid conflicts, then push
     pull = subprocess.run(

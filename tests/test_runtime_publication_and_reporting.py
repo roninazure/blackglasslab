@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import shutil
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -310,18 +311,146 @@ class RuntimePublicationAndReportingTests(unittest.TestCase):
                 "SWARM_EDGE_WATCHLIST_APPLY": "0",
             }
         )
-        result = subprocess.run(
-            ["bash", "scripts/run_live.sh"],
-            cwd=Path(__file__).resolve().parent.parent,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "scripts").mkdir()
+            shutil.copy2(
+                Path(__file__).resolve().parent.parent / "scripts" / "run_live.sh",
+                root / "scripts" / "run_live.sh",
+            )
+            result = subprocess.run(
+                ["bash", "scripts/run_live.sh"],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("auto-export data", result.stdout)
         self.assertIn("watchlist apply disabled", result.stdout)
         self.assertNotIn("PIPELINE", result.stdout)
+
+    def test_export_entrypoint_works_outside_checkout_with_absolute_runtime_paths(self) -> None:
+        repo_root = Path(__file__).resolve().parent.parent
+        for cwd in (repo_root, Path("/tmp")):
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                (root / "scripts").mkdir()
+                shutil.copy2(repo_root / "scripts" / "export_data.py", root / "scripts" / "export_data.py")
+                shutil.copy2(repo_root / "swarm_edge_runtime.py", root / "swarm_edge_runtime.py")
+                db_path = root / "runs.sqlite"
+                data_dir = root / "data"
+                signals_dir = root / "signals"
+                data_dir.mkdir()
+                signals_dir.mkdir()
+                _create_db(db_path)
+                conn = sqlite3.connect(db_path)
+                _insert_trade(
+                    conn,
+                    status="OPEN",
+                    side="YES",
+                    resolved_outcome=None,
+                    notes=json.dumps({"p_yes_market": 0.4}),
+                    market_id="fixture-market",
+                    trade_id=1,
+                )
+                conn.commit()
+                conn.close()
+                (signals_dir / "infer_diagnostics.json").write_text(
+                    json.dumps({"ts_utc": "2026-01-01T00:00:00+00:00", "rows": []})
+                )
+                env = os.environ.copy()
+                env.update(
+                    {
+                        "BGL_DB_PATH": str(db_path),
+                        "BGL_LOG_DIR": str(root / "logs"),
+                        "BGL_SIGNALS_DIR": str(signals_dir),
+                        "BGL_REPORT_DIR": str(root / "reports"),
+                        "BGL_BACKUP_DIR": str(root / "backups"),
+                        "BGL_RUNTIME_DIR": str(root / "runtime"),
+                        "BGL_WATCHLIST_PATH": str(root / "watchlist.json"),
+                        "BGL_RUNTIME_ENV_FILE": str(root / "runtime.env"),
+                        "SWARM_EDGE_PUBLISH_ENABLED": "0",
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                    }
+                )
+                env.pop("PYTHONPATH", None)
+                result = subprocess.run(
+                    [sys.executable, str(root / "scripts" / "export_data.py")],
+                    cwd=cwd,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("publication disabled", result.stdout)
+                self.assertNotIn("ModuleNotFoundError", result.stdout + result.stderr)
+                self.assertTrue((data_dir / "paper_trades.json").exists())
+                self.assertTrue((data_dir / "infer_diagnostics.json").exists())
+
+    def test_failed_export_commit_unstages_generated_files(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "data").mkdir()
+            trades_out = root / "data" / "paper_trades.json"
+            diag_out = root / "data" / "infer_diagnostics.json"
+            trades_out.write_text("{}")
+            diag_out.write_text("{}")
+            responses = iter([0, 1, 1, 0])
+
+            def fake_run(cmd, **kwargs):
+                return mock.Mock(returncode=next(responses), stderr="commit failed", stdout="")
+
+            run_mock = mock.Mock(side_effect=fake_run)
+            with mock.patch.object(export_data, "ROOT", root), mock.patch.object(
+                export_data, "TRADES_OUT", trades_out
+            ), mock.patch.object(export_data, "DIAG_OUT", diag_out), mock.patch.object(
+                export_data, "PUBLISH_ENABLED", True
+            ), mock.patch("scripts.export_data.subprocess.run", run_mock):
+                export_data.git_push()
+
+            # The reset command is the final subprocess call after commit failure.
+            self.assertEqual(
+                ["git", "reset", "--quiet", "--", "data/paper_trades.json", "data/infer_diagnostics.json"],
+                run_mock.call_args_list[-1].args[0],
+            )
+
+    def test_export_entrypoint_works_with_compatibility_defaults(self) -> None:
+        repo_root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "scripts").mkdir()
+            shutil.copy2(repo_root / "scripts" / "export_data.py", root / "scripts" / "export_data.py")
+            shutil.copy2(repo_root / "swarm_edge_runtime.py", root / "swarm_edge_runtime.py")
+            (root / "memory").mkdir()
+            (root / "signals").mkdir()
+            _create_db(root / "memory" / "runs.sqlite")
+            (root / "signals" / "infer_diagnostics.json").write_text(
+                json.dumps({"ts_utc": "2026-01-01T00:00:00+00:00", "rows": []})
+            )
+            env = os.environ.copy()
+            for key in (
+                "BGL_DB_PATH", "BGL_LOG_DIR", "BGL_SIGNALS_DIR", "BGL_REPORT_DIR",
+                "BGL_BACKUP_DIR", "BGL_RUNTIME_DIR", "BGL_WATCHLIST_PATH",
+                "BGL_RUNTIME_ENV_FILE", "BGL_RUNTIME_MODE", "BGL_PRODUCTION_MODE",
+            ):
+                env.pop(key, None)
+            env["SWARM_EDGE_PUBLISH_ENABLED"] = "0"
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts" / "export_data.py")],
+                cwd=Path("/tmp"),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("publication disabled", result.stdout)
+            self.assertTrue((root / "data" / "paper_trades.json").exists())
+            self.assertTrue((root / "data" / "infer_diagnostics.json").exists())
 
     def test_export_and_database_fingerprint_remain_stable(self) -> None:
         with tempfile.TemporaryDirectory() as td:

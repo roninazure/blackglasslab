@@ -14,9 +14,10 @@ ROOT    = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from swarm_edge_io import merge_notes_blob
+from swarm_edge_runtime import RUNTIME_PATHS
 
-OUT     = ROOT / "swarm_edge_flyer.pdf"
-DB_PATH = ROOT / "memory" / "runs.sqlite"
+OUT     = RUNTIME_PATHS.report_dir / "swarm_edge_flyer.pdf"
+DB_PATH = RUNTIME_PATHS.db_path
 CUTOFF  = "2026-03-28T21:00"
 
 # ── Palette ─────────────────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ W, H = letter   # 612 × 792
 def live_stats() -> dict:
     defaults = {"n_trades": 6, "deployed": 600, "total_payout": 8971, "n_markets": 15}
     try:
-        wl = ROOT / "markets" / "polymarket_watchlist.json"
+        wl = RUNTIME_PATHS.watchlist_path
         n_markets = len(json.loads(wl.read_text())) if wl.exists() else 15
         if not DB_PATH.exists():
             return {**defaults, "n_markets": n_markets}

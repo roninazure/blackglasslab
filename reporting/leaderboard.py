@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 from typing import List, Tuple
+from swarm_edge_runtime import RUNTIME_PATHS
 
-DB_PATH = "memory/runs.sqlite"
+DB_PATH = str(RUNTIME_PATHS.db_path)
 
 
 def top_agents(conn: sqlite3.Connection, window: int) -> List[Tuple]:

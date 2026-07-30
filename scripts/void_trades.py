@@ -12,9 +12,10 @@ import argparse
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from swarm_edge_runtime import RUNTIME_PATHS
 
-ROOT    = Path(__file__).parent.parent
-DB_PATH = ROOT / "memory" / "runs.sqlite"
+ROOT    = RUNTIME_PATHS.root
+DB_PATH = RUNTIME_PATHS.db_path
 
 # Trades to void — bad entries from before exclusion filters were tightened
 VOID_SLUGS = [

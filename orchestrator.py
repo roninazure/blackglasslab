@@ -38,12 +38,13 @@ from agents.skeptic import run as run_skeptic
 from agents.auditor import score_prediction
 from agents.reaper import maybe_reap
 from agents.evolver import ensure_seed_population, sample_active, evolve, PopMember
+from swarm_edge_runtime import RUNTIME_PATHS
 
 
-DB_PATH = os.path.join("memory", "runs.sqlite")
-LOG_DIR = "logs"
-MARKETS_PATH = Path("markets") / "fake_markets.json"
-AGENT_STATE_PATH = Path("agent_state.json")  # kept for backward compatibility
+DB_PATH = str(RUNTIME_PATHS.db_path)
+LOG_DIR = str(RUNTIME_PATHS.log_dir)
+MARKETS_PATH = RUNTIME_PATHS.root / "markets" / "fake_markets.json"
+AGENT_STATE_PATH = RUNTIME_PATHS.runtime_dir / "agent_state.json"
 
 
 # Swarm sizes (per run)
