@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swarm-edge"
+version = "0.0.0"
+description = "Swarm Edge runtime"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "streamlit==1.60.0",
+  "plotly==6.9.0",
+  "pandas==3.0.5",
+  "anthropic==0.119.0",
+]
+
+[tool.setuptools]
+py-modules = ["swarm_edge_io", "swarm_edge_runtime"]
