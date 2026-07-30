@@ -367,6 +367,7 @@ class RuntimePublicationAndReportingTests(unittest.TestCase):
                         "BGL_LOG_DIR": str(root / "logs"),
                         "BGL_SIGNALS_DIR": str(signals_dir),
                         "BGL_REPORT_DIR": str(root / "reports"),
+                        "BGL_EXPORT_DIR": str(data_dir),
                         "BGL_BACKUP_DIR": str(root / "backups"),
                         "BGL_RUNTIME_DIR": str(root / "runtime"),
                         "BGL_WATCHLIST_PATH": str(root / "watchlist.json"),
@@ -441,7 +442,7 @@ class RuntimePublicationAndReportingTests(unittest.TestCase):
             for key in (
                 "BGL_DB_PATH", "BGL_LOG_DIR", "BGL_SIGNALS_DIR", "BGL_REPORT_DIR",
                 "BGL_BACKUP_DIR", "BGL_RUNTIME_DIR", "BGL_WATCHLIST_PATH",
-                "BGL_RUNTIME_ENV_FILE", "BGL_RUNTIME_MODE", "BGL_PRODUCTION_MODE",
+                "BGL_RUNTIME_ENV_FILE", "BGL_EXPORT_DIR", "BGL_RUNTIME_MODE", "BGL_PRODUCTION_MODE",
             ):
                 env.pop(key, None)
             env["SWARM_EDGE_PUBLISH_ENABLED"] = "0"

@@ -26,6 +26,7 @@ PATH_ENV_VARS = (
     "BGL_LOG_DIR",
     "BGL_SIGNALS_DIR",
     "BGL_REPORT_DIR",
+    "BGL_EXPORT_DIR",
     "BGL_BACKUP_DIR",
     "BGL_RUNTIME_DIR",
     "BGL_WATCHLIST_PATH",
@@ -138,6 +139,7 @@ class RuntimePaths:
     log_dir: Path
     signals_dir: Path
     report_dir: Path
+    export_dir: Path
     backup_dir: Path
     runtime_dir: Path
     watchlist_path: Path
@@ -145,7 +147,7 @@ class RuntimePaths:
 
     @property
     def data_dir(self) -> Path:
-        return self.root / "data"
+        return self.export_dir
 
     @property
     def migrations_dir(self) -> Path:
@@ -193,6 +195,12 @@ def get_runtime_paths(
             target.get("BGL_REPORT_DIR"),
             PROJECT_ROOT / "reports",
             variable="BGL_REPORT_DIR",
+            production=production,
+        ),
+        export_dir=_resolve_path(
+            target.get("BGL_EXPORT_DIR"),
+            PROJECT_ROOT / "data",
+            variable="BGL_EXPORT_DIR",
             production=production,
         ),
         backup_dir=_resolve_path(
