@@ -246,6 +246,7 @@ def resolve_shadow_forecast(
     outcome: str,
     *,
     resolved_at_utc: Optional[str] = None,
+    commit: bool = True,
 ) -> bool:
     outcome = str(outcome).upper()
     if outcome not in {"YES", "NO"}:
@@ -314,7 +315,8 @@ def resolve_shadow_forecast(
             """,
             (won, bucket_pnl, bucket_pnl / float(bucket_stake), holding_days, bucket_id),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
     return True
 
 
@@ -352,6 +354,21 @@ def shadow_summary(
     resolved = int(
         conn.execute(
             "SELECT COUNT(*) FROM shadow_forecasts WHERE status='RESOLVED'"
+        ).fetchone()[0]
+    )
+    unique_contracts = int(
+        conn.execute(
+            "SELECT COUNT(DISTINCT venue || ':' || market_id) FROM shadow_forecasts"
+        ).fetchone()[0]
+    )
+    unresolved_unique_contracts = int(
+        conn.execute(
+            "SELECT COUNT(DISTINCT venue || ':' || market_id) FROM shadow_forecasts WHERE status='OPEN'"
+        ).fetchone()[0]
+    )
+    resolved_unique_contracts = int(
+        conn.execute(
+            "SELECT COUNT(DISTINCT venue || ':' || market_id) FROM shadow_forecasts WHERE status='RESOLVED'"
         ).fetchone()[0]
     )
     latest = conn.execute(
@@ -445,6 +462,9 @@ def shadow_summary(
         "forecasts_today": today_count,
         "forecasts_total": total,
         "resolved_forecasts": resolved,
+        "unique_contracts": unique_contracts,
+        "unresolved_unique_contracts": unresolved_unique_contracts,
+        "resolved_unique_contracts": resolved_unique_contracts,
         "latest_run_id": latest[0] if latest else None,
         "evaluations_per_cycle": int(evaluations),
         "llm_calls_per_cycle": int(llm_calls),

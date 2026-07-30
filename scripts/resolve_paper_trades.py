@@ -10,6 +10,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import re
+from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
@@ -241,6 +244,52 @@ def _shadow_table_exists(conn: sqlite3.Connection) -> bool:
     ).fetchone() is not None
 
 
+def _normalize_slug(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+
+
+def canonical_contract_identity(market_id: Any, slug: Any) -> str:
+    """Prefer a stable contract ID and fall back to a normalized slug."""
+    market = str(market_id or "").strip()
+    slug_text = str(slug or "").strip()
+    if market and market.lower() not in {"none", "null"} and market != slug_text:
+        return f"id:{market}"
+    return f"slug:{_normalize_slug(slug_text)}"
+
+
+@dataclass
+class ShadowResolutionMetrics:
+    snapshot_rows_considered: int = 0
+    unique_contracts_checked: int = 0
+    resolved_contracts: int = 0
+    snapshot_rows_resolved: int = 0
+    api_lookups: int = 0
+
+
+def _fetch_shadow_contract(row: sqlite3.Row, timeout_s: int) -> tuple[Dict[str, Any], str, int]:
+    """Fetch one representative contract, preferring stable IDs."""
+    market_id = str(row[1] or "").strip()
+    slug = str(row[2] or "").strip()
+    metadata = row[6]
+    try:
+        parsed = json.loads(metadata or "{}")
+    except (TypeError, json.JSONDecodeError):
+        parsed = {}
+    snapshot_id = parsed.get("market_snapshot_id")
+    if isinstance(snapshot_id, dict):
+        snapshot_id = snapshot_id.get("id")
+    if str(snapshot_id or "").strip().isdigit():
+        try:
+            return fetch_market_by_id(snapshot_id, timeout_s=timeout_s), "snapshot_id", 1
+        except Exception:
+            # A stale snapshot ID should not prevent the canonical slug lookup.
+            pass
+    if market_id.isdigit():
+        return fetch_market_by_id(market_id, timeout_s=timeout_s), "market_id", 1
+    return fetch_market_by_slug(slug, timeout_s=timeout_s), "slug", 1
+
+
 def resolve_shadow_forecasts(
     conn: sqlite3.Connection,
     *,
@@ -248,70 +297,55 @@ def resolve_shadow_forecasts(
     timeout_s: int,
     sleep_s: float,
     dry_run: bool,
-) -> tuple[int, int]:
+) -> ShadowResolutionMetrics:
     if not _shadow_table_exists(conn):
-        return (0, 0)
+        return ShadowResolutionMetrics()
     rows = conn.execute(
         """
-        SELECT id, market_id, market_probability, model_probability, side, metadata
+        SELECT id, market_id, slug, market_probability, model_probability, side, metadata
         FROM shadow_forecasts
         WHERE status='OPEN' AND venue='polymarket'
         ORDER BY id ASC LIMIT ?
         """,
-        (max(0, int(limit)),),
+        (max(0, int(limit)) if int(limit) > 0 else -1,),
     ).fetchall()
-    checked = 0
-    changed = 0
+    groups: "OrderedDict[str, list[sqlite3.Row]]" = OrderedDict()
+    for row in rows:
+        groups.setdefault(canonical_contract_identity(row[1], row[2]), []).append(row)
+    metrics = ShadowResolutionMetrics(
+        snapshot_rows_considered=len(rows),
+        unique_contracts_checked=len(groups),
+    )
     mode_label = "DRY RUN" if dry_run else "WRITE"
-    for forecast_id, slug, market_probability, model_probability, side, metadata in rows:
-        checked += 1
+    for identity, contract_rows in groups.items():
+        representative = contract_rows[0]
         try:
-            snap = fetch_market_by_slug(str(slug), timeout_s=timeout_s)
-            lookup_source = "slug"
-        except Exception as slug_error:
-            try:
-                parsed = json.loads(metadata or "{}")
-            except (TypeError, json.JSONDecodeError):
-                parsed = {}
-            snapshot_id = parsed.get("market_snapshot_id")
-            try:
-                snap = fetch_market_by_id(snapshot_id, timeout_s=timeout_s)
-                lookup_source = "snapshot_id"
-            except Exception as id_error:
-                print(
-                    f"SHADOW RESOLVER {mode_label}: id={forecast_id} slug={slug} "
-                    f"lookup_failed={slug_error}; snapshot_lookup_failed={id_error}"
-                )
-                time.sleep(sleep_s)
-                continue
-        is_resolved, outcome, why = resolved_outcome_from_snapshot(snap)
-        if not is_resolved or not outcome:
-            print(
-                f"SHADOW RESOLVER {mode_label}: id={forecast_id} slug={slug} "
-                f"lookup_source={lookup_source} OPEN (reason={why})"
-            )
+            snap, lookup_source, lookups = _fetch_shadow_contract(representative, timeout_s)
+            metrics.api_lookups += lookups
+        except Exception as error:
+            metrics.api_lookups += 1
+            print(f"SHADOW RESOLVER {mode_label}: contract={identity} lookup_failed={error}")
             time.sleep(sleep_s)
             continue
-        score = shadow_brier_score(float(model_probability), outcome)
-        pnl = hypothetical_profit(
-            side=str(side),
-            stake_usd=100.0,
-            outcome=outcome,
-            market_probability=float(market_probability),
-        )
+        is_resolved, outcome, why = resolved_outcome_from_snapshot(snap)
+        if not is_resolved or not outcome:
+            print(f"SHADOW RESOLVER {mode_label}: contract={identity} OPEN (reason={why})")
+            time.sleep(sleep_s)
+            continue
+        metrics.resolved_contracts += 1
+        resolved_rows = 0
+        for row in contract_rows:
+            if dry_run or resolve_shadow_forecast(conn, int(row[0]), outcome, commit=False):
+                resolved_rows += 1
+        if not dry_run and resolved_rows:
+            conn.commit()
+        metrics.snapshot_rows_resolved += resolved_rows
         print(
-            f"SHADOW RESOLVER {mode_label}: id={forecast_id} slug={slug} "
-            f"lookup_source={lookup_source} RESOLVED outcome={outcome} "
-            f"brier={score:.6f} pnl_100={pnl:+.2f}"
+            f"SHADOW RESOLVER {mode_label}: contract={identity} "
+            f"RESOLVED outcome={outcome} snapshots={resolved_rows} lookup_source={lookup_source}"
         )
-        if not dry_run and resolve_shadow_forecast(
-            conn, int(forecast_id), outcome
-        ):
-            changed += 1
-        elif dry_run:
-            changed += 1
         time.sleep(sleep_s)
-    return (checked, changed)
+    return metrics
 
 
 def main() -> int:
@@ -322,8 +356,8 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="Do not write updates; print what would change")
     ap.add_argument("--timeout", type=int, default=20, help="HTTP timeout seconds")
     ap.add_argument(
-        "--shadow-limit", type=int, default=100,
-        help="Max OPEN shadow forecasts to process per run",
+        "--shadow-limit", type=int, default=0,
+        help="Max OPEN shadow snapshots to query (0 = all unresolved snapshots)",
     )
     args = ap.parse_args()
     mode_label = "DRY RUN" if args.dry_run else "WRITE"
@@ -450,7 +484,7 @@ def main() -> int:
         changed += 1
         time.sleep(args.sleep)
 
-    shadow_checked, shadow_changed = resolve_shadow_forecasts(
+    shadow_metrics = resolve_shadow_forecasts(
         conn,
         limit=args.shadow_limit,
         timeout_s=int(args.timeout),
@@ -460,8 +494,17 @@ def main() -> int:
     conn.close()
     print(
         f"RESOLVER SUMMARY: checked={checked} closed={changed} "
-        f"shadow_checked={shadow_checked} shadow_resolved={shadow_changed} "
+        f"shadow_checked={shadow_metrics.snapshot_rows_considered} "
+        f"shadow_resolved={shadow_metrics.snapshot_rows_resolved} "
         f"dry_run={bool(args.dry_run)}"
+    )
+    print(
+        "SHADOW RESOLVER METRICS: "
+        f"snapshot_rows_considered={shadow_metrics.snapshot_rows_considered} "
+        f"unique_contracts_checked={shadow_metrics.unique_contracts_checked} "
+        f"resolved_contracts={shadow_metrics.resolved_contracts} "
+        f"snapshot_rows_resolved={shadow_metrics.snapshot_rows_resolved} "
+        f"api_lookups={shadow_metrics.api_lookups}"
     )
     return 0
 

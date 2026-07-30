@@ -327,6 +327,9 @@ def check_shadow_forecasts():
             f"  forecasts today={summary['forecasts_today']}"
             f" total={summary['forecasts_total']}"
             f" resolved={summary['resolved_forecasts']}"
+            f" unique_contracts={summary['unique_contracts']}"
+            f" unresolved_unique={summary['unresolved_unique_contracts']}"
+            f" resolved_unique={summary['resolved_unique_contracts']}"
         )
         print(
             f"  latest cycle evaluations={summary['evaluations_per_cycle']}"
