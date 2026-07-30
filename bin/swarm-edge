@@ -1,124 +1,99 @@
 #!/bin/bash
 set -euo pipefail
 
-APP_DIR="$HOME/swarm-runtime/swarm-edge"
-PID_FILE="$APP_DIR/runtime/swarm-edge.pid"
-LOG_FILE="$APP_DIR/logs/infer_loop.log"
-BACKUP_DIR="$APP_DIR/backups"
-WATCHLIST_PATH="$APP_DIR/markets/polymarket_watchlist.json"
-
-cd "$APP_DIR"
+# The wrapper is a client of the launchd job, never a second process
+# supervisor.  It intentionally does not use PID files or broad process
+# matching to determine ownership.
+APP_DIR="${SWARM_EDGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+LABEL="${SWARM_EDGE_LAUNCHD_LABEL:-com.swarmedge.runner}"
+DOMAIN="${SWARM_EDGE_LAUNCHD_DOMAIN:-gui/$(id -u)}"
+JOB="$DOMAIN/$LABEL"
 
 load_env() {
-  source "$APP_DIR/.venv/bin/activate"
-  set -a
   local env_file="${BGL_RUNTIME_ENV_FILE:-$APP_DIR/.env.runtime}"
   if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
     source "$env_file"
+    set +a
   elif [[ -f "$APP_DIR/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1090
     source "$APP_DIR/.env"
+    set +a
   fi
-  set +a
 }
 
-configure_paths() {
-  local log_dir="${BGL_LOG_DIR:-$APP_DIR/logs}"
-  local runtime_dir="${BGL_RUNTIME_DIR:-$APP_DIR/runtime}"
-  BACKUP_DIR="${BGL_BACKUP_DIR:-$APP_DIR/backups}"
-  WATCHLIST_PATH="${BGL_WATCHLIST_PATH:-$APP_DIR/markets/polymarket_watchlist.json}"
-  PID_FILE="$runtime_dir/swarm-edge.pid"
-  LOG_FILE="$log_dir/infer_loop.log"
-}
-
-is_running() {
-  pgrep -f "bash .*scripts/run_live.sh|live_runner.py" >/dev/null 2>&1
+job_print() {
+  launchctl print "$JOB"
 }
 
 case "${1:-status}" in
   start)
-    if is_running; then
-      echo "Swarm Edge already running"
-      pgrep -af "bash .*scripts/run_live.sh|live_runner.py" || true
-      exit 0
-    fi
-
     load_env
-    configure_paths
-    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$PID_FILE")"
-    nohup bash "$APP_DIR/scripts/run_live.sh" >> "$LOG_FILE" 2>&1 &
-    echo $! > "$PID_FILE"
-    echo "Swarm Edge started"
-    ;;
-
-  run)
-    load_env
-    configure_paths
-    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$PID_FILE")"
-    echo $$ > "$PID_FILE"
-    exec bash "$APP_DIR/scripts/run_live.sh"
+    launchctl kickstart "$JOB"
     ;;
 
   stop)
-    pkill -f "bash .*scripts/run_live.sh" 2>/dev/null || true
-    pkill -f "live_runner.py" 2>/dev/null || true
-    rm -f "$PID_FILE"
-    echo "Swarm Edge stopped"
+    launchctl kill SIGTERM "$JOB"
     ;;
 
   restart)
-    "$0" stop
-    sleep 2
-    "$0" start
+    launchctl kickstart -k "$JOB"
     ;;
 
   status)
     load_env
-    configure_paths
-    python3 "$APP_DIR/scripts/morning_status.py"
+    if ! job_print; then
+      echo "Swarm Edge launchd job is not loaded: $JOB" >&2
+      exit 1
+    fi
     ;;
 
-  ps)
-    pgrep -af "bash .*scripts/run_live.sh|live_runner.py" || echo "No Swarm Edge processes"
+  run)
+    # The launchd template sets this marker.  The parent check preserves the
+    # existing plist's compatibility while rejecting shell-started runners.
+    parent_comm="$(ps -p "$PPID" -o comm= 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "${SWARM_EDGE_LAUNCHD_RUN:-0}" != "1" && "$parent_comm" != "launchd" && "$parent_comm" != "/sbin/launchd" ]]; then
+      echo "Refusing unmanaged runner start; use: $0 start" >&2
+      exit 64
+    fi
+    load_env
+    exec "$APP_DIR/scripts/run_live.sh"
     ;;
 
   logs)
     load_env
-    configure_paths
-    mkdir -p "$(dirname "$LOG_FILE")"
-    touch "$LOG_FILE"
-    tail -f "$LOG_FILE"
+    exec tail -f "${BGL_LOG_DIR:-$APP_DIR/logs}/infer_loop.log"
     ;;
 
   tail)
     load_env
-    configure_paths
-    mkdir -p "$(dirname "$LOG_FILE")"
-    touch "$LOG_FILE"
-    tail -80 "$LOG_FILE"
+    exec tail -80 "${BGL_LOG_DIR:-$APP_DIR/logs}/infer_loop.log"
     ;;
 
   infer)
     load_env
-    python3 "$APP_DIR/live_runner.py" --infer
+    exec "${PYTHON_BIN:-$APP_DIR/.venv/bin/python}" "$APP_DIR/live_runner.py" --infer
     ;;
 
   resolve)
     load_env
-    python3 "$APP_DIR/scripts/resolve_paper_trades.py" --dry-run
+    exec "${PYTHON_BIN:-$APP_DIR/.venv/bin/python}" "$APP_DIR/scripts/resolve_paper_trades.py" --dry-run
     ;;
 
   backup)
-    load_env
-    configure_paths
-    TS=$(date +%Y%m%d_%H%M%S)
-    mkdir -p "$BACKUP_DIR"
-    cp "${BGL_DB_PATH:-$APP_DIR/memory/runs.sqlite}" "$BACKUP_DIR/runs.sqlite.$TS"
-    cp "$WATCHLIST_PATH" "$BACKUP_DIR/polymarket_watchlist.$TS.json"
-    echo "Backup written to $BACKUP_DIR"
+    echo "Backups are a deployment operation; use the release tooling." >&2
+    exit 64
+    ;;
+
+  ps)
+    echo "Use '$0 status' to inspect $JOB; launchd is the sole lifecycle authority." >&2
+    exec launchctl print "$JOB"
     ;;
 
   *)
-    echo "Usage: swarm-edge {start|run|stop|restart|status|ps|logs|tail|infer|resolve|backup}"
+    echo "Usage: swarm-edge {start|run|stop|restart|status|ps|logs|tail|infer|resolve}" >&2
     exit 1
     ;;
 esac

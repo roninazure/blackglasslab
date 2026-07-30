@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.swarmedge.runner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@SWARM_EDGE_BIN@</string>
+    <string>run</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>@SWARM_EDGE_ROOT@</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SWARM_EDGE_ROOT</key>
+    <string>@SWARM_EDGE_ROOT@</string>
+    <key>SWARM_EDGE_LAUNCHD_RUN</key>
+    <string>1</string>
+    <key>BGL_RUNTIME_ENV_FILE</key>
+    <string>@SWARM_EDGE_ROOT@/.env.runtime</string>
+    <key>BGL_RUNTIME_MODE</key>
+    <string>production</string>
+    <key>BGL_PRODUCTION_MODE</key>
+    <true/>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>@SWARM_EDGE_LOG_DIR@/infer_loop.log</string>
+  <key>StandardErrorPath</key>
+  <string>@SWARM_EDGE_LOG_DIR@/infer_loop.err.log</string>
+</dict>
+</plist>
