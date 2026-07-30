@@ -23,12 +23,13 @@ ROOT      = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from swarm_edge_io import load_paper_trades_export, merge_notes_blob
+from swarm_edge_runtime import RUNTIME_PATHS
 
-DB_PATH   = ROOT / "memory" / "runs.sqlite"
-LOG_PATH  = ROOT / "logs" / "infer_loop.log"
-DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
-WATCH_PATH= ROOT / "markets" / "polymarket_watchlist.json"
-DATA_DIR  = ROOT / "data"
+DB_PATH   = RUNTIME_PATHS.db_path
+LOG_PATH  = RUNTIME_PATHS.log_dir / "infer_loop.log"
+DIAG_PATH = RUNTIME_PATHS.signals_dir / "infer_diagnostics.json"
+WATCH_PATH= RUNTIME_PATHS.watchlist_path
+DATA_DIR  = RUNTIME_PATHS.data_dir
 
 PASS  = "✓"
 WARN  = "~"

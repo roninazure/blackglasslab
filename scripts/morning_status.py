@@ -20,16 +20,17 @@ sys.path.insert(0, str(ROOT))
 
 from swarm_edge_io import merge_notes_blob
 from loop_engine.shadow import shadow_summary
+from swarm_edge_runtime import RUNTIME_PATHS
 
-DB_PATH   = ROOT / "memory" / "runs.sqlite"
-LOG_PATH  = ROOT / "logs" / "infer_loop.log"
-DIAG_PATH = ROOT / "signals" / "infer_diagnostics.json"
-BRAIN_PATH= ROOT / "signals" / "swarm_brain_report.json"
-WATCH_PATH= ROOT / "markets" / "polymarket_watchlist.json"
+DB_PATH   = RUNTIME_PATHS.db_path
+LOG_PATH  = RUNTIME_PATHS.log_dir / "infer_loop.log"
+DIAG_PATH = RUNTIME_PATHS.signals_dir / "infer_diagnostics.json"
+BRAIN_PATH= RUNTIME_PATHS.signals_dir / "swarm_brain_report.json"
+WATCH_PATH= RUNTIME_PATHS.watchlist_path
 UNIVERSE_REPORT_PATH = (
-    ROOT / "reports" / "phase3_2_universe_expansion.json"
+    RUNTIME_PATHS.report_dir / "phase3_2_universe_expansion.json"
 )
-DATA_DIR  = ROOT / "data"
+DATA_DIR  = RUNTIME_PATHS.data_dir
 
 PASS = "✓"
 WARN = "~"

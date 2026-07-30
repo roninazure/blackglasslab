@@ -34,11 +34,12 @@ from market_universe.policy import (
     detect_banned_class,
     evaluate_market,
 )
+from swarm_edge_runtime import RUNTIME_PATHS
 
 
-WATCHLIST_PATH = ROOT / "markets" / "polymarket_watchlist.json"
-DB_PATH = ROOT / "memory" / "runs.sqlite"
-REPORTS_DIR = ROOT / "reports"
+WATCHLIST_PATH = RUNTIME_PATHS.watchlist_path
+DB_PATH = RUNTIME_PATHS.db_path
+REPORTS_DIR = RUNTIME_PATHS.report_dir
 REJECTION_JSON_PATH = REPORTS_DIR / "phase3_2_rejection_analysis.json"
 REJECTION_MD_PATH = REPORTS_DIR / "phase3_2_rejection_analysis.md"
 EXPANSION_JSON_PATH = REPORTS_DIR / "phase3_2_universe_expansion.json"

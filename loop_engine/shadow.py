@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
+from swarm_edge_runtime import RUNTIME_PATHS
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,7 +40,7 @@ def backup_database(
     conn: sqlite3.Connection,
     db_path: str | Path,
     *,
-    backup_dir: str | Path = "backups",
+    backup_dir: str | Path = RUNTIME_PATHS.backup_dir,
     now: Optional[datetime] = None,
 ) -> Optional[Path]:
     path = Path(db_path)
@@ -62,7 +63,7 @@ def ensure_shadow_schema(
     conn: sqlite3.Connection,
     *,
     db_path: str | Path = ":memory:",
-    backup_dir: str | Path = "backups",
+    backup_dir: str | Path = RUNTIME_PATHS.backup_dir,
     now: Optional[datetime] = None,
 ) -> Optional[Path]:
     """Create the Phase 3.3 schema, backing up an existing DB first."""

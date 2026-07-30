@@ -15,8 +15,9 @@ sys.path.insert(0, str(ROOT))
 
 from swarm_edge_io import merge_notes_blob
 from loop_engine.shadow import shadow_summary
+from swarm_edge_runtime import RUNTIME_PATHS
 
-DB_PATH = os.path.join("memory", "runs.sqlite")
+DB_PATH = str(RUNTIME_PATHS.db_path)
 
 
 def utc_now_iso() -> str:

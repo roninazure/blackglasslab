@@ -4,10 +4,11 @@ from __future__ import annotations
 import os
 import sqlite3
 from datetime import datetime, timezone
+from swarm_edge_runtime import RUNTIME_PATHS
 
 
-DB_PATH = os.path.join("memory", "runs.sqlite")
-OUT_MD = os.path.join("reporting", "live_report.md")
+DB_PATH = str(RUNTIME_PATHS.db_path)
+OUT_MD = str(RUNTIME_PATHS.report_dir / "live_report.md")
 
 
 def utc_now_iso() -> str:
@@ -15,7 +16,7 @@ def utc_now_iso() -> str:
 
 
 def main() -> None:
-    os.makedirs("reporting", exist_ok=True)
+    RUNTIME_PATHS.report_dir.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 

@@ -13,9 +13,10 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from swarm_edge_runtime import RUNTIME_PATHS
 
-ROOT    = Path(__file__).parent.parent
-DB_PATH = ROOT / "memory" / "runs.sqlite"
+ROOT    = RUNTIME_PATHS.root
+DB_PATH = RUNTIME_PATHS.db_path
 
 
 def now_utc() -> str:

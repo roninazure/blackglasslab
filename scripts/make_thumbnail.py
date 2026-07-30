@@ -18,10 +18,11 @@ ROOT     = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from swarm_edge_io import load_paper_trades_export, merge_notes_blob
+from swarm_edge_runtime import RUNTIME_PATHS
 
-DB_PATH  = ROOT / "memory" / "runs.sqlite"
-DATA_DIR = ROOT / "data"
-OUT      = ROOT / "swarm_edge_thumb.png"
+DB_PATH  = RUNTIME_PATHS.db_path
+DATA_DIR = RUNTIME_PATHS.data_dir
+OUT      = RUNTIME_PATHS.report_dir / "swarm_edge_thumb.png"
 
 # ── colours ──────────────────────────────────────────────────────────────────
 BG       = (5,   8,  16)      # near-black
@@ -98,7 +99,7 @@ def live_stats() -> dict:
                            "stake": stake, "ev": ev})
 
     # watchlist count
-    wfile = ROOT / "config" / "watchlist.json"
+    wfile = RUNTIME_PATHS.watchlist_path
     watch_count = 0
     if wfile.exists():
         try: watch_count = len(json.loads(wfile.read_text()))

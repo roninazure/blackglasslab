@@ -20,12 +20,16 @@ from typing import Any, Optional, Tuple
 from context.temporal import build_temporal_context, format_temporal_context_block
 from loop_engine.prompts import build_forecast_prompts, classify_market
 from loop_engine.skeptic import SkepticReview, normalize_skeptic_review
+from swarm_edge_runtime import load_runtime_environment
 
 # ---------------------------------------------------------------------------
 # .env loader — simple KV parse, no external deps needed
 # ---------------------------------------------------------------------------
 
-def _load_dotenv(path: str = ".env") -> None:
+def _load_dotenv(path: Optional[str] = None) -> None:
+    if path is None or path == ".env":
+        load_runtime_environment()
+        return
     p = Path(path)
     if not p.exists():
         return

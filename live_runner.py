@@ -37,12 +37,14 @@ from market_universe.policy import (
     evaluate_market as evaluate_market_policy,
 )
 from models.baseline import score_market, market_yes_price
+from loop_engine.config import DEFAULT_LLM_USAGE_PATH
+from swarm_edge_runtime import RUNTIME_PATHS
 
-DB_PATH = os.path.join("memory", "runs.sqlite")
-SIGNALS_DIR = Path("signals")
-WATCHLIST_PATH = Path("markets") / "polymarket_watchlist.json"
+DB_PATH = str(RUNTIME_PATHS.db_path)
+SIGNALS_DIR = RUNTIME_PATHS.signals_dir
+WATCHLIST_PATH = RUNTIME_PATHS.watchlist_path
 PIPELINE_REPORT_PATH = SIGNALS_DIR / "infer_pipeline_report.json"
-UNIVERSE_REPORT_PATH = Path("reports") / "phase3_2_universe_expansion.json"
+UNIVERSE_REPORT_PATH = RUNTIME_PATHS.report_dir / "phase3_2_universe_expansion.json"
 
 PIPELINE_SUMMARY_FIELDS = (
     "watchlist_total",
@@ -215,7 +217,7 @@ def _update_brain(record: Dict[str, Any], **values: Any) -> None:
 
 
 def _daily_usage_path() -> Path:
-    return SIGNALS_DIR / "llm_usage_daily.json"
+    return SIGNALS_DIR / DEFAULT_LLM_USAGE_PATH.name
 
 
 def _brain_report_path() -> Path:
@@ -659,9 +661,7 @@ def _infer_one(
     if paper_mode and config.shadow_ledger_enabled:
         db_row = conn.execute("PRAGMA database_list").fetchone()
         db_path = str(db_row[2]) if db_row and db_row[2] else ":memory:"
-        backup_dir = (
-            Path(db_path).parent / "backups" if db_path != ":memory:" else "backups"
-        )
+        backup_dir = RUNTIME_PATHS.backup_dir
         backup_path = ensure_shadow_schema(
             conn,
             db_path=db_path,

@@ -12,10 +12,11 @@ from collections import Counter
 from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from swarm_edge_runtime import RUNTIME_PATHS
 
 
-DEFAULT_DB = Path("memory/runs.sqlite")
-DEFAULT_OUTPUT_DIR = Path("reports")
+DEFAULT_DB = RUNTIME_PATHS.db_path
+DEFAULT_OUTPUT_DIR = RUNTIME_PATHS.report_dir
 METHOD_VERSION = "phase2_calibration_v1"
 BOOTSTRAP_SEED = 20260711
 BOOTSTRAP_SAMPLES = 2000

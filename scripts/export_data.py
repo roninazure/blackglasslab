@@ -16,12 +16,13 @@ import subprocess
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from swarm_edge_runtime import RUNTIME_PATHS
 
-ROOT     = Path(__file__).parent.parent
-DB_PATH  = ROOT / "memory" / "runs.sqlite"
-DATA_DIR = ROOT / "data"
+ROOT     = RUNTIME_PATHS.root
+DB_PATH  = RUNTIME_PATHS.db_path
+DATA_DIR = RUNTIME_PATHS.data_dir
 TRADES_OUT  = DATA_DIR / "paper_trades.json"
-DIAG_SRC    = ROOT / "signals" / "infer_diagnostics.json"
+DIAG_SRC    = RUNTIME_PATHS.signals_dir / "infer_diagnostics.json"
 DIAG_OUT    = DATA_DIR / "infer_diagnostics.json"
 CUTOFF      = "2026-03-28T21:00"
 PUBLISH_ENABLED = os.getenv("SWARM_EDGE_PUBLISH_ENABLED", "0").strip() in {"1", "true", "TRUE", "yes", "YES"}

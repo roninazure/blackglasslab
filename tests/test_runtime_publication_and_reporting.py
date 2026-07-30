@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import shutil
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -310,14 +311,21 @@ class RuntimePublicationAndReportingTests(unittest.TestCase):
                 "SWARM_EDGE_WATCHLIST_APPLY": "0",
             }
         )
-        result = subprocess.run(
-            ["bash", "scripts/run_live.sh"],
-            cwd=Path(__file__).resolve().parent.parent,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "scripts").mkdir()
+            shutil.copy2(
+                Path(__file__).resolve().parent.parent / "scripts" / "run_live.sh",
+                root / "scripts" / "run_live.sh",
+            )
+            result = subprocess.run(
+                ["bash", "scripts/run_live.sh"],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("auto-export data", result.stdout)
         self.assertIn("watchlist apply disabled", result.stdout)
