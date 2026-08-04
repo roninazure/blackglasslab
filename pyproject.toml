@@ -12,6 +12,7 @@ dependencies = [
   "plotly==6.9.0",
   "pandas==3.0.5",
   "anthropic==0.119.0",
+  "textual==8.2.8",
 ]
 
 [tool.setuptools]
