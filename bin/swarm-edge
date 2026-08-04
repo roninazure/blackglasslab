@@ -4,13 +4,51 @@ set -euo pipefail
 # The wrapper is a client of the launchd job, never a second process
 # supervisor.  It intentionally does not use PID files or broad process
 # matching to determine ownership.
-APP_DIR="${SWARM_EDGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+resolve_wrapper_path() {
+  local source="${BASH_SOURCE[0]}"
+  local source_dir
+  while [[ -L "$source" ]]; do
+    source_dir="$(cd -P "$(dirname "$source")" && pwd)"
+    source="$(readlink "$source")"
+    [[ "$source" = /* ]] || source="$source_dir/$source"
+  done
+  printf '%s\n' "$source"
+}
+
+WRAPPER_PATH="$(resolve_wrapper_path)"
+WRAPPER_DIR="$(cd -P "$(dirname "$WRAPPER_PATH")" && pwd)"
+WRAPPER_ROOT="$(cd -P "$WRAPPER_DIR/.." && pwd)"
+
+# An installed wrapper lives at <runtime>/bin/swarm-edge and always executes
+# from <runtime>/current. SWARM_EDGE_ROOT may point either at that current
+# release or at a runtime root containing the current pointer. A checkout-local
+# wrapper remains usable for development, but no path depends on the user home
+# directory or caller working directory.
+if [[ -n "${SWARM_EDGE_ROOT:-}" ]]; then
+  RELEASE_PATH="$SWARM_EDGE_ROOT"
+  [[ -e "$RELEASE_PATH/current" ]] && RELEASE_PATH="$RELEASE_PATH/current"
+elif [[ -e "$WRAPPER_ROOT/current" ]]; then
+  RELEASE_PATH="$WRAPPER_ROOT/current"
+else
+  RELEASE_PATH="$WRAPPER_ROOT"
+fi
+APP_DIR="$(cd -P "$RELEASE_PATH" && pwd)"
+
+if [[ -n "${BGL_RUNTIME_ENV_FILE:-}" ]]; then
+  DEFAULT_ENV_FILE="$BGL_RUNTIME_ENV_FILE"
+elif [[ -f "$WRAPPER_ROOT/config/runtime.env" ]]; then
+  DEFAULT_ENV_FILE="$WRAPPER_ROOT/config/runtime.env"
+elif [[ "$(basename "${SWARM_EDGE_ROOT:-}" 2>/dev/null || true)" == "current" && -f "$(dirname "${SWARM_EDGE_ROOT:-}")/config/runtime.env" ]]; then
+  DEFAULT_ENV_FILE="$(dirname "${SWARM_EDGE_ROOT:-}")/config/runtime.env"
+else
+  DEFAULT_ENV_FILE="$APP_DIR/.env.runtime"
+fi
 LABEL="${SWARM_EDGE_LAUNCHD_LABEL:-com.swarmedge.runner}"
 DOMAIN="${SWARM_EDGE_LAUNCHD_DOMAIN:-gui/$(id -u)}"
 JOB="$DOMAIN/$LABEL"
 
 load_env() {
-  local env_file="${BGL_RUNTIME_ENV_FILE:-$APP_DIR/.env.runtime}"
+  local env_file="$DEFAULT_ENV_FILE"
   if [[ -f "$env_file" ]]; then
     set -a
     # shellcheck disable=SC1090

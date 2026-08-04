@@ -10,7 +10,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent.parent
 WRAPPER = ROOT / "bin" / "swarm-edge"
 PLIST_TEMPLATE = ROOT / "deploy" / "launchd" / "com.swarmedge.runner.plist.in"
@@ -54,13 +53,78 @@ class DeploymentHardeningTests(unittest.TestCase):
             self.assertIn("print gui/test/com.swarmedge.runner", call_text)
             self.assertIn("kickstart gui/test/com.swarmedge.runner", call_text)
 
+    def test_installed_wrapper_uses_active_release_from_any_working_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            runtime_root = root / "external-runtime"
+            wrapper_dir = runtime_root / "bin"
+            release = runtime_root / "releases" / "release-sha"
+            config_dir = runtime_root / "config"
+            command_dir = root / "command-bin"
+            unrelated = root / "unrelated"
+            for directory in (wrapper_dir, release / "scripts", config_dir, command_dir, unrelated):
+                directory.mkdir(parents=True, exist_ok=True)
+
+            shutil.copy2(WRAPPER, wrapper_dir / "swarm-edge")
+            (runtime_root / "current").symlink_to(release)
+            (command_dir / "swarm-edge").symlink_to(wrapper_dir / "swarm-edge")
+            (config_dir / "runtime.env").write_text(
+                f"PYTHON_BIN={sys.executable}\nBGL_RUNTIME_ENV_FILE={config_dir / 'runtime.env'}\n",
+                encoding="utf-8",
+            )
+            (release / "scripts" / "operator_console.py").write_text(
+                "from pathlib import Path\n"
+                "import sys\n"
+                "print(Path(__file__).resolve())\n"
+                "print(' '.join(sys.argv[1:]))\n",
+                encoding="utf-8",
+            )
+
+            env = os.environ.copy()
+            env.pop("SWARM_EDGE_ROOT", None)
+            env.pop("BGL_RUNTIME_ENV_FILE", None)
+            expected_script = str((release / "scripts" / "operator_console.py").resolve())
+            commands = (
+                ("watch",),
+                ("watch", "--snapshot"),
+                ("portfolio",),
+                ("positions",),
+                ("revenue-status",),
+            )
+            working_directories = (ROOT, root, Path("/tmp"), unrelated)
+            for cwd in working_directories:
+                for args in commands:
+                    result = subprocess.run(
+                        [str(command_dir / "swarm-edge"), *args],
+                        cwd=cwd,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.splitlines()[0], expected_script)
+                    self.assertEqual(result.stdout.splitlines()[1], " ".join(args))
+
+    def test_wrapper_path_resolution_never_uses_home_or_working_directory(self) -> None:
+        source = WRAPPER.read_text(encoding="utf-8")
+        self.assertNotIn("$HOME", source)
+        self.assertNotIn("${HOME", source)
+        self.assertNotRegex(source, r"\bPWD\b")
+        self.assertIn('WRAPPER_ROOT/current', source)
+
     def test_wrapper_refuses_unmanaged_run(self) -> None:
         result = subprocess.run([str(WRAPPER), "run"], capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 64)
         self.assertIn("Refusing unmanaged runner start", result.stderr)
 
     def test_plist_template_lints(self) -> None:
-        result = subprocess.run(["plutil", "-lint", str(PLIST_TEMPLATE)], capture_output=True, text=True)
+        result = subprocess.run(
+            ["plutil", "-lint", str(PLIST_TEMPLATE)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_manifest_generation_is_deterministic(self) -> None:
