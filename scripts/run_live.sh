@@ -79,7 +79,7 @@ while true; do
   # Existing deployments remain unchanged unless explicitly enabled.
   if [[ "${BGL_REVENUE_POC_ENABLED:-0}" == "1" ]]; then
     "$PYTHON_BIN" scripts/revenue_poc.py --db "${BGL_DB_PATH:-memory/runs.sqlite}" \
-      --ingest-shadow --dashboard --analysis \
+      --ingest-shadow --refresh-marks --resolve-shadow --dashboard --analysis \
       || echo "== [WARN] Revenue POC paper lane exited non-zero =="
   fi
 

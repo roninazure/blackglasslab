@@ -29,8 +29,10 @@ class RevenueArchitectureTests(unittest.TestCase):
 
     def test_production_approval_default_remains_and_revenue_is_opt_in(self) -> None:
         wrapper = (ROOT / "scripts" / "run_live.sh").read_text(encoding="utf-8")
+        example = (ROOT / ".env.example").read_text(encoding="utf-8")
         self.assertIn('BGL_REQUIRE_APPROVAL="${BGL_REQUIRE_APPROVAL:-1}"', wrapper)
         self.assertIn('${BGL_REVENUE_POC_ENABLED:-0}', wrapper)
+        self.assertIn("BGL_REVENUE_POC_ENABLED=0", example)
 
 
 if __name__ == "__main__":

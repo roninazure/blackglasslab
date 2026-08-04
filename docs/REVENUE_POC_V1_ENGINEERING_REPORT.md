@@ -1,119 +1,239 @@
-# Swarm Edge Revenue POC v1 Engineering Report
+# Swarm Edge Revenue POC v1 — Production Hardening Report
+
+Validation date: 2026-08-04 UTC
+PR: #29 (draft; not merged or deployed)
 
 ## Outcome
 
-Revenue POC v1 adds an independent, automatic, paper-only portfolio lane without changing the production `paper_trades` approval path. The controlled copied-state run created 6 unique $25 positions, deployed $150 of the $1,000 ledger, preserved all 26 legacy trades, and recorded $11.05 of model-derived open expected value. Expired, temporally invalid, and skeptic-rejected observations cannot deploy capital. This is operational evidence, not profitability evidence: all 768 shadow forecasts remain unresolved.
+PR #29 now supports the full paper-position lifecycle while remaining disabled by default for the existing runtime (`BGL_REVENUE_POC_ENABLED=0`). The Revenue POC ledger is independent of legacy `paper_trades`; its CLI and domain package have no authenticated order path and expose no live mode.
+
+A controlled run against a fresh byte-for-byte copy of production state created 10 automatic $25 Revenue positions. Current read-only Polymarket CLOB marks put the ledger at $996.4533 equity, with $749.75 cash, $250 deployed, $0 realized P&L, -$3.2967 unrealized P&L, and $34.9081 of entry-time modeled EV. This is lifecycle and accounting evidence, not profitability evidence: none of the admitted Revenue contracts has resolved.
 
 ## Evidence labels
 
-- **Observed:** measured from `memory/runs.sqlite`, the current reports, or controlled copied-state execution.
-- **Derived:** deterministic calculation from observed model/market values and explicit execution assumptions.
-- **Hypothesis:** a proposal that requires resolved outcomes or richer market data before adoption.
+- **Observed**: measured from the fresh copied production state, an attended controlled run, or current public venue/API responses.
+- **Derived**: deterministic calculation from observed fields plus explicitly labeled assumptions.
+- **Hypothesis**: a recommendation that still needs resolved out-of-sample evidence.
 
-## Architecture and economic review
+## Fresh-state reconciliation
 
-**Observed:** The current system is a directional forecasting funnel with one production candidate per cycle, a manual approval gate, fixed edge filters, and a 22-contract watchlist. Midpoint price was historically persisted with spread but not full order-book depth, fees, token counts, or provider cost. The production path uses a 4% edge threshold; the new Revenue POC uses 2% *executable* edge after crossing the bid/ask and applying configured costs.
+The source database was copied from `~/Library/Application Support/SwarmEdge/state/runs.sqlite` before any schema work. At validation start, the source and pristine copy had the same SHA-256 fingerprint:
 
-**Implemented:** Revenue POC reads immutable shadow observations, reconstructs executable quotes, ranks positive-EV opportunities by expected EV per capital-day, and automatically admits positions subject to one position per contract, no averaging/pyramiding, 20 open positions, $500 deployed capital, and five positions per category. It contains no adapter, LLM, agent, connector, or order dependency.
+`19a3b9e77236717058a8e4a75c9e0eed23df135ef26a992527cbabe8cb68795a`
 
-**Challenge:** The one-candidate production cap and 22-market watchlist optimize operational selectivity, not portfolio return. The institutional filters remove large parts of the market before an edge estimate exists, so their P&L effect is unknown. The baseline also rejects spread above 3% and liquidity below $1,000, while discovery applies stricter institutional thresholds; neither cutoff has resolved return evidence.
+| Measure | Validation-start source | Final current source | Controlled copy after one inference |
+|---|---:|---:|---:|
+| Shadow snapshots | 1,821 | 1,831 | 1,826 |
+| Resolved shadow snapshots | 30 | 30 | 30 |
+| Unique contracts | 15 | 15 | 15 |
+| Strict-lane pending candidates | 2 | 2 | 2 |
+| Legacy paper CLOSED | 2 | 2 | 2 |
+| Legacy paper OPEN | 4 | 4 | 4 |
+| Legacy paper PENDING | 2 | 2 | 2 |
+| Legacy paper VOID | 20 | 20 | 20 |
 
-## Complete conversion funnel
+The five controlled-copy rows came from one attended inference cycle: one real Anthropic evaluation and four deterministic budget skips. It generated no strict-lane candidate and made no legacy paper-trade write. Separately, the running production process added 10 source snapshots during validation (three LLM-used, seven deterministic/budget rows). Final source fingerprint `a7886ab332a539cdda5f806b420ab2642602a4e8eb5c258cb214a189068babed` reconciles that expected append-only drift; resolved, unique-contract, strict-candidate, and legacy-paper counts did not change.
 
-| Stage | Observed count | Conversion | Evidence |
-|---|---:|---:|---|
-| Discovery raw candidates | 10,419 | — | Phase 3.2 expansion report |
-| Unique markets scanned | 5,000 | 48.0% of raw | Phase 3.2 expansion report |
-| Eligible core/research | 96 | 1.92% of unique | 26 core + 70 research |
-| Selected watchlist | 22 | 22.9% of eligible; 0.44% of unique | category/event/horizon balancing |
-| Latest-run fetch attempted | 21 of 22 | 95.5% | 1 stale/failed slug |
-| Opportunity scored | 13 | 61.9% of fetched | 5 low institutional + 2 weak resolution excluded |
-| Shadow evaluated | 11 | 84.6% of scored | 6 budget skips, 4 edge rejects, 1 skeptic reject |
-| LLM attempted | 5 | 45.5% of shadow evaluated | current cycle budget |
-| Production candidates | 0 | 0% | no current opportunity passed |
-| Historical shadow observations | 768 | — | 265 marked LLM-used |
-| Distinct controlled executable evaluations | 764 | 99.5% | 4 unchanged-state cache hits |
-| Revenue candidates | 39 | 5.1% | positive EV and >=2% executable edge after safety gates |
-| Revenue positions | 6 | 15.4% of candidates; 0.79% of evaluations | one per contract and portfolio limits |
+The final controlled-copy fingerprint was `d37feb002b8fa0bc48a17db3c1b3d82c5549b7f3282a7cc8aef77437b32223ff`; it differs by design because it contains the Revenue schema, evaluations, positions, marks, telemetry, and five controlled shadow rows.
 
-Discovery rejection counts overlap because a market can fail multiple rules. The largest counts are banned market class (4,047), unknown category (2,703), sports prop (1,312), low institutional quality (751), score below minimum (561), low volume (489), low liquidity (467), wide spread (443), probability out of band (274), and horizon outside range (258). Counts alone do not demonstrate lost P&L because rejected markets were not forecast or resolved.
+## Lifecycle and schema hardening
+
+Migration 006 adds or extends only `revenue_poc_*` state:
+
+- append-only executable evaluations with bid/ask/depth/fee/timestamp source labels;
+- independent positions with gross realized P&L, net realized P&L, realized fees, and realized slippage;
+- append-only executable marks and estimated exit costs;
+- append-only equity points and maximum-drawdown tracking;
+- event-level Anthropic usage plus daily rollups with nullable cost;
+- immutable entry fields and no-update/no-delete triggers for evaluations, decisions, marks, and equity history.
+
+Opening a position reduces cash by stake plus entry costs. Resolution releases the stake, realizes the binary payout, and records entry plus exit fees/slippage separately. Mark and resolution keys make repeated processing idempotent.
+
+An online SQLite backup was created automatically before the controlled first upgrade. Upgrade and downgrade both passed `PRAGMA quick_check`; downgrade removed all Revenue tables and preserved all 1,826 controlled shadow rows and all 28 legacy paper rows.
+
+## Executable economics: actual versus assumed
+
+Entry-history coverage across 1,826 controlled evaluations:
+
+| Field | Actual | Assumed/fallback |
+|---|---:|---:|
+| Top bid | 5 current snapshots | 1,821 midpoint/spread reconstructions |
+| Top ask | 5 current snapshots | 1,821 midpoint/spread reconstructions |
+| Quote timestamp | 5 venue timestamps | 1,821 forecast timestamps |
+| Available depth | 0 true books | 1,826 liquidity proxies |
+| Fee basis | 2 explicit venue no-fee flags | 3 published category schedules; 1,821 configured fallback assumptions |
+
+Current mark coverage across all 10 open positions:
+
+| Field | Result |
+|---|---|
+| Top bid / top ask | Actual public Polymarket CLOB for 10/10 |
+| Available depth | Actual USD value at the executable top level for 10/10 |
+| Quote timestamp | Actual CLOB timestamp for 10/10 |
+| Fee basis | 4 explicit venue no-fee flags; 6 published category-schedule assumptions |
+| Slippage | Assumed at configured 10 bps for 10/10 |
+
+Marks use the executable exit side: YES positions mark to the top bid; NO positions mark to `1 - top ask`. Midpoints are not used for current P&L. Venue reads are public and unauthenticated. The fee formula follows the venue's probability-dependent taker-fee formula when a rate applies.
+
+## Controlled portfolio dashboard
+
+| Metric | Observed result |
+|---|---:|
+| Starting balance | $1,000.0000 |
+| Cash | $749.7500 |
+| Deployed capital | $250.0000 |
+| Current equity | $996.4533 |
+| Open / resolved positions | 10 / 0 |
+| Realized P&L | $0.0000 |
+| Unrealized P&L | -$3.2967 |
+| Entry-time modeled EV | $34.9081 |
+| Open entry fees | $0.0000 |
+| Open entry slippage | $0.2500 |
+| Recorded spread cost | $2.7287 |
+| Maximum observed drawdown | $4.2069 |
+| Capital utilization | 25.0% |
+| Candidate conversion | 9.434% |
+| Opportunity conversion | 0.548% |
+
+Position mix is four politics, three crypto, two geopolitics, and one macro/Fed contract. One position per contract, the five-position category cap, the 20-position limit, and the $500 deployment cap all held.
+
+The maximum drawdown includes the sequential first-mark refresh, during which some positions had current marks while later positions were still held at entry. It is a conservative streaming-path measure, not a simultaneous exchange snapshot.
+
+## Resolution, cash release, and idempotency fixture
+
+A dedicated copy of the controlled ledger received one fixture mark and one fixture YES resolution. The first pass wrote one mark and one resolution; the identical second pass wrote zero of either.
+
+The resolved $25 position recorded:
+
+- gross realized P&L: $17.3729;
+- realized fees: $0.1000;
+- realized slippage: $0.2250, including its $0.025 entry assumption;
+- net realized P&L: $17.0479;
+- deployed capital reduction: $250 to $225;
+- open category exposure reduction: four politics positions to three;
+- exactly one resolution equity event.
+
+The focused recycling test then admitted a new contract after resolution, proving released cash and exposure can be reused without averaging down or pyramiding.
+
+## API telemetry and budget behavior
+
+The controlled inference made one real Anthropic call:
+
+| Field | Observed value |
+|---|---|
+| Model | `claude-haiku-4-5-20251001` |
+| Input tokens | 470 |
+| Output tokens | 112 |
+| Cache-creation tokens | 0 |
+| Cache-read tokens | 0 |
+| Estimated cost | $0.001030 |
+| Result | rejected below production minimum edge |
+
+Cost is a token-based estimate using the public Anthropic price schedule captured with the usage event. It is not a provider invoice.
+
+The 600 historical LLM-used shadow rows lack token/cost telemetry. They are stored as `historical_unknown`, their costs remain NULL, and the Revenue daily budget fails closed: remaining budget and cost-per-market/candidate/trade are reported as unknown rather than treating historical usage as free.
+
+After ingesting the five new rows, an unchanged-state replay produced 0 evaluations, 1,826 cache hits, 0 admissions, and 601 additional LLM calls avoided cumulatively for that pass. Across the two validation replays the dashboard records 1,201 avoided historical/new LLM evaluations. Cache fingerprints now include market, model, executable quote, depth, fee, slippage, and holding-horizon state.
+
+## Opportunity funnel
+
+Latest controlled inference:
+
+| Stage | Count | Conversion / loss |
+|---|---:|---|
+| Watchlist | 22 | starting universe |
+| Fetch attempted | 20 | 2 blocked by existing positions |
+| Fetch succeeded | 19 | 1 failed/stale slug |
+| Opportunity scored | 12 | 7 rejected for weak market quality |
+| Selected for bounded evaluation | 5 | 7 excluded by evaluation limit |
+| Anthropic forecast | 1 | 4 deterministic daily-budget skips |
+| Edge pass | 0 | 1 below minimum edge |
+| Strict production candidates | 0 | no approval write |
+
+Historical controlled Revenue conversion:
+
+| Stage | Count | Conversion |
+|---|---:|---:|
+| Shadow snapshots evaluated | 1,826 | 100% |
+| Fixed >=2% executable-edge observations | 222 | 12.16% |
+| Safety/depth/EV-valid Revenue candidates | 106 | 5.81% |
+| Unique Revenue positions | 10 | 9.43% of candidates; 0.55% of evaluations |
+
+The current discovery architecture still constrains economic throughput before probability estimation. Early policy and quality rejections have no model probability, so their lost P&L cannot be estimated honestly.
 
 ## Lost-opportunity analysis
 
-**Derived:** On the controlled ledger, rejection opportunity is de-duplicated by contract using the maximum modeled EV observed for that contract:
+Expected loss is de-duplicated by contract and uses the maximum modeled EV per rejected contract, not rejection counts:
 
-1. Below 2% executable edge: 12 contracts, $28.56 modeled EV not deployed.
-2. One-position-per-contract: 4 contracts, $5.70 modeled EV from later observations not added. This is intentionally forgone because averaging and pyramiding are prohibited.
+| Rejection reason | Unique contracts | Modeled EV not deployed |
+|---|---:|---:|
+| Executable edge below 2% | 13 | $32.9078 |
+| One-position-per-contract | 6 | $10.0618 |
+| Skeptic rejection | 7 | Not treated as deployable EV |
+| Temporal inconsistency | 6 | Not treated as deployable EV |
+| Expired market | 2 | $0.0000 |
 
-Raw observation totals are not investable totals because they count the same contracts repeatedly. Early discovery, policy, temporal, and quality stages have no model probabilities, so assigning them P&L would be fabricated. The 38 historical skeptic rejections carry a $64.53 raw-edge-dollar proxy at $25 per observation, but none are resolved and the proxy ignores execution costs; they are safety rejections with zero deployable lost EV.
+The one-position loss is intentional opportunity cost from the no-averaging/no-pyramiding rule. The $32.91 is a model-derived counterfactual, not realized P&L. Discovery, institutional, and weak-quality losses remain unquantifiable until rejected contracts receive shadow forecasts and resolution tracking.
 
-## Adaptive threshold investigation
+## Adaptive-threshold recommendation
 
-**Observed:** No shadow threshold has a resolved outcome, so fixed-versus-adaptive profitability cannot be compared. Politics has the highest historical raw edge (2.04% average; 19.9% >=2%), while crypto has the highest >=2% frequency (32.2%; 1.59% average). The 31–90 day horizon has the highest average raw edge (1.80%), followed by 91–180 days (1.24%). These are edge distributions, not returns.
+The fixed 2% threshold qualified 222 of 1,826 observations. The current liquidity/spread/horizon counterfactual qualified 171. Among safety/depth/EV-valid candidates, fixed admitted 106 observations with $151.3296 summed modeled EV; adaptive would retain 56 with $87.9723 summed modeled EV.
 
-**Implemented counterfactual:** Each evaluation records a recommended threshold starting at 2%, then adds half-spread (capped at 2 percentage points), 0.5–1 point for thin liquidity, and 0.5 point for missing or >180-day horizons. Admission remains fixed at 2% executable edge until resolved samples exist.
+**Observed:** adaptive filtering is more selective and would reduce exposure and modeled EV. **Not observed:** whether it improves realized P&L, calibration, drawdown, or return per API dollar. No admitted Revenue contract is resolved, so activating adaptive admission would be premature.
 
-**Hypothesis:** Adaptive thresholds should be activated only after each segment has at least 30 resolved positions and improves net P&L, drawdown, and profit/API-dollar out of sample. Category and calibration adjustments should use shrinkage toward the global rate to avoid overfitting.
+Recommendation: keep fixed 2% admission for the attended POC, record both thresholds, and compare out of sample after at least 30 resolved positions per segment. Optimize on net P&L, drawdown, and profit/API-dollar, with shrinkage toward the global result for sparse categories and horizons.
 
-## Strategy readiness
+## Strategy assessment
 
-| Strategy | Readiness | Minimal additions required |
+| Strategy | Readiness | Minimal additions required; not implemented |
 |---|---|---|
-| Directional | Supported for paper research | current quote/depth refresh, fee capture, revenue resolution |
-| Relative value | Partial | contract-family graph, mutually exclusive/exhaustive constraints, joint pricing |
-| Cross-market pricing | Partial | normalized event/outcome identities and synchronized venue snapshots |
-| Arbitrage | Not supported | atomic multi-leg quote/depth validation and fill simulation |
-| Market making | Not supported | order lifecycle, inventory model, queue/fill simulator; incompatible with current no-order POC |
-| Liquidity provision | Not supported | maker-fee/rebate model, adverse-selection and inventory controls |
-| Basket | Partial | correlation/exposure model and multi-leg portfolio accounting |
-| Volatility | Not supported | time-series order books and path-dependent instruments/signals |
+| Directional | Supported for paper research | longer resolved history and calibration by segment |
+| Relative value | Partial | contract-family constraints, joint pricing, synchronized marks |
+| Cross-market pricing | Partial | normalized event/outcome identity and synchronized venue snapshots |
+| Arbitrage | Not supported | atomic multi-leg depth/fill simulation |
+| Market making | Not supported | order lifecycle, queue/fill simulator, inventory/adverse-selection controls |
+| Liquidity provision | Not supported | maker schedule, rebate, inventory, and adverse-selection models |
+| Basket | Partial | correlation, multi-leg accounting, and portfolio risk constraints |
+| Volatility | Not supported | order-book time series and path-dependent strategy definitions |
 
-No non-directional strategy was implemented.
-
-## API economics
-
-**Observed:** 265 of 768 historical shadow observations are marked LLM-used across four days (23, 91, 86, and 65 calls/day). Historical token counts and actual provider spend were not captured, and configured estimated cost per call is zero, so a dollar-cost claim would be unsupported.
-
-**Implemented:** deterministic state fingerprints, cache hits/calls avoided, deterministic EV-per-capital-day ranking, configurable $2/day reporting, and cost-per-market/candidate/admission metrics. Replaying unchanged copied state caused zero new evaluations or admissions and recorded 265 LLM calls avoided. The first import cannot retroactively avoid calls already spent.
-
-## Controlled dashboard
-
-| Metric | Result |
-|---|---:|
-| Starting balance | $1,000.00 |
-| Cash | $849.85 |
-| Deployed capital | $150.00 |
-| Equity at entry marks | $999.85 |
-| Open positions | 6 |
-| Realized / unrealized P&L | $0.00 / $0.00 |
-| Model-derived open EV | $11.05 |
-| Fees / slippage / spread cost | $0.00 / $0.15 / $1.38 |
-| Capital utilization | 15.0% |
-| Candidate / opportunity conversion | 15.4% / 0.79% |
-| API calls observed historically | 265 |
-| Second-pass calls avoided | 265 |
-| API spend / tokens | unavailable historically |
-
-Win rate, profit factor, average winner/loser, maximum realized drawdown, calibration by segment, and repeatability are unavailable until positions resolve. Equity is marked at entry because current quotes are not persisted for Revenue POC positions.
+No non-directional strategy or live execution capability was added.
 
 ## Highest-ROI next engineering tasks
 
 | Rank | Task | Expected P&L impact | Effort | Risk | API impact | Capital efficiency |
 |---:|---|---|---|---|---|---|
-| 1 | Resolve and mark Revenue POC positions; persist realized fees and outcomes | High measurement value; direct P&L unknown | Medium | Low | Low | Enables evidence-based recycling and drawdown controls |
-| 2 | Persist top-of-book depth, executable fees, and current marks | High downside protection by removing phantom edge; amount unknown | Medium | Low | Low/moderate deterministic quote calls | Avoids capital in unfillable/negative-net-EV trades |
-| 3 | Move state-cache check before LLM invocation and persist provider usage | Up to 265 calls avoided on unchanged replay; P&L neutral unless saved budget evaluates better markets | Medium | Medium | Strong reduction | More edge evaluations per $2 budget |
-| 4 | Expand deterministic ranking from 22 to the 96 eligible contracts before LLM selection | Hypothesis: larger executable opportunity set; effect unknown | Medium | Medium | Neutral if LLM cap fixed | Better selection without more capital |
-| 5 | Add relative-value constraint detection across event families | Hypothesis: less model-risk-dependent edge and more repeatability | High | Medium | Low until finalists need review | Supports hedged/multi-leg use of capital |
+| 1 | Accumulate automatic marks and resolved outcomes for Revenue positions | High measurement value; dollar impact unknown | Medium | Low | Low deterministic quote reads | Enables evidence-based recycling and risk controls |
+| 2 | Persist true entry-time top-level depth and venue fee metadata before admission | High phantom-edge reduction; amount unknown | Medium | Low | Low | Avoids capital in unfillable/negative-net-edge trades |
+| 3 | Move fingerprint/cache gating ahead of every LLM reservation in the main loop | Up to 601 calls avoided on this state replay | Medium | Medium | Strong reduction | More research per $2 budget |
+| 4 | Rank all 96 historically eligible discovery contracts deterministically before bounded LLM review | Hypothesis: better candidate selection | Medium | Medium | Neutral with fixed call cap | Wider opportunity set per API dollar |
+| 5 | Shadow relative-value constraints across related contracts | Hypothesis: more repeatable, less directional edge | High | Medium | Low until finalists | Potentially hedged capital use |
 
-## Validation and limitations
+## Validation results
 
-- Production database backed up before schema work: `backups/runs.pre_revenue_poc_v1.20260804T000000Z.sqlite` (operational artifact, not committed).
-- Schema upgrade/downgrade is scoped to `revenue_poc_*` tables and preserves `paper_trades`.
-- Controlled experiments ran on `/tmp` database copies only.
-- The Revenue CLI automatically takes an online SQLite backup before first-time schema creation.
-- Controlled read-only inference fetched one live snapshot with LLM disabled; it was rejected for weak market quality and created no production or Revenue position.
-- Production approval, resolver, position sizing, and safeguards are unchanged.
-- Revenue positions cannot submit live orders: the package has no connector/order imports and the CLI exposes no live mode.
-- Legacy calibration contains only two resolved P&L samples, total -$52.83; it is too small for threshold or category tuning.
-- Historical fee, token, API-dollar, true depth, and mark-to-market data are unavailable. Configuration makes assumptions explicit rather than presenting them as observations.
+- Fresh production-state copy and SHA-256 reconciliation: passed.
+- Automatic pre-migration SQLite backup: passed.
+- Migration upgrade and downgrade: passed; legacy state preserved.
+- Fresh copied-state inference: passed; one LLM call, no candidate.
+- Automatic Revenue paper entry: passed; 10 unique positions.
+- Current mark-to-market: passed; 10/10 actual public CLOB books.
+- Shadow resolution scan: passed; 0 matching admitted resolutions.
+- Fixture mark/resolution and repeated idempotency: passed.
+- Cash and category-exposure recycling: passed.
+- Unchanged-state cache: passed; 0 new evaluations on 1,826 rows.
+- API-budget behavior: passed; unknown history fails closed.
+- Portfolio, exposure, duplicate, and dashboard validation: passed.
+- Full test suite: 94 tests passed.
+- Python compile check, shell syntax check, and `git diff --check`: passed.
+
+## Exact remaining limitations
+
+- No admitted Revenue position is resolved, so realized profitability, win rate, profit factor, calibration, and repeatability are unknown.
+- Historical bid/ask, depth, quote timestamps, fee metadata, tokens, and API dollars cannot be reconstructed; they remain labeled assumptions or unknowns.
+- Six of ten current fee rates come from the published category schedule because the market response exposed only `feesEnabled=true`, not a numeric rate.
+- Slippage is still a 10 bps assumption; there is no queue/fill or depth-walking simulation.
+- Marks are sequential public snapshots, not an atomic portfolio-wide exchange snapshot.
+- Early funnel rejections lack forecasts and outcomes, so expected lost P&L cannot be measured.
+- API cost is estimated from observed tokens and current public pricing, not reconciled to invoices.
+- The Revenue $2 budget currently fails closed in its accounting/query interface, but it does not replace or gate the unchanged upstream inference loop's existing call-count caps.
+- Revenue orchestration runs only when explicitly enabled and attended; no scheduler or deployment change is included.
+- The lane is paper-only. No authenticated order construction, signing, submission, merge, or deployment was performed.

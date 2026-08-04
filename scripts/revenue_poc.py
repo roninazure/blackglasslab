@@ -16,6 +16,7 @@ from revenue_poc.config import RevenueConfig
 from revenue_poc.reporting import funnel_analysis, portfolio_dashboard, write_report
 from revenue_poc.repository import apply_schema, downgrade_schema
 from revenue_poc.service import RevenuePOCService
+from revenue_poc.venue import quote_from_market_and_book, resolved_outcome, yes_token_id
 from swarm_edge_runtime import RUNTIME_PATHS
 
 
@@ -47,6 +48,9 @@ def main() -> int:
     parser.add_argument("--ingest-shadow", action="store_true")
     parser.add_argument("--dashboard", action="store_true")
     parser.add_argument("--analysis", action="store_true")
+    parser.add_argument("--refresh-marks", action="store_true")
+    parser.add_argument("--resolve-shadow", action="store_true")
+    parser.add_argument("--lifecycle-fixture", type=Path)
     parser.add_argument("--output-dir", type=Path, default=RUNTIME_PATHS.report_dir)
     parser.add_argument("--backup-dir", type=Path, default=RUNTIME_PATHS.backup_dir)
     args = parser.parse_args()
@@ -68,6 +72,72 @@ def main() -> int:
         if args.ingest_shadow:
             result = RevenuePOCService(conn, RevenueConfig.from_env()).ingest_shadow_forecasts()
             print(json.dumps({"ingest": result}, sort_keys=True))
+        service = RevenuePOCService(conn, RevenueConfig.from_env())
+        if args.lifecycle_fixture:
+            payload = json.loads(args.lifecycle_fixture.read_text(encoding="utf-8"))
+            marked = sum(
+                1
+                for item in payload.get("marks", [])
+                if service.mark_position(int(item["position_id"]), item)
+            )
+            resolved = sum(
+                1
+                for item in payload.get("resolutions", [])
+                if service.resolve_position(
+                    int(item["position_id"]),
+                    str(item["outcome"]),
+                    item.get("resolved_at_utc"),
+                    resolution_fee_usd=float(item.get("resolution_fee_usd") or 0),
+                    resolution_slippage_usd=float(item.get("resolution_slippage_usd") or 0),
+                )
+            )
+            print(json.dumps({"fixture_lifecycle": {"marked": marked, "resolved": resolved}}))
+        if args.refresh_marks:
+            from adapters.polymarket_adapter import PolymarketAdapter
+
+            adapter = PolymarketAdapter()
+            marked = resolved = failed = 0
+            failures: list[dict[str, object]] = []
+            rows = conn.execute(
+                "SELECT id,market_id,category FROM revenue_poc_positions WHERE status='OPEN'"
+            ).fetchall()
+            for position_id, market_id, category in rows:
+                try:
+                    market = adapter.get_market(str(market_id))
+                    outcome = resolved_outcome(market)
+                    if outcome:
+                        resolved += int(service.resolve_position(int(position_id), outcome))
+                        continue
+                    book = adapter.get_order_book(yes_token_id(market))
+                    marked += int(
+                        service.mark_position(
+                            int(position_id),
+                            quote_from_market_and_book(market, book, category=str(category)),
+                        )
+                    )
+                except Exception as exc:
+                    failed += 1
+                    failures.append(
+                        {
+                            "position_id": int(position_id),
+                            "market_id": str(market_id),
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+            print(
+                json.dumps(
+                    {
+                        "venue_lifecycle": {
+                            "marked": marked,
+                            "resolved": resolved,
+                            "failed": failed,
+                            "failures": failures,
+                        }
+                    }
+                )
+            )
+        if args.resolve_shadow:
+            print(json.dumps({"shadow_resolved": service.resolve_from_shadow()}))
         if args.dashboard:
             dashboard = portfolio_dashboard(conn)
             write_report(args.output_dir / "revenue_poc_dashboard.json", dashboard)

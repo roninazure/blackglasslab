@@ -41,6 +41,7 @@ def evaluate_execution(
     best_ask: float | None = None,
     spread: float | None = None,
     depth_usd: float | None = None,
+    fee_rate: float | None = None,
     fee_bps: float = 0.0,
     slippage_bps: float = 0.0,
     expected_holding_days: float | None = None,
@@ -59,7 +60,11 @@ def evaluate_execution(
     midpoint_side = market if side == "YES" else 1.0 - market
     entry_price = ask if side == "YES" else 1.0 - bid
     entry_price = _clamp(entry_price)
-    fee = stake_usd * max(0.0, fee_bps) / 10_000.0
+    if fee_rate is not None:
+        shares = stake_usd / entry_price
+        fee = shares * max(0.0, fee_rate) * entry_price * (1.0 - entry_price)
+    else:
+        fee = stake_usd * max(0.0, fee_bps) / 10_000.0
     slippage = stake_usd * max(0.0, slippage_bps) / 10_000.0
     spread_cost = stake_usd * max(0.0, entry_price - midpoint_side) / entry_price
     raw_edge = abs(model - market)
