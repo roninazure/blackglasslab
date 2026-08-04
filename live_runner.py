@@ -764,6 +764,12 @@ def _infer_one(
                     "pricing_source": item["pricing_source"],
                     "spread": item["spread"],
                     "market_snapshot_id": item["market"].get("id"),
+                    "market_snapshot": {
+                        "best_bid": item["market"].get("bestBid"),
+                        "best_ask": item["market"].get("bestAsk"),
+                        "liquidity": item["market"].get("liquidity"),
+                        "volume": item["market"].get("volume"),
+                    },
                     "temporal_context": item["temporal_context"],
                     "scoring_components": opportunity.scoring_components,
                 },

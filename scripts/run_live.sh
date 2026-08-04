@@ -75,6 +75,14 @@ while true; do
     fi
   fi
 
+  # --- INDEPENDENT REVENUE POC PAPER LANE ---
+  # Existing deployments remain unchanged unless explicitly enabled.
+  if [[ "${BGL_REVENUE_POC_ENABLED:-0}" == "1" ]]; then
+    "$PYTHON_BIN" scripts/revenue_poc.py --db "${BGL_DB_PATH:-memory/runs.sqlite}" \
+      --ingest-shadow --dashboard --analysis \
+      || echo "== [WARN] Revenue POC paper lane exited non-zero =="
+  fi
+
   COUNT=$((COUNT + 1))
 
   # --- AUTO-RESOLVE every RESOLVE_EVERY cycles ---

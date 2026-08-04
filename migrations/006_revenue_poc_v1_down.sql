@@ -1,0 +1,11 @@
+PRAGMA foreign_keys=OFF;
+DROP TRIGGER IF EXISTS trg_revenue_decisions_no_delete;
+DROP TRIGGER IF EXISTS trg_revenue_decisions_append_only;
+DROP TRIGGER IF EXISTS trg_revenue_positions_entry_immutable;
+DROP TRIGGER IF EXISTS trg_revenue_evaluations_append_only;
+DROP TABLE IF EXISTS revenue_poc_api_daily;
+DROP TABLE IF EXISTS revenue_poc_decisions;
+DROP TABLE IF EXISTS revenue_poc_positions;
+DROP TABLE IF EXISTS revenue_poc_evaluations;
+DROP TABLE IF EXISTS revenue_poc_accounts;
+PRAGMA foreign_keys=ON;
