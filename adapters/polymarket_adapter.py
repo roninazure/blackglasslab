@@ -25,6 +25,7 @@ class PolymarketAdapter:
     VENUE = "polymarket"
     BASE_URL = "https://gamma-api.polymarket.com/markets"
     EVENTS_URL = "https://gamma-api.polymarket.com/events"
+    BOOK_URL = "https://clob.polymarket.com/book"
 
     def venue(self) -> str:
         return self.VENUE
@@ -142,3 +143,13 @@ class PolymarketAdapter:
                 f"market ID mismatch: requested={market_id_str} returned={returned_id}"
             )
         return data
+
+    def get_order_book(self, token_id: Any) -> Dict[str, Any]:
+        """Read public CLOB depth. This method cannot place or authenticate orders."""
+        token = str(token_id or "").strip()
+        if not token:
+            raise ValueError("get_order_book: token ID is empty")
+        return self._fetch_json(
+            f"{self.BOOK_URL}?token_id={token}",
+            context=f"order book token={token[:24]}",
+        )

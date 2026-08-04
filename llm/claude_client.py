@@ -20,6 +20,7 @@ from typing import Any, Optional, Tuple
 from context.temporal import build_temporal_context, format_temporal_context_block
 from loop_engine.prompts import build_forecast_prompts, classify_market
 from loop_engine.skeptic import SkepticReview, normalize_skeptic_review
+from llm.usage import capture_usage
 from swarm_edge_runtime import load_runtime_environment
 
 # ---------------------------------------------------------------------------
@@ -58,6 +59,7 @@ except ImportError:
     _SDK_AVAILABLE = False
 
 _client: Optional[object] = None
+_last_usage: Optional[dict[str, Any]] = None
 
 
 def _get_client():
@@ -80,6 +82,10 @@ def claude_enabled() -> bool:
     if not _SDK_AVAILABLE:
         return False
     return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+
+
+def get_last_usage() -> Optional[dict[str, Any]]:
+    return dict(_last_usage) if _last_usage is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +125,8 @@ def forecast_yes_probability(
         confidence  — model self-reported confidence (0.50–0.95)
         rationale   — 1-2 sentence explanation
     """
+    global _last_usage
+    _last_usage = None
     client = _get_client()
     model = _model_name()
 
@@ -163,6 +171,7 @@ def forecast_yes_probability(
             raise RuntimeError(f"Anthropic billing error — add credits at console.anthropic.com: {api_err}") from api_err
         raise
 
+    _last_usage = capture_usage(resp, operation="forecast")
     data = _parse_json_response(resp.content[0].text)
 
     p_yes = float(data["p_yes"])
@@ -187,6 +196,8 @@ def review_forecast(
     temporal_context: dict[str, Any],
 ) -> SkepticReview:
     """Run a compact second pass over forecasts that are close to trade-worthy."""
+    global _last_usage
+    _last_usage = None
     client = _get_client()
     system_prompt = (
         "You are a skeptical prediction-market risk reviewer. Test temporal validity, "
@@ -212,4 +223,5 @@ def review_forecast(
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
     )
+    _last_usage = capture_usage(resp, operation="skeptic")
     return normalize_skeptic_review(_parse_json_response(resp.content[0].text))

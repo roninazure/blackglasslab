@@ -19,12 +19,14 @@ try:
     from llm.openai_client import (
         openai_enabled,
         forecast_yes_probability,
+        get_last_usage,
         review_forecast,
     )
 except Exception:
     openai_enabled = lambda: False  # type: ignore
     forecast_yes_probability = None  # type: ignore
     review_forecast = None  # type: ignore
+    get_last_usage = lambda: None  # type: ignore
 
 from context.temporal import build_temporal_context, validate_temporal_rationale
 from loop_engine.config import LLMBudget, LoopEngineConfig
@@ -764,8 +766,18 @@ def _infer_one(
                     "pricing_source": item["pricing_source"],
                     "spread": item["spread"],
                     "market_snapshot_id": item["market"].get("id"),
+                    "market_snapshot": {
+                        "best_bid": item["market"].get("bestBid"),
+                        "best_ask": item["market"].get("bestAsk"),
+                        "liquidity": item["market"].get("liquidity"),
+                        "volume": item["market"].get("volume"),
+                        "updatedAt": item["market"].get("updatedAt"),
+                        "feesEnabled": item["market"].get("feesEnabled"),
+                        "feeRate": item["market"].get("feeRate"),
+                    },
                     "temporal_context": item["temporal_context"],
                     "scoring_components": opportunity.scoring_components,
+                    "anthropic_usage": item.get("anthropic_usage_events") or None,
                 },
             },
             thresholds=config.threshold_buckets,
@@ -1252,6 +1264,7 @@ def _infer_one(
         llm_error = ""
         skeptic_used = False
         skeptic_payload: Dict[str, Any] = {}
+        item["anthropic_usage_events"] = []
 
         if use_llm:
             if not budget.reserve_primary():
@@ -1322,6 +1335,8 @@ def _infer_one(
                     question=question,
                     context=ctx,
                 )
+                if get_last_usage() is not None:
+                    item["anthropic_usage_events"].append(get_last_usage())
                 p_yes_model = float(min(0.99, max(0.01, p_yes_model)))
                 llm_conf = float(min(0.95, max(0.0, llm_conf)))
                 disagreement = float(max(0.0, min(1.0, 1.0 - llm_conf)))
@@ -1334,6 +1349,8 @@ def _infer_one(
                     short_rationale_summary=llm_rationale[:240] or None,
                 )
             except Exception as llm_err:
+                if get_last_usage() is not None:
+                    item["anthropic_usage_events"].append(get_last_usage())
                 llm_error = str(llm_err)[:500]
                 summary["llm_failed"] += 1
                 _update_brain(record, budget_status="llm_failed")
@@ -1485,6 +1502,8 @@ def _infer_one(
                     rationale=llm_rationale,
                     temporal_context=temporal_context,
                 )
+                if get_last_usage() is not None:
+                    item["anthropic_usage_events"].append(get_last_usage())
                 skeptic_payload = {
                     "action": review.action,
                     "reason": review.reason,
@@ -1496,6 +1515,8 @@ def _infer_one(
                     "trigger": skeptic_trigger_reason,
                 }
             except Exception as skeptic_err:
+                if get_last_usage() is not None:
+                    item["anthropic_usage_events"].append(get_last_usage())
                 summary["skeptic_failed"] += 1
                 summary["skeptic_reject"] += 1
                 infer_diag_counts["evaluated"] += 1
