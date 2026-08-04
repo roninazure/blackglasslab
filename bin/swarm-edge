@@ -82,6 +82,13 @@ case "${1:-status}" in
     exec "${PYTHON_BIN:-$APP_DIR/.venv/bin/python}" "$APP_DIR/scripts/resolve_paper_trades.py" --dry-run
     ;;
 
+  watch|portfolio|positions|revenue-status)
+    command="$1"
+    shift
+    load_env
+    exec "${PYTHON_BIN:-$APP_DIR/.venv/bin/python}" "$APP_DIR/scripts/operator_console.py" "$command" "$@"
+    ;;
+
   backup)
     echo "Backups are a deployment operation; use the release tooling." >&2
     exit 64
@@ -93,7 +100,7 @@ case "${1:-status}" in
     ;;
 
   *)
-    echo "Usage: swarm-edge {start|run|stop|restart|status|ps|logs|tail|infer|resolve}" >&2
+    echo "Usage: swarm-edge {start|run|stop|restart|status|ps|logs|tail|infer|resolve|watch|portfolio|positions|revenue-status}" >&2
     exit 1
     ;;
 esac
