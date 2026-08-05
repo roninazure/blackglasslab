@@ -6,7 +6,7 @@ from context.temporal import format_temporal_context_block
 
 
 _CATEGORY_RULES: list[tuple[tuple[str, ...], str]] = [
-    (("federal reserve", "fomc", "fed funds", "rate cut", "rate hike"), "macro/fed"),
+    (("federal reserve", "fomc", "fed funds", " fed ", "rate cut", "rate cuts", "rate hike", "rate hikes"), "macro/fed"),
     (("recession", "inflation", "gdp", "cpi", "unemployment", "tariff"), "macro/econ"),
     (("election", "ballot", "referendum", "primary", "president", "congress", "senate", "nominee", "vote"), "politics"),
     (("supreme court", "scotus", "court", "verdict", "indictment", "lawsuit", "legal"), "legal"),

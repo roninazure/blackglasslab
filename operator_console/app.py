@@ -442,6 +442,10 @@ class OperatorConsoleApp(App[None]):
                         "Cache / Budget skip",
                         f"{pipe.cache_hits:,} / {pipe.budget_skips}",
                     ),
+                    (
+                        "Dynamic / Outside fixed",
+                        f"{pipe.dynamic_shortlist_size} / {pipe.outside_watchlist}",
+                    ),
                 ],
             )
         )
@@ -457,6 +461,7 @@ class OperatorConsoleApp(App[None]):
                         "Remaining / Calls",
                         f"{money(api.remaining_budget)} / {api.calls_today}",
                     ),
+                    ("Reserved / Cost skips", f"{money(api.reserved_budget)} / {api.calls_skipped_by_cost}"),
                     (
                         "Tokens in / out",
                         f"{api.input_tokens:,} / {api.output_tokens:,}",
@@ -465,6 +470,8 @@ class OperatorConsoleApp(App[None]):
                         "Cache tokens / Avoided",
                         f"{api.cache_tokens:,} / {api.calls_avoided:,}",
                     ),
+                    ("Provider cache savings", money(api.provider_cache_savings_usd)),
+                    ("Models", ", ".join(f"{k}={v}" for k, v in sorted(api.calls_by_model.items())) or "none"),
                     ("Unknown history", f"{api.unknown_historical_calls:,} UNKNOWN"),
                 ],
             )

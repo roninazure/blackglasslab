@@ -86,6 +86,10 @@ class PipelineSnapshot:
     revenue_admissions: int = 0
     cache_hits: int = 0
     budget_skips: int = 0
+    dynamic_shortlist_size: int = 0
+    outside_watchlist: int = 0
+    modeled_ev_skipped_budget: float = 0.0
+    quarantined_markets: int = 0
     rejections: dict[str, int] = field(default_factory=dict)
 
 
@@ -104,6 +108,11 @@ class ApiSnapshot:
     cost_per_admitted_trade: float | None = None
     unknown_historical_calls: int = 0
     measurement: str = "unknown"
+    reserved_budget: float = 0.0
+    calls_skipped_by_cost: int = 0
+    calls_skipped_by_emergency: int = 0
+    calls_by_model: dict[str, int] = field(default_factory=dict)
+    provider_cache_savings_usd: float = 0.0
 
 
 @dataclass(frozen=True)

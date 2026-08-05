@@ -255,6 +255,7 @@ class RevenuePOCService:
                         ),
                     )
                     evaluation_id = int(cursor.lastrowid)
+                    self._record_threshold_experiments(evaluation_id, economics, threshold)
                     self._api_increment(date_utc, markets_evaluated=1)
                     if int(row[14]):
                         usage_value = metadata.get("anthropic_usage")
@@ -345,8 +346,9 @@ class RevenuePOCService:
             INSERT OR IGNORE INTO revenue_poc_api_calls
             (call_key,source_shadow_forecast_id,timestamp_utc,operation,model,
              input_tokens,output_tokens,cache_creation_input_tokens,
-             cache_read_input_tokens,estimated_cost_usd,pricing_source,telemetry_status)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             cache_read_input_tokens,estimated_cost_usd,pricing_source,telemetry_status,
+             routing_tier,decision_changed,estimated_cache_savings_usd)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 call_key,
@@ -361,6 +363,9 @@ class RevenuePOCService:
                 telemetry.get("estimated_cost_usd"),
                 str(telemetry.get("pricing_source") or "historical_unknown"),
                 "observed" if known else "historical_unknown",
+                str(telemetry.get("routing_tier") or "legacy"),
+                int(bool(telemetry.get("decision_changed", False))),
+                telemetry.get("estimated_cache_savings_usd"),
             ),
         )
         if cursor.rowcount != 1:
@@ -415,12 +420,61 @@ class RevenuePOCService:
             (date_utc, *(data[column] for column in columns)),
         )
 
-    def _decision(self, evaluation_id: int, timestamp: str, decision: str, reason: str, lost_ev: float) -> None:
+    def _decision(
+        self,
+        evaluation_id: int,
+        timestamp: str,
+        decision: str,
+        reason: str,
+        lost_ev: float,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        row = self.conn.execute(
+            "SELECT model_probability,executable_bid,executable_ask,executable_edge,"
+            "expected_value_usd,capital_required_usd,expected_holding_days,metadata "
+            "FROM revenue_poc_evaluations WHERE id=?",
+            (evaluation_id,),
+        ).fetchone()
+        payload = {
+            "model_probability": float(row[0]) if row else None,
+            "executable_price": float(row[2]) if row else None,
+            "net_executable_edge": float(row[3]) if row else None,
+            "modeled_ev_usd": float(row[4]) if row else None,
+            "capital_required_usd": float(row[5]) if row else None,
+            "expected_holding_days": float(row[6]) if row and row[6] is not None else None,
+            "estimated_api_cost_usd": None,
+            "skip_classification": reason,
+        }
+        if details:
+            payload.update(details)
         with self.conn:
             self.conn.execute(
                 "INSERT INTO revenue_poc_decisions (evaluation_id,timestamp_utc,decision,reason,expected_lost_pnl_usd,details) VALUES (?,?,?,?,?,?)",
-                (evaluation_id, timestamp, decision, reason, max(0.0, float(lost_ev)), "{}"),
+                (evaluation_id, timestamp, decision, reason, max(0.0, float(lost_ev)), json.dumps(payload, sort_keys=True)),
             )
+
+    def _record_threshold_experiments(self, evaluation_id: int, economics: Any, adaptive: float) -> None:
+        thresholds = (("0.5%", 0.005), ("1.0%", 0.01), ("1.5%", 0.015),
+                      ("2.0%", 0.02), ("2.5%", 0.025), ("3.0%", 0.03),
+                      ("adaptive", float(adaptive)))
+        with self.conn:
+            for label, threshold in thresholds:
+                self.conn.execute(
+                    """
+                    INSERT OR IGNORE INTO revenue_poc_shadow_thresholds
+                    (evaluation_id,threshold_label,threshold,qualifies,modeled_ev_usd,
+                     capital_required_usd,expected_holding_days,adaptive_threshold)
+                    VALUES (?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        evaluation_id, label, threshold,
+                        int(float(economics.executable_edge) >= threshold),
+                        float(economics.expected_value_usd),
+                        float(economics.capital_required_usd),
+                        economics.expected_holding_days,
+                        float(adaptive),
+                    ),
+                )
 
     def _evaluation_ev(self, evaluation_id: int) -> float:
         return float(self.conn.execute("SELECT expected_value_usd FROM revenue_poc_evaluations WHERE id=?", (evaluation_id,)).fetchone()[0])

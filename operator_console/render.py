@@ -178,10 +178,14 @@ def api_table(snapshot: ConsoleSnapshot) -> Table:
         ("Daily budget", money(a.daily_budget)),
         ("Estimated spend today", money(a.estimated_spend_today)),
         ("Remaining budget", money(a.remaining_budget)),
+        ("Reserved budget", money(a.reserved_budget)),
         ("Calls today", str(a.calls_today)),
         ("Input / output tokens", f"{a.input_tokens:,} / {a.output_tokens:,}"),
         ("Cache tokens", f"{a.cache_tokens:,}"),
         ("Calls avoided", f"{a.calls_avoided:,}"),
+        ("Skipped cost / ceiling", f"{a.calls_skipped_by_cost} / {a.calls_skipped_by_emergency}"),
+        ("Provider cache savings", money(a.provider_cache_savings_usd)),
+        ("Calls by model", ", ".join(f"{k}={v}" for k, v in sorted(a.calls_by_model.items())) or "none"),
         ("Cost / evaluation", money(a.cost_per_evaluation)),
         ("Cost / candidate", money(a.cost_per_candidate)),
         ("Cost / admitted trade", money(a.cost_per_admitted_trade)),
@@ -203,7 +207,8 @@ def revenue_status(snapshot: ConsoleSnapshot, console: Console) -> None:
         f"ranked={pipeline.ranked} evaluated={pipeline.evaluated} llm={pipeline.llm_calls} "
         f"skeptic={pipeline.skeptic_calls} strict={pipeline.strict_candidates} "
         f"revenue={pipeline.revenue_candidates}/{pipeline.revenue_admissions} "
-        f"cache={pipeline.cache_hits:,} budget_skips={pipeline.budget_skips}"
+        f"cache={pipeline.cache_hits:,} budget_skips={pipeline.budget_skips} "
+        f"dynamic={pipeline.dynamic_shortlist_size} outside={pipeline.outside_watchlist}"
     )
     if pipeline.rejections:
         console.print(
