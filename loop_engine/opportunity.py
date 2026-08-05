@@ -73,6 +73,56 @@ class OpportunityScore:
     skip_reason: Optional[str]
 
 
+@dataclass(frozen=True)
+class CapitalAdjustedOpportunity:
+    raw_edge: float
+    executable_edge: float
+    expected_value_usd: float
+    capital_required_usd: float
+    expected_holding_days: float
+    ev_per_deployed_usd: float
+    ev_per_lockup_day: float
+    liquidity_adjusted_ev_usd: float
+    confidence_adjusted_ev_usd: float
+    diversification_impact: float
+    ranking_score: float
+
+
+def capital_adjusted_opportunity(
+    *,
+    raw_edge: float,
+    executable_edge: float,
+    expected_value_usd: float,
+    capital_required_usd: float,
+    expected_holding_days: float | None,
+    liquidity_usd: float,
+    model_confidence: float,
+    diversification_impact: float = 0.0,
+) -> CapitalAdjustedOpportunity:
+    capital = max(float(capital_required_usd), 0.01)
+    days = max(float(expected_holding_days or 30.0), 1.0)
+    liquidity_factor = _clamp(float(liquidity_usd) / capital, 0.25, 1.0)
+    confidence_factor = _clamp(float(model_confidence), 0.5, 1.0)
+    ev_per_dollar = float(expected_value_usd) / capital
+    ev_per_day = ev_per_dollar / days
+    liquidity_ev = float(expected_value_usd) * liquidity_factor
+    confidence_ev = liquidity_ev * confidence_factor
+    ranking = confidence_ev / days + max(0.0, float(diversification_impact)) * 0.05
+    return CapitalAdjustedOpportunity(
+        raw_edge=float(raw_edge),
+        executable_edge=float(executable_edge),
+        expected_value_usd=float(expected_value_usd),
+        capital_required_usd=capital,
+        expected_holding_days=days,
+        ev_per_deployed_usd=round(ev_per_dollar, 8),
+        ev_per_lockup_day=round(ev_per_day, 8),
+        liquidity_adjusted_ev_usd=round(liquidity_ev, 8),
+        confidence_adjusted_ev_usd=round(confidence_ev, 8),
+        diversification_impact=float(diversification_impact),
+        ranking_score=round(ranking, 8),
+    )
+
+
 def score_opportunity(
     market: Mapping[str, Any],
     *,

@@ -4,6 +4,7 @@ import json
 import urllib.request
 import urllib.error
 from typing import Any, Dict, List, Optional
+import urllib.parse
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -153,3 +154,39 @@ class PolymarketAdapter:
             f"{self.BOOK_URL}?token_id={token}",
             context=f"order book token={token[:24]}",
         )
+
+    def discover_markets(self, *, limit: int = 500, offset: int = 0) -> List[Dict[str, Any]]:
+        """Fetch a bounded active universe for deterministic shadow discovery."""
+        params = urllib.parse.urlencode({
+            "limit": max(1, min(1000, int(limit))),
+            "offset": max(0, int(offset)),
+            "active": "true",
+            "closed": "false",
+            "order": "liquidity",
+            "ascending": "false",
+        })
+        req = urllib.request.Request(
+            f"https://gamma-api.polymarket.com/events?{params}", headers=_HEADERS
+        )
+        try:
+            with _OPENER.open(req, timeout=20) as response:
+                payload = json.loads(response.read())
+        except Exception as exc:
+            raise RuntimeError(f"market discovery failed: {str(exc)[:300]}") from exc
+        result: List[Dict[str, Any]] = []
+        if not isinstance(payload, list):
+            return result
+        for event in payload:
+            if not isinstance(event, dict) or not isinstance(event.get("markets"), list):
+                continue
+            context = {
+                key: event.get(key)
+                for key in ("id", "slug", "title", "category", "endDate", "volume", "liquidity")
+                if event.get(key) is not None
+            }
+            for market in event["markets"]:
+                if isinstance(market, dict):
+                    row = dict(market)
+                    row["_discovery_event"] = context
+                    result.append(row)
+        return result

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from swarm_edge_runtime import RUNTIME_PATHS
@@ -43,6 +42,7 @@ def capture_usage(response: Any, *, operation: str) -> dict[str, Any]:
     payload["pricing_source"] = pricing_source
     if prices is None:
         payload["estimated_cost_usd"] = None
+        payload["estimated_cache_savings_usd"] = None
     else:
         payload["estimated_cost_usd"] = round(
             (
@@ -51,6 +51,12 @@ def capture_usage(response: Any, *, operation: str) -> dict[str, Any]:
                 + payload["cache_creation_input_tokens"] * prices["cache_create"]
                 + payload["cache_read_input_tokens"] * prices["cache_read"]
             )
+            / 1_000_000.0,
+            8,
+        )
+        payload["estimated_cache_savings_usd"] = round(
+            payload["cache_read_input_tokens"]
+            * (prices["input"] - prices["cache_read"])
             / 1_000_000.0,
             8,
         )

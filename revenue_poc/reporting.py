@@ -106,6 +106,62 @@ def portfolio_dashboard(conn: sqlite3.Connection) -> dict[str, Any]:
     known_cost = float(api[5]) if api[5] is not None else None
     unknown_cost_calls = int(api[6])
     admitted = len(positions)
+    tables = {
+        str(row[0])
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    budget = {
+        "spent_usd": 0.0,
+        "reserved_usd": 0.0,
+        "remaining_usd": None,
+        "calls_skipped_by_cost": 0,
+        "calls_skipped_by_emergency": 0,
+        "modeled_ev_skipped_usd": 0.0,
+        "calls_by_model": {},
+        "cache_savings_usd": 0.0,
+    }
+    if "revenue_poc_budget_events" in tables:
+        row = conn.execute(
+            """SELECT COALESCE(SUM(CASE WHEN status='RESERVED' THEN reserved_cost_usd ELSE 0 END),0),
+                      COALESCE(SUM(CASE WHEN status='SKIPPED_COST' THEN 1 ELSE 0 END),0),
+                      COALESCE(SUM(CASE WHEN status='SKIPPED_EMERGENCY' THEN 1 ELSE 0 END),0),
+                      COALESCE(SUM(modeled_ev_skipped_usd),0)
+               FROM revenue_poc_budget_events WHERE date_utc=?""",
+            (latest_api[0] if latest_api else "",),
+        ).fetchone()
+        if row:
+            budget["reserved_usd"] = float(row[0])
+            budget["calls_skipped_by_cost"] = int(row[1])
+            budget["calls_skipped_by_emergency"] = int(row[2])
+            budget["modeled_ev_skipped_usd"] = float(row[3])
+    if "revenue_poc_api_calls" in tables:
+        model_rows = conn.execute(
+            "SELECT COALESCE(model,'unknown'),COUNT(*) FROM revenue_poc_api_calls GROUP BY model"
+        ).fetchall()
+        budget["calls_by_model"] = {str(row[0]): int(row[1]) for row in model_rows}
+        budget["cache_savings_usd"] = float(
+            conn.execute(
+                "SELECT COALESCE(SUM(estimated_cache_savings_usd),0) FROM revenue_poc_api_calls"
+            ).fetchone()[0]
+        )
+        hour_rows = conn.execute(
+            """SELECT substr(timestamp_utc,1,13) AS hour,
+                      ROUND(COALESCE(SUM(estimated_cost_usd),0),8),COUNT(*)
+               FROM revenue_poc_api_calls GROUP BY hour ORDER BY hour DESC LIMIT 168"""
+        ).fetchall()
+        budget["spend_by_hour"] = [
+            {"hour_utc": str(row[0]), "spend_usd": float(row[1] or 0), "calls": int(row[2])}
+            for row in hour_rows
+        ]
+        cycle_rows = conn.execute(
+            """SELECT substr(timestamp_utc,1,16) AS cycle,
+                      ROUND(COALESCE(SUM(estimated_cost_usd),0),8),COUNT(*)
+               FROM revenue_poc_api_calls GROUP BY cycle ORDER BY cycle DESC LIMIT 100"""
+        ).fetchall()
+        budget["spend_by_cycle"] = [
+            {"cycle_utc": str(row[0]), "spend_usd": float(row[1] or 0), "calls": int(row[2])}
+            for row in cycle_rows
+        ]
     return {
         "portfolio": {
             "starting_balance_usd": starting,
@@ -176,6 +232,14 @@ def portfolio_dashboard(conn: sqlite3.Connection) -> dict[str, Any]:
                 "complete_observed_token_estimate" if not unknown_cost_calls
                 else "partial_with_historical_unknowns"
             ),
+            "budget": budget,
+            "calls_by_model": budget["calls_by_model"],
+            "provider_cache_savings_usd": round(budget["cache_savings_usd"], 8),
+        },
+        "optimization": {
+            "thresholds": _threshold_summary(conn, tables),
+            "discovery": _discovery_summary(conn, tables),
+            "quarantine": _quarantine_summary(conn, tables),
         },
         "current_marks": marks,
         "equity_curve": [
@@ -193,6 +257,47 @@ def portfolio_dashboard(conn: sqlite3.Connection) -> dict[str, Any]:
             ).fetchall()
         ],
     }
+
+
+def _threshold_summary(conn: sqlite3.Connection, tables: set[str]) -> list[dict[str, Any]]:
+    if "revenue_poc_shadow_thresholds" not in tables:
+        return []
+    rows = conn.execute(
+        """SELECT threshold_label,threshold,COUNT(*),SUM(qualifies),
+                  ROUND(SUM(modeled_ev_usd),4),ROUND(SUM(capital_required_usd),4)
+           FROM revenue_poc_shadow_thresholds GROUP BY threshold_label,threshold
+           ORDER BY threshold"""
+    ).fetchall()
+    return [
+        {"label": str(row[0]), "threshold": float(row[1]), "evaluations": int(row[2]),
+         "qualifying": int(row[3] or 0), "modeled_ev_usd": float(row[4] or 0),
+         "capital_required_usd": float(row[5] or 0)}
+        for row in rows
+    ]
+
+
+def _discovery_summary(conn: sqlite3.Connection, tables: set[str]) -> dict[str, Any]:
+    if "revenue_poc_discovery_snapshots" not in tables:
+        return {}
+    row = conn.execute(
+        """SELECT COUNT(*),COUNT(DISTINCT market_id),
+                  SUM(status='VALID'),SUM(dynamic_shortlist=1),
+                  SUM(fixed_watchlist=0 AND dynamic_shortlist=1),
+                  ROUND(SUM(CASE WHEN dynamic_shortlist=1 THEN modeled_ev_usd ELSE 0 END),4)
+           FROM revenue_poc_discovery_snapshots"""
+    ).fetchone()
+    return {"rows": int(row[0]), "unique_contracts": int(row[1]), "valid": int(row[2] or 0),
+            "shortlisted": int(row[3] or 0), "outside_fixed_watchlist": int(row[4] or 0),
+            "modeled_ev_outside_fixed_usd": float(row[5] or 0)}
+
+
+def _quarantine_summary(conn: sqlite3.Connection, tables: set[str]) -> dict[str, Any]:
+    if "revenue_poc_market_health" not in tables:
+        return {}
+    rows = conn.execute(
+        "SELECT status,COUNT(*) FROM revenue_poc_market_health GROUP BY status"
+    ).fetchall()
+    return {str(row[0]).lower(): int(row[1]) for row in rows}
 
 
 def funnel_analysis(conn: sqlite3.Connection, pipeline_path: Path | None = None) -> dict[str, Any]:

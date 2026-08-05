@@ -92,8 +92,8 @@ def get_last_usage() -> Optional[dict[str, Any]]:
 # Core forecast function
 # ---------------------------------------------------------------------------
 
-def _model_name() -> str:
-    model = os.environ.get("BGL_LLM_MODEL", "claude-haiku-4-5-20251001").strip()
+def _model_name(requested: str | None = None) -> str:
+    model = (requested or os.environ.get("BGL_LLM_MODEL", "claude-haiku-4-5-20251001")).strip()
     if not model.startswith("claude-"):
         return "claude-haiku-4-5-20251001"
     return model
@@ -108,9 +108,25 @@ def _parse_json_response(raw: str) -> dict[str, Any]:
     return parsed
 
 
+def _system_content(prompt: str) -> str | list[dict[str, Any]]:
+    """Mark stable shared instructions cacheable when the SDK supports it."""
+    enabled = os.environ.get("BGL_ANTHROPIC_PROMPT_CACHE_ENABLED", "1").strip().lower()
+    if enabled in {"0", "false", "no", "off"}:
+        return prompt
+    return [
+        {
+            "type": "text",
+            "text": prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
+
 def forecast_yes_probability(
     question: str,
     context: dict,
+    *,
+    model: str | None = None,
 ) -> Tuple[float, float, str]:
     """
     Call Claude to estimate P(YES) for a prediction market question.
@@ -128,7 +144,7 @@ def forecast_yes_probability(
     global _last_usage
     _last_usage = None
     client = _get_client()
-    model = _model_name()
+    model_name = _model_name(model)
 
     p_yes_market = float(context.get("p_yes_market", 0.5))
     snap = context.get("market_snapshot", {})
@@ -160,9 +176,9 @@ def forecast_yes_probability(
 
     try:
         resp = client.messages.create(
-            model=model,
+            model=model_name,
             max_tokens=350,
-            system=system_prompt,
+            system=_system_content(system_prompt),
             messages=[{"role": "user", "content": user_prompt}],
         )
     except Exception as api_err:
@@ -194,6 +210,7 @@ def review_forecast(
     confidence: float,
     rationale: str,
     temporal_context: dict[str, Any],
+    model: str | None = None,
 ) -> SkepticReview:
     """Run a compact second pass over forecasts that are close to trade-worthy."""
     global _last_usage
@@ -218,9 +235,9 @@ def review_forecast(
         ]
     )
     resp = client.messages.create(
-        model=_model_name(),
+        model=_model_name(model),
         max_tokens=240,
-        system=system_prompt,
+        system=_system_content(system_prompt),
         messages=[{"role": "user", "content": user_prompt}],
     )
     _last_usage = capture_usage(resp, operation="skeptic")

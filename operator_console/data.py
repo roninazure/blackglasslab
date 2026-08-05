@@ -178,7 +178,7 @@ class OperatorDataSource:
         candidates: list[datetime] = []
         if "revenue_poc_marks" in self._tables(conn):
             value = conn.execute(
-                "SELECT MAX(recorded_at_utc) FROM revenue_poc_marks"
+                "SELECT MAX(quote_timestamp_utc) FROM revenue_poc_marks"
             ).fetchone()[0]
             parsed = parse_datetime(value)
             if parsed:
@@ -381,6 +381,24 @@ class OperatorDataSource:
             revenue_admissions=int(revenue_admissions),
             cache_hits=int(cache_hits),
             budget_skips=int(summary.get("budget_skipped", 0) or 0),
+            dynamic_shortlist_size=int(
+                (report.get("optimization") or {}).get("discovery", {}).get("shortlisted", 0)
+                if isinstance(report.get("optimization"), dict)
+                else 0
+            ),
+            outside_watchlist=int(
+                (report.get("optimization") or {}).get("discovery", {}).get("outside_fixed_watchlist", 0)
+                if isinstance(report.get("optimization"), dict)
+                else 0
+            ),
+            modeled_ev_skipped_budget=float(
+                summary.get("modeled_ev_skipped_budget", 0) or 0
+            ),
+            quarantined_markets=int(
+                (report.get("optimization") or {}).get("quarantine", {}).get("quarantined", 0)
+                if isinstance(report.get("optimization"), dict)
+                else 0
+            ),
             rejections=dict(reasons.most_common()),
         )
 
@@ -421,6 +439,19 @@ class OperatorDataSource:
             cost_per_admitted_trade=api["cost_per_admitted_trade"],
             unknown_historical_calls=int(api["unknown_cost_calls"]),
             measurement=str(api["cost_measurement"]),
+            reserved_budget=float(
+                (api.get("budget") or {}).get("reserved_usd", 0.0) or 0.0
+            ),
+            calls_skipped_by_cost=int(
+                (api.get("budget") or {}).get("calls_skipped_by_cost", 0) or 0
+            ),
+            calls_skipped_by_emergency=int(
+                (api.get("budget") or {}).get("calls_skipped_by_emergency", 0) or 0
+            ),
+            calls_by_model=dict(api.get("calls_by_model") or {}),
+            provider_cache_savings_usd=float(
+                api.get("provider_cache_savings_usd", 0.0) or 0.0
+            ),
         )
 
     def _evaluations(self, conn: sqlite3.Connection) -> tuple[EvaluationSnapshot, ...]:

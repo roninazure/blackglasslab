@@ -31,6 +31,7 @@ except Exception:
 from context.temporal import build_temporal_context, validate_temporal_rationale
 from loop_engine.config import LLMBudget, LoopEngineConfig
 from loop_engine.opportunity import score_opportunity
+from llm.routing import route_model
 from loop_engine.shadow import ensure_shadow_schema, insert_shadow_forecast
 from loop_engine.prompts import classify_market
 from loop_engine.skeptic import should_request_skeptic
@@ -38,6 +39,8 @@ from market_universe.policy import (
     InstitutionalUniverseConfig,
     evaluate_market as evaluate_market_policy,
 )
+from market_universe.discovery import discover_markets
+from revenue_poc.market_health import is_quarantined, record_market_fetch
 from models.baseline import score_market, market_yes_price
 from loop_engine.config import DEFAULT_LLM_USAGE_PATH
 from swarm_edge_runtime import RUNTIME_PATHS
@@ -86,6 +89,10 @@ PIPELINE_SUMMARY_FIELDS = (
     "paper_not_requested",
     "shadow_inserted",
     "shadow_duplicate",
+    "budget_skipped_by_cost",
+    "budget_skipped_by_emergency",
+    "modeled_ev_skipped_budget",
+    "unchanged_markets",
 )
 
 
@@ -303,6 +310,8 @@ def _build_brain_report(
         "skeptic_calls_used": budget.skeptic_calls_used,
         "daily_llm_calls_used": budget.daily_calls_used,
         "estimated_cost": budget.estimated_cost,
+        "budget": budget.as_dict(),
+        "calls_by_model": dict(budget.calls_by_model),
         "budget_config": config.as_dict(),
         "market_universe_policy_mode": (
             universe_config.mode if universe_config else "unknown"
@@ -328,6 +337,28 @@ def _existing_position_slugs(conn: sqlite3.Connection, venue: str) -> set[str]:
         (venue,),
     ).fetchall()
     return {str(row[0]) for row in rows if row and row[0]}
+
+
+def _market_state_changed(
+    conn: sqlite3.Connection, *, venue: str, market_id: str, market: Dict[str, Any]
+) -> bool:
+    """Avoid an expensive model call when the executable market state is unchanged."""
+    tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "revenue_poc_evaluations" not in tables:
+        return True
+    row = conn.execute(
+        "SELECT metadata FROM revenue_poc_evaluations WHERE venue=? AND market_id=? ORDER BY id DESC LIMIT 1",
+        (venue, market_id),
+    ).fetchone()
+    if not row:
+        return True
+    try:
+        metadata = json.loads(row[0] or "{}")
+        previous = metadata.get("market_snapshot", {}) if isinstance(metadata, dict) else {}
+    except (TypeError, json.JSONDecodeError):
+        return True
+    fields = ("updatedAt", "bestBid", "bestAsk", "lastTradePrice", "volume", "liquidity", "outcomePrices")
+    return any(previous.get(field) != market.get(field) for field in fields)
 
 
 def _print_pipeline_funnel(report: Dict[str, Any]) -> None:
@@ -500,7 +531,7 @@ def _insert_paper_trade(conn: sqlite3.Connection, cand: Dict[str, Any]) -> str:
         ),
     )
     conn.commit()
-    return f"queued_for_approval" if status == "PENDING" else "inserted"
+    return "queued_for_approval" if status == "PENDING" else "inserted"
 
 
 def _arbiter_candidate_from_db(*, conn: sqlite3.Connection, venue: str, paper_size: float) -> Optional[Dict[str, Any]]:
@@ -660,6 +691,7 @@ def _infer_one(
     budget = LLMBudget(config, _daily_usage_path())
     default_batch = max(config.evaluations_per_cycle * 2, config.evaluations_per_cycle)
     shadow_backup_path: Optional[str] = None
+    discovery_result: Dict[str, Any] = {}
     if paper_mode and config.shadow_ledger_enabled:
         db_row = conn.execute("PRAGMA database_list").fetchone()
         db_path = str(db_row[2]) if db_row and db_row[2] else ":memory:"
@@ -826,6 +858,70 @@ def _infer_one(
             config=config,
             universe_config=universe_config,
         )
+        summary["budget_skipped_by_cost"] = budget.skipped_by_cost
+        summary["budget_skipped_by_emergency"] = budget.skipped_by_emergency
+        summary["modeled_ev_skipped_budget"] = budget.modeled_ev_skipped
+        if paper_mode:
+            optimization_tables = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            if "revenue_poc_budget_events" in optimization_tables and budget.events:
+                with conn:
+                    conn.executemany(
+                        """INSERT INTO revenue_poc_budget_events
+                        (timestamp_utc,date_utc,cycle_id,operation,model,routing_tier,
+                         status,reason,estimated_cost_usd,reserved_cost_usd,
+                         remaining_budget_usd,reserved_budget_usd,modeled_ev_skipped_usd,
+                         priority,details)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        [
+                            (
+                                report["ts_utc"], report["ts_utc"][:10], report["run_id"],
+                                event.get("operation", "forecast"), event.get("model"),
+                                event.get("routing_tier"), event.get("status", "UNKNOWN"),
+                                event.get("reason"), float(event.get("estimated_cost_usd", 0.0) or 0.0),
+                                float(event.get("reserved_cost_usd", 0.0) or 0.0),
+                                budget.remaining_budget(), budget.reserved_usd,
+                                float(event.get("modeled_ev_skipped_usd", 0.0) or 0.0),
+                                event.get("priority"), json.dumps(event, sort_keys=True),
+                            )
+                            for event in budget.events
+                        ],
+                    )
+                budget.events.clear()
+            if "revenue_poc_discovery_snapshots" in optimization_tables and discovery_result.get("rows"):
+                with conn:
+                    conn.executemany(
+                        """INSERT OR IGNORE INTO revenue_poc_discovery_snapshots
+                        (run_id,timestamp_utc,venue,market_id,status,rejection_reason,
+                         fixed_watchlist,dynamic_shortlist,deterministic_score,metadata)
+                         VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                        [
+                            (
+                                report["run_id"], report["ts_utc"], report["source"],
+                                row.get("market_id"), row.get("status", "UNKNOWN"), row.get("reason"),
+                                int(bool(row.get("fixed_watchlist"))),
+                                int(bool(row.get("dynamic_shortlist"))),
+                                row.get("score"), json.dumps(row.get("features", {}), sort_keys=True),
+                            )
+                            for row in discovery_result["rows"]
+                        ],
+                    )
+        report["optimization"] = {
+            "budget": budget.as_dict(),
+            "discovery": {
+                "mode": os.environ.get("BGL_DISCOVERY_MODE", "fixed_watchlist_shadow"),
+                "total_discovered": discovery_result.get("scan", {}).get("total_discovered", len(watchlist)),
+                "valid_contracts": discovery_result.get("scan", {}).get("valid_contracts", summary.get("fetch_attempted", 0) - summary.get("fetch_failed", 0)),
+                "shortlisted": discovery_result.get("scan", {}).get("shortlisted_contracts", summary.get("opportunity_scored", 0)),
+                "outside_fixed_watchlist": discovery_result.get("scan", {}).get("opportunities_outside_fixed_watchlist", 0),
+                "rejected_by_reason": discovery_result.get("rejected_by_reason", {}),
+            },
+            "quarantine": {"quarantined": 0},
+        }
         report["market_universe"] = {
             "policy_mode": universe_config.mode,
             "watchlist_tier_counts": brain_report["watchlist_tier_counts"],
@@ -871,6 +967,27 @@ def _infer_one(
     recent = set(_infer_recent_slugs(conn, venue, cooldown_n))
     existing = _existing_position_slugs(conn, venue)
     adapter = get_adapter(venue)
+    if (
+        os.environ.get("BGL_DISCOVERY_ENABLED", "0").strip().lower()
+        in {"1", "true", "yes", "on"}
+        and hasattr(adapter, "discover_markets")
+    ):
+        try:
+            discovered = adapter.discover_markets(  # type: ignore[attr-defined]
+                limit=int(os.environ.get("BGL_DISCOVERY_LIMIT", "500"))
+            )
+            discovery_result = discover_markets(
+                discovered,
+                fixed_watchlist=watchlist,
+                shortlist_size=int(os.environ.get("BGL_DISCOVERY_SHORTLIST_SIZE", "50")),
+            )
+            report["discovery_shadow"] = discovery_result
+        except Exception as discovery_error:
+            discovery_result = {
+                "scan": {"total_discovered": 0, "valid_contracts": 0, "shortlisted_contracts": 0},
+                "rejected_by_reason": {"discovery_error": 1},
+                "error": str(discovery_error)[:300],
+            }
 
     selected = set(slugs)
     for slug in watchlist:
@@ -926,11 +1043,40 @@ def _infer_one(
             )
             continue
 
+        health_tables = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if "revenue_poc_market_health" in health_tables and is_quarantined(
+            conn, venue=venue, market_id=slug
+        ):
+            summary["fetch_failed"] += 1
+            infer_diag_counts["evaluated"] += 1
+            count_rejection("stale_market_quarantined")
+            _finalize_pipeline_market(
+                record,
+                final_stage="stale_market_quarantine",
+                decision="SKIP",
+                reason="stale_market_quarantined",
+            )
+            continue
+
         summary["fetch_attempted"] += 1
         try:
             m = adapter.get_market(slug)  # type: ignore[attr-defined]
         except Exception as e:
             summary["fetch_failed"] += 1
+            if "revenue_poc_market_health" in health_tables:
+                record_market_fetch(
+                    conn,
+                    venue=venue,
+                    market_id=slug,
+                    ok=False,
+                    reason=str(e)[:300],
+                    threshold=int(os.environ.get("BGL_STALE_MARKET_QUARANTINE_THRESHOLD", "3")),
+                )
             infer_diag_counts["evaluated"] += 1
             count_rejection("fetch_failed")
             infer_diag_rows.append({
@@ -947,6 +1093,9 @@ def _infer_one(
                 details={"error": str(e)[:500]},
             )
             continue
+
+        if "revenue_poc_market_health" in health_tables:
+            record_market_fetch(conn, venue=venue, market_id=slug, ok=True)
 
         question = str(m.get("question") or slug)
         category = _topic_label(question)
@@ -1266,9 +1415,53 @@ def _infer_one(
         skeptic_payload: Dict[str, Any] = {}
         item["anthropic_usage_events"] = []
 
+        if use_llm and not _market_state_changed(
+            conn, venue=venue, market_id=slug, market=m
+        ):
+            summary["unchanged_markets"] += 1
+            infer_diag_counts["evaluated"] += 1
+            count_rejection("unchanged_market_state")
+            record_shadow(
+                item=item,
+                model_probability=float(baseline.p_yes_model),
+                edge_abs=abs(float(baseline.p_yes_model - p_yes_market)),
+                side="YES" if baseline.p_yes_model > p_yes_market else "NO",
+                production_decision="not_evaluated_for_production",
+                rejection_reason="unchanged_market_state",
+                temporal_validation=str(temporal_context.get("event_status") or "UNKNOWN"),
+                llm_used=False,
+            )
+            _finalize_pipeline_market(
+                record,
+                final_stage="unchanged_market_state",
+                decision="SKIP",
+                reason="unchanged_market_state",
+            )
+            continue
+
         if use_llm:
-            if not budget.reserve_primary():
+            route = route_model(
+                opportunity_score=opportunity.opportunity_score,
+                materially_changed=bool(m.get("updatedAt") or m.get("updated_at")),
+                config=config,
+            )
+            priority = min(1.0, max(0.0, opportunity.opportunity_score / 100.0))
+            if not budget.reserve_primary(
+                model=route.model,
+                estimated_cost_usd=route.estimated_cost_usd,
+                priority=priority,
+                modeled_ev_usd=float(baseline.p_yes_model - p_yes_market),
+            ):
                 summary["budget_skipped"] += 1
+                summary["budget_skipped_by_cost"] += int(
+                    not budget.emergency_ceiling_reached
+                )
+                summary["budget_skipped_by_emergency"] += int(
+                    budget.emergency_ceiling_reached
+                )
+                summary["modeled_ev_skipped_budget"] += max(
+                    0.0, float(baseline.p_yes_model - p_yes_market)
+                )
                 infer_diag_counts["evaluated"] += 1
                 count_rejection("budget_skipped")
                 budget_status = budget.primary_status()
@@ -1301,12 +1494,22 @@ def _infer_one(
                     final_stage="llm_budget",
                     decision="SKIP",
                     reason="budget_skipped",
-                    details={"budget_status": budget_status},
+                    details={
+                        "budget_status": budget_status,
+                        "routing_tier": route.tier,
+                        "model": route.model,
+                        "estimated_cost_usd": route.estimated_cost_usd,
+                    },
                 )
                 continue
 
             summary["llm_attempted"] += 1
-            _update_brain(record, budget_status="llm_reserved")
+            _update_brain(
+                record,
+                budget_status="llm_reserved",
+                model=route.model,
+                routing_tier=route.tier,
+            )
             ctx = {
                 "venue": venue,
                 "slug": slug,
@@ -1334,9 +1537,13 @@ def _infer_one(
                 p_yes_model, llm_conf, llm_rationale = forecast_yes_probability(
                     question=question,
                     context=ctx,
+                    model=route.model,
                 )
                 if get_last_usage() is not None:
-                    item["anthropic_usage_events"].append(get_last_usage())
+                    usage = get_last_usage()
+                    usage["routing_tier"] = route.tier
+                    item["anthropic_usage_events"].append(usage)
+                    budget.record_usage(usage)
                 p_yes_model = float(min(0.99, max(0.01, p_yes_model)))
                 llm_conf = float(min(0.95, max(0.0, llm_conf)))
                 disagreement = float(max(0.0, min(1.0, 1.0 - llm_conf)))
@@ -1346,11 +1553,16 @@ def _infer_one(
                     record,
                     llm_used=True,
                     budget_status="llm_used",
+                    model=route.model,
+                    routing_tier=route.tier,
                     short_rationale_summary=llm_rationale[:240] or None,
                 )
             except Exception as llm_err:
                 if get_last_usage() is not None:
-                    item["anthropic_usage_events"].append(get_last_usage())
+                    usage = get_last_usage()
+                    usage["routing_tier"] = route.tier
+                    item["anthropic_usage_events"].append(usage)
+                    budget.record_usage(usage)
                 llm_error = str(llm_err)[:500]
                 summary["llm_failed"] += 1
                 _update_brain(record, budget_status="llm_failed")
@@ -1437,8 +1649,28 @@ def _infer_one(
             high_confidence=config.skeptic_high_confidence,
         )
         if llm_used and skeptic_trigger:
-            if review_forecast is None or not budget.reserve_skeptic():
+            skeptic_route = route_model(
+                opportunity_score=opportunity.opportunity_score,
+                materially_changed=False,
+                skeptic=True,
+                config=config,
+            )
+            if review_forecast is None or not budget.reserve_skeptic(
+                model=skeptic_route.model,
+                estimated_cost_usd=skeptic_route.estimated_cost_usd,
+                priority=min(1.0, max(0.0, opportunity.opportunity_score / 100.0)),
+                modeled_ev_usd=max(0.0, edge_abs * float(paper_size)),
+            ):
                 summary["budget_skipped"] += 1
+                summary["budget_skipped_by_cost"] += int(
+                    not budget.emergency_ceiling_reached
+                )
+                summary["budget_skipped_by_emergency"] += int(
+                    budget.emergency_ceiling_reached
+                )
+                summary["modeled_ev_skipped_budget"] += max(
+                    0.0, edge_abs * float(paper_size)
+                )
                 infer_diag_counts["evaluated"] += 1
                 count_rejection("budget_skipped")
                 budget_status = (
@@ -1475,6 +1707,8 @@ def _infer_one(
                         "reason": "budget_skipped",
                         "budget_status": budget_status,
                         "skeptic_trigger": skeptic_trigger_reason,
+                        "model": skeptic_route.model,
+                        "estimated_cost_usd": skeptic_route.estimated_cost_usd,
                     }
                 )
                 _finalize_pipeline_market(
@@ -1501,9 +1735,13 @@ def _infer_one(
                     confidence=llm_conf,
                     rationale=llm_rationale,
                     temporal_context=temporal_context,
+                    model=skeptic_route.model,
                 )
                 if get_last_usage() is not None:
-                    item["anthropic_usage_events"].append(get_last_usage())
+                    usage = get_last_usage()
+                    usage["routing_tier"] = skeptic_route.tier
+                    item["anthropic_usage_events"].append(usage)
+                    budget.record_usage(usage)
                 skeptic_payload = {
                     "action": review.action,
                     "reason": review.reason,
@@ -1516,7 +1754,10 @@ def _infer_one(
                 }
             except Exception as skeptic_err:
                 if get_last_usage() is not None:
-                    item["anthropic_usage_events"].append(get_last_usage())
+                    usage = get_last_usage()
+                    usage["routing_tier"] = skeptic_route.tier
+                    item["anthropic_usage_events"].append(usage)
+                    budget.record_usage(usage)
                 summary["skeptic_failed"] += 1
                 summary["skeptic_reject"] += 1
                 infer_diag_counts["evaluated"] += 1
@@ -1692,6 +1933,10 @@ def _infer_one(
         )
 
         production_selected = reason == "pass" and candidate is None
+        for usage_event in item.get("anthropic_usage_events", []):
+            usage_event["decision_changed"] = bool(
+                llm_used and abs(float(p_yes_model) - float(baseline.p_yes_model)) > 1e-9
+            )
         record_shadow(
             item=item,
             model_probability=p_yes_model,
@@ -1767,7 +2012,9 @@ def _infer_one(
                 "llm": {
                     "enabled": use_llm,
                     "used": llm_used,
-                    "model": os.environ.get("BGL_LLM_MODEL", ""),
+                    "model": (record.get("brain") or {}).get("model")
+                    or os.environ.get("BGL_LLM_MODEL", ""),
+                    "routing_tier": (record.get("brain") or {}).get("routing_tier"),
                     "confidence": llm_conf,
                     "rationale": llm_rationale,
                 },
