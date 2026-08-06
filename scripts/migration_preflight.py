@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import sqlite3
 import subprocess
@@ -16,6 +15,41 @@ from pathlib import Path
 
 
 STATE_DIRS = ("watchlists", "signals", "exports", "reports")
+
+
+def _has_shebang(path: Path) -> bool:
+    """Return whether *path* declares itself as a directly runnable script."""
+    try:
+        with path.open("rb") as handle:
+            return handle.readline().startswith(b"#!")
+    except OSError:
+        return False
+
+
+def _is_runtime_entrypoint(path: Path, root: Path) -> bool:
+    """Identify shipped command entrypoints without relying on Git mode bits."""
+    path.relative_to(root)
+    return _has_shebang(path)
+
+
+def harden_release_permissions(root: Path) -> None:
+    """Make a release immutable while retaining executable script entrypoints.
+
+    Git mode bits are authoritative when present, but older commits contain
+    runnable scripts recorded as 0644.  Shebang detection makes packaging
+    deterministic for those commits and prevents a broken release artifact.
+    """
+    paths = sorted(root.rglob("*"), key=lambda path: len(path.parts), reverse=True)
+    for path in paths:
+        if path.is_symlink():
+            continue
+        if path.is_dir():
+            path.chmod(0o555)
+            continue
+        current = path.stat().st_mode & 0o777
+        executable = bool(current & 0o111) or _is_runtime_entrypoint(path, root)
+        path.chmod(0o555 if executable else 0o444)
+    root.chmod(0o555)
 
 
 def secure_mkdir(path: Path) -> None:
@@ -46,15 +80,21 @@ def create_release(source: Path, target_release: Path, sha: str) -> None:
     target_release.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as td:
         archive = Path(td) / "release.tar"
+        extracted = Path(td) / "release"
         with archive.open("wb") as handle:
             subprocess.run(
                 ["git", "-C", str(source), "archive", "--format=tar", sha],
                 stdout=handle,
                 check=True,
             )
-        target_release.mkdir(parents=True, exist_ok=True)
+        extracted.mkdir()
         with tarfile.open(archive) as tar:
-            tar.extractall(target_release)
+            tar.extractall(extracted)
+        harden_release_permissions(extracted)
+        if target_release.exists() or target_release.is_symlink():
+            raise FileExistsError(f"release destination already exists: {target_release}")
+        shutil.copytree(extracted, target_release, copy_function=shutil.copy2)
+        harden_release_permissions(target_release)
 
 
 def render_plist(template: Path, output: Path, *, root: Path, log_dir: Path, bin_path: Path) -> None:
@@ -114,6 +154,10 @@ def main() -> int:
     p = sub.add_parser("backup")
     p.add_argument("--source-db", required=True, type=Path)
     p.add_argument("--destination", required=True, type=Path)
+    p = sub.add_parser("create-release")
+    p.add_argument("--source", required=True, type=Path)
+    p.add_argument("--sha", required=True)
+    p.add_argument("--target-release", required=True, type=Path)
     p = sub.add_parser("inspect")
     p.add_argument("--db", required=True, type=Path)
     p.add_argument("--watchlist", type=Path)
@@ -123,6 +167,9 @@ def main() -> int:
     elif args.command == "backup":
         sqlite_backup(args.source_db.expanduser(), args.destination.expanduser())
         print(json.dumps(inspect_db(args.destination.expanduser()), sort_keys=True, indent=2))
+    elif args.command == "create-release":
+        create_release(args.source.expanduser(), args.target_release.expanduser(), args.sha)
+        print(json.dumps({"release": str(args.target_release.expanduser()), "sha": args.sha}, sort_keys=True))
     else:
         print(json.dumps(inspect_db(args.db.expanduser(), args.watchlist), sort_keys=True, indent=2))
     return 0
