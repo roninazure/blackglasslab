@@ -181,7 +181,12 @@ class PolymarketAdapter:
                 continue
             context = {
                 key: event.get(key)
-                for key in ("id", "slug", "title", "category", "endDate", "volume", "liquidity")
+                for key in (
+                    "id", "slug", "title", "category", "subcategory", "tags",
+                    "series", "seriesSlug", "series_id", "type", "marketType",
+                    "sportsMeta", "sport", "league", "gameStartTime",
+                    "endDate", "volume", "liquidity",
+                )
                 if event.get(key) is not None
             }
             for market in event["markets"]:

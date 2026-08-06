@@ -7,6 +7,7 @@ from rich.table import Table
 from rich.text import Text
 
 from operator_console.models import ConsoleSnapshot
+from reporting.discovery_breakdown import render_discovery_breakdown
 
 
 def money(value: float | None, *, signed: bool = False) -> str:
@@ -215,6 +216,27 @@ def revenue_status(snapshot: ConsoleSnapshot, console: Console) -> None:
             "[cyan]Rejections[/] "
             + " · ".join(f"{key}={value}" for key, value in pipeline.rejections.items())
         )
+    breakdown = pipeline.discovery_breakdown
+    if breakdown:
+        source = breakdown["discovery_source"]
+        funnel = {item["stage"]: item for item in breakdown["survivor_funnel"]}
+        console.print(
+            "[cyan]Discovery funnel[/] "
+            f"expanded={source['total_market_records_expanded']} scored={funnel['scored']['count']} "
+            f"valid={funnel['valid_after_policy']['count']} shortlist={funnel['shortlisted']['count']} "
+            f"outside={funnel['shortlisted_outside_fixed_watchlist']['count']} "
+            f"revenue_evaluated={funnel['actually_evaluated']['count']} admitted={funnel['admitted']['count']}"
+        )
+        console.print(
+            "[cyan]Discovery exclusions[/] "
+            + " · ".join(
+                f"{name}={item['count']}"
+                for name, item in breakdown["quality_exclusions"].items()
+                if item["count"]
+            )
+            or "[cyan]Discovery exclusions[/] none"
+        )
+        console.print(render_discovery_breakdown(breakdown))
 
 
 def render_command(command: str, snapshot: ConsoleSnapshot, console: Console) -> None:
@@ -222,5 +244,10 @@ def render_command(command: str, snapshot: ConsoleSnapshot, console: Console) ->
         console.print(portfolio_table(snapshot))
     elif command == "positions":
         console.print(positions_table(snapshot, compact=console.width < 160))
+    elif command == "discovery-breakdown":
+        if snapshot.pipeline.discovery_breakdown:
+            console.print(render_discovery_breakdown(snapshot.pipeline.discovery_breakdown))
+        else:
+            console.print("DISCOVERY BREAKDOWN unavailable: no persisted discovery data")
     else:
         revenue_status(snapshot, console)

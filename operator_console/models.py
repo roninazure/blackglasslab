@@ -91,6 +91,7 @@ class PipelineSnapshot:
     modeled_ev_skipped_budget: float = 0.0
     quarantined_markets: int = 0
     rejections: dict[str, int] = field(default_factory=dict)
+    discovery_breakdown: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
