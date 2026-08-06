@@ -60,12 +60,14 @@ class DeploymentHardeningTests(unittest.TestCase):
             wrapper_dir = runtime_root / "bin"
             release = runtime_root / "releases" / "release-sha"
             config_dir = runtime_root / "config"
+            venv_bin = runtime_root / "venvs" / "release-sha" / "bin"
             command_dir = root / "command-bin"
             unrelated = root / "unrelated"
-            for directory in (wrapper_dir, release / "scripts", config_dir, command_dir, unrelated):
+            for directory in (wrapper_dir, release / "bin", release / "scripts", config_dir, venv_bin, command_dir, unrelated):
                 directory.mkdir(parents=True, exist_ok=True)
 
             shutil.copy2(WRAPPER, wrapper_dir / "swarm-edge")
+            shutil.copy2(WRAPPER, release / "bin" / "swarm-edge")
             (runtime_root / "current").symlink_to(release)
             (command_dir / "swarm-edge").symlink_to(wrapper_dir / "swarm-edge")
             (config_dir / "runtime.env").write_text(
@@ -105,6 +107,60 @@ class DeploymentHardeningTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.splitlines()[0], expected_script)
                     self.assertEqual(result.stdout.splitlines()[1], " ".join(args))
+
+    def test_stable_wrapper_delegates_future_release_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "runtime with spaces"
+            stable = root / "bin"
+            release_bin = root / "releases" / "new-sha" / "bin"
+            stable.mkdir(parents=True)
+            release_bin.mkdir(parents=True)
+            shutil.copy2(WRAPPER, stable / "swarm-edge")
+            (root / "current").symlink_to(release_bin.parent)
+            future = release_bin / "swarm-edge"
+            future.write_text(
+                "#!/bin/sh\nprintf '%s\\n' future-command\n", encoding="utf-8"
+            )
+            future.chmod(0o755)
+            result = subprocess.run(
+                [str(stable / "swarm-edge"), "future-command"],
+                cwd="/tmp",
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "future-command")
+
+    def test_release_python_uses_sha_matched_external_venv_without_dot_venv(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "runtime with spaces"
+            release = root / "releases" / "sha-123"
+            (release / "bin").mkdir(parents=True)
+            (release / "scripts").mkdir()
+            (root / "config").mkdir()
+            python_path = root / "venvs" / "sha-123" / "bin" / "python"
+            python_path.parent.mkdir(parents=True)
+            python_path.symlink_to(sys.executable)
+            (root / "current").symlink_to(release)
+            (root / "config" / "runtime.env").write_text(
+                "BGL_RUNTIME_ENV_FILE=%s\n" % (root / "config" / "runtime.env"), encoding="utf-8"
+            )
+            shutil.copy2(WRAPPER, release / "bin" / "swarm-edge")
+            (release / "scripts" / "operator_console.py").write_text(
+                "import sys\nprint(sys.executable)\nprint(sys.argv[1])\n", encoding="utf-8"
+            )
+            result = subprocess.run(
+                [str(release / "bin" / "swarm-edge"), "watch"],
+                cwd="/tmp",
+                env={key: value for key, value in os.environ.items() if key != "PYTHON_BIN"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(Path(result.stdout.splitlines()[0]).resolve(), python_path.resolve())
+            self.assertNotIn(".venv", WRAPPER.read_text(encoding="utf-8"))
 
     def test_wrapper_path_resolution_never_uses_home_or_working_directory(self) -> None:
         source = WRAPPER.read_text(encoding="utf-8")

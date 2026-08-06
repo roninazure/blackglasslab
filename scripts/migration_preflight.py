@@ -103,6 +103,7 @@ def render_plist(template: Path, output: Path, *, root: Path, log_dir: Path, bin
         "@SWARM_EDGE_ROOT@": str(root),
         "@SWARM_EDGE_LOG_DIR@": str(log_dir),
         "@SWARM_EDGE_BIN@": str(bin_path),
+        "@BGL_RUNTIME_ENV_FILE@": str(root / "config" / "runtime.env"),
     }
     for key, value in replacements.items():
         text = text.replace(key, value)

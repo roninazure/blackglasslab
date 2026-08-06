@@ -18,7 +18,7 @@
     <key>SWARM_EDGE_LAUNCHD_RUN</key>
     <string>1</string>
     <key>BGL_RUNTIME_ENV_FILE</key>
-    <string>@SWARM_EDGE_ROOT@/.env.runtime</string>
+    <string>@BGL_RUNTIME_ENV_FILE@</string>
     <key>BGL_RUNTIME_MODE</key>
     <string>production</string>
     <key>BGL_PRODUCTION_MODE</key>
