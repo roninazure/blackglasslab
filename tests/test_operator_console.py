@@ -321,7 +321,8 @@ class OperatorDataTests(unittest.TestCase):
 class OperatorCliTests(unittest.TestCase):
     def test_commands_are_registered(self) -> None:
         self.assertEqual(
-            COMMANDS, ("watch", "portfolio", "positions", "revenue-status")
+            COMMANDS,
+            ("watch", "portfolio", "positions", "revenue-status", "discovery-breakdown"),
         )
         for command in COMMANDS:
             args = parser().parse_args(
@@ -332,18 +333,18 @@ class OperatorCliTests(unittest.TestCase):
     def test_one_shot_commands_use_supplied_read_only_source(self) -> None:
         source = mock.Mock()
         source.read.return_value = ConsoleSnapshot()
-        for command in ("portfolio", "positions", "revenue-status", "watch"):
+        for command in ("portfolio", "positions", "revenue-status", "discovery-breakdown", "watch"):
             argv = [command] + (["--snapshot"] if command == "watch" else [])
             with (
                 self.subTest(command=command),
                 mock.patch("operator_console.cli.render_command"),
             ):
                 self.assertEqual(main(argv, source=source), 2)
-        self.assertEqual(source.read.call_count, 4)
+        self.assertEqual(source.read.call_count, 5)
 
     def test_wrapper_registers_only_read_only_console_commands(self) -> None:
         wrapper = (ROOT / "bin" / "swarm-edge").read_text(encoding="utf-8")
-        self.assertIn("watch|portfolio|positions|revenue-status", wrapper)
+        self.assertIn("watch|portfolio|positions|revenue-status|discovery-breakdown", wrapper)
         console_source = "\n".join(
             path.read_text(encoding="utf-8")
             for path in (ROOT / "operator_console").glob("*.py")

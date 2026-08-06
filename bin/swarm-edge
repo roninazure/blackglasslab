@@ -120,7 +120,7 @@ case "${1:-status}" in
     exec "${PYTHON_BIN:-$APP_DIR/.venv/bin/python}" "$APP_DIR/scripts/resolve_paper_trades.py" --dry-run
     ;;
 
-  watch|portfolio|positions|revenue-status)
+  watch|portfolio|positions|revenue-status|discovery-breakdown)
     command="$1"
     shift
     load_env
@@ -138,7 +138,7 @@ case "${1:-status}" in
     ;;
 
   *)
-    echo "Usage: swarm-edge {start|run|stop|restart|status|ps|logs|tail|infer|resolve|watch|portfolio|positions|revenue-status}" >&2
+    echo "Usage: swarm-edge {start|run|stop|restart|status|ps|logs|tail|infer|resolve|watch|portfolio|positions|revenue-status|discovery-breakdown}" >&2
     exit 1
     ;;
 esac

@@ -22,6 +22,7 @@ from operator_console.models import (
     PositionSnapshot,
     SystemSnapshot,
 )
+from reporting.discovery_breakdown import build_discovery_breakdown
 from revenue_poc.reporting import portfolio_dashboard
 from swarm_edge_runtime import RuntimePaths, get_runtime_paths
 
@@ -400,6 +401,7 @@ class OperatorDataSource:
                 else 0
             ),
             rejections=dict(reasons.most_common()),
+            discovery_breakdown=build_discovery_breakdown(report, conn=conn),
         )
 
     def _api(
