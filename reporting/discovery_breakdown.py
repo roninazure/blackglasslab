@@ -11,6 +11,8 @@ from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
+from reporting.discovery_classification import REPORTING_CLASSES
+
 EXAMPLE_LIMIT = 3
 _PRE_SCORE_REASONS = {
     "inactive": "inactive",
@@ -46,6 +48,25 @@ def _examples(rows: list[dict[str, Any]], reason: str, limit: int) -> list[str]:
     result: list[str] = []
     for row in rows:
         if str(row.get("reason") or row.get("features", {}).get("policy_reason")) != reason:
+            continue
+        market_id = str(row.get("market_id") or "").strip()
+        if market_id and market_id not in result:
+            result.append(market_id)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _class_examples(
+    rows: list[dict[str, Any]], reporting_class: str, limit: int
+) -> list[str]:
+    result: list[str] = []
+    for row in rows:
+        features = row.get("features") if isinstance(row.get("features"), Mapping) else {}
+        if row.get("reason") != "banned_market_class":
+            continue
+        actual = features.get("reporting_class") or "generic_banned_market_class"
+        if actual != reporting_class:
             continue
         market_id = str(row.get("market_id") or "").strip()
         if market_id and market_id not in result:
@@ -165,14 +186,31 @@ def build_discovery_breakdown(
             gap_examples[reason].append(market_id)
 
     banned_count = reasons["banned_market_class"]
-    banned_classes = {
-        "generic_banned_market_class": {
-            "count": banned_count,
-            "percentage_of_scored": _pct(banned_count, scored),
-            "examples": _examples(rows, "banned_market_class", example_limit),
-            "subtype_metadata_available": False,
+    banned_rows = [row for row in rows if row.get("reason") == "banned_market_class"]
+    class_counts = Counter()
+    class_sources: dict[str, Counter[str]] = {}
+    for row in banned_rows:
+        features = row.get("features") if isinstance(row.get("features"), Mapping) else {}
+        reporting_class = str(
+            features.get("reporting_class") or "generic_banned_market_class"
+        )
+        class_counts[reporting_class] += 1
+        class_sources.setdefault(reporting_class, Counter())[
+            str(features.get("classification_source") or "historical_generic")
+        ] += 1
+    banned_classes = {}
+    for reporting_class in (*REPORTING_CLASSES, "generic_banned_market_class"):
+        count = class_counts[reporting_class]
+        if not count and reporting_class != "generic_banned_market_class":
+            continue
+        banned_classes[reporting_class] = {
+            "count": count,
+            "percentage_of_scored": _pct(count, scored),
+            "percentage_of_banned": _pct(count, banned_count),
+            "examples": _class_examples(rows, reporting_class, example_limit),
+            "classification_sources": dict(class_sources.get(reporting_class, {})),
+            "subtype_metadata_available": reporting_class != "generic_banned_market_class",
         }
-    }
     quality_counts = {
         "low_institutional_quality": reasons["low_institutional_quality"],
         "weak_resolution_quality": reasons["weak_resolution_quality"],
@@ -202,6 +240,42 @@ def build_discovery_breakdown(
             + _examples(rows, "weak_resolution_quality", example_limit)
         )[:example_limit]
     }
+    source_backed = sum(
+        1
+        for row in rows
+        if isinstance(row.get("features"), Mapping)
+        and row["features"].get("classification_source") == "source_metadata"
+    )
+    policy_classified = sum(
+        1
+        for row in rows
+        if isinstance(row.get("features"), Mapping)
+        and row["features"].get("classification_source") == "policy_classification"
+    )
+    historical_generic = sum(
+        1
+        for row in rows
+        if not isinstance(row.get("features"), Mapping)
+        or not row["features"].get("reporting_class")
+    )
+    unknown_unclassified = sum(
+        1
+        for row in rows
+        if isinstance(row.get("features"), Mapping)
+        and row["features"].get("reporting_class") == "unknown/other"
+    )
+    source_field_coverage = Counter()
+    for row in rows:
+        features = row.get("features") if isinstance(row.get("features"), Mapping) else {}
+        source = features.get("source_metadata") if isinstance(features.get("source_metadata"), Mapping) else {}
+        if source.get("event_category") is not None:
+            source_field_coverage["event_category"] += 1
+        if source.get("tags"):
+            source_field_coverage["tags"] += 1
+        if source.get("series") is not None:
+            source_field_coverage["series"] += 1
+        if source.get("source_type") is not None:
+            source_field_coverage["type"] += 1
     quality = {
         key: {
             "count": count,
@@ -249,7 +323,27 @@ def build_discovery_breakdown(
             "limitation": "The persisted snapshot records the configured event request limit, not the raw event response count.",
         },
         "banned_market_classes": banned_classes,
-        "banned_market_class_limitation": "Existing discovery data records only generic banned_market_class; no supported subtype metadata was persisted.",
+        "banned_market_class_limitation": "Historical generic banned_market_class rows without persisted source metadata remain generic; new rows use source metadata or existing policy classification.",
+        "classification_coverage": {
+            "scored_rows_with_source_classification": source_backed,
+            "scored_rows_with_policy_classification": policy_classified,
+            "historical_generic_rows": historical_generic,
+            "unknown_unclassified_rows": unknown_unclassified,
+            "source_field_counts": dict(source_field_coverage),
+            "scored_rows": len(rows),
+        },
+        "metadata_authority": {
+            "authoritative_source_fields": [
+                "event.category", "event.tags", "event.series/seriesSlug",
+                "event.type/marketType", "event.sportsMeta/sport/league/gameStartTime",
+            ],
+            "policy_fallback_fields": [
+                "policy_market_class", "policy_classification", "policy_institutional_category",
+            ],
+            "unavailable_in_persisted_historical_rows": [
+                "raw event response count", "event category/tags/series/type when not persisted",
+            ],
+        },
         "quality_exclusions": quality,
         "survivor_funnel": funnel,
         "shortlist_to_revenue_gap": {
@@ -281,7 +375,22 @@ def render_discovery_breakdown(data: Mapping[str, Any]) -> str:
         "BANNED CLASSES",
     ]
     for name, item in data["banned_market_classes"].items():
-        lines.append(f"  {name} count={item['count']} ({item['percentage_of_scored']}% scored) examples={','.join(item['examples']) or 'none'}")
+        lines.append(
+            f"  {name} count={item['count']} ({item['percentage_of_scored']}% scored, "
+            f"{item['percentage_of_banned']}% banned) examples={','.join(item['examples']) or 'none'}"
+        )
+    coverage = data["classification_coverage"]
+    lines.append(
+        "CLASSIFICATION COVERAGE "
+        f"source_backed={coverage['scored_rows_with_source_classification']} "
+        f"policy_classified={coverage['scored_rows_with_policy_classification']} "
+        f"historical_generic={coverage['historical_generic_rows']} "
+        f"unknown={coverage['unknown_unclassified_rows']} fields={coverage['source_field_counts']}"
+    )
+    lines.append(
+        "METADATA AUTHORITY source_fields=event.category,event.tags,event.series/seriesSlug,event.type/marketType "
+        "policy_fallback=policy_market_class,policy_classification"
+    )
     lines.append("QUALITY EXCLUSIONS")
     for name, item in data["quality_exclusions"].items():
         lines.append(f"  {name} count={item['count']} ({item['percentage_of_scored']}% scored) examples={','.join(item['examples']) or 'none'}")

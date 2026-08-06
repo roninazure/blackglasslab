@@ -893,23 +893,54 @@ def _infer_one(
                     )
                 budget.events.clear()
             if "revenue_poc_discovery_snapshots" in optimization_tables and discovery_result.get("rows"):
-                with conn:
-                    conn.executemany(
-                        """INSERT OR IGNORE INTO revenue_poc_discovery_snapshots
-                        (run_id,timestamp_utc,venue,market_id,status,rejection_reason,
-                         fixed_watchlist,dynamic_shortlist,deterministic_score,metadata)
-                         VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                        [
-                            (
-                                report["run_id"], report["ts_utc"], report["source"],
-                                row.get("market_id"), row.get("status", "UNKNOWN"), row.get("reason"),
-                                int(bool(row.get("fixed_watchlist"))),
-                                int(bool(row.get("dynamic_shortlist"))),
-                                row.get("score"), json.dumps(row.get("features", {}), sort_keys=True),
-                            )
-                            for row in discovery_result["rows"]
-                        ],
+                snapshot_columns = {
+                    str(row[1])
+                    for row in conn.execute(
+                        "PRAGMA table_info(revenue_poc_discovery_snapshots)"
                     )
+                }
+                enriched = "source_event_category" in snapshot_columns
+                snapshot_rows = []
+                for row in discovery_result["rows"]:
+                    features = row.get("features", {})
+                    source = features.get("source_metadata", {}) if isinstance(features, dict) else {}
+                    snapshot_values = (
+                        report["run_id"], report["ts_utc"], report["source"],
+                        row.get("market_id"), row.get("status", "UNKNOWN"), row.get("reason"),
+                        int(bool(row.get("fixed_watchlist"))),
+                        int(bool(row.get("dynamic_shortlist"))), row.get("score"),
+                        json.dumps(features, sort_keys=True),
+                    )
+                    if enriched:
+                        snapshot_values += (
+                            source.get("event_category"), source.get("event_title"),
+                            json.dumps(source.get("tags", []), sort_keys=True),
+                            source.get("series"), source.get("source_type"),
+                            features.get("policy_market_class"), features.get("policy_reason"),
+                            features.get("reporting_class"),
+                            json.dumps(source, sort_keys=True),
+                        )
+                    snapshot_rows.append(snapshot_values)
+                with conn:
+                    if enriched:
+                        conn.executemany(
+                            """INSERT OR IGNORE INTO revenue_poc_discovery_snapshots
+                            (run_id,timestamp_utc,venue,market_id,status,rejection_reason,
+                             fixed_watchlist,dynamic_shortlist,deterministic_score,metadata,
+                             source_event_category,source_event_title,source_tags,source_series,
+                             source_type,policy_market_class,policy_rejection_reason,
+                             reporting_class,source_metadata)
+                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            snapshot_rows,
+                        )
+                    else:
+                        conn.executemany(
+                            """INSERT OR IGNORE INTO revenue_poc_discovery_snapshots
+                            (run_id,timestamp_utc,venue,market_id,status,rejection_reason,
+                             fixed_watchlist,dynamic_shortlist,deterministic_score,metadata)
+                             VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                            snapshot_rows,
+                        )
         report["optimization"] = {
             "budget": budget.as_dict(),
             "discovery": {

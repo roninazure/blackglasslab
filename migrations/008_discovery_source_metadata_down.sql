@@ -1,0 +1,11 @@
+PRAGMA foreign_keys=ON;
+
+ALTER TABLE revenue_poc_discovery_snapshots DROP COLUMN source_event_category;
+ALTER TABLE revenue_poc_discovery_snapshots DROP COLUMN source_event_title;
+ALTER TABLE revenue_poc_discovery_snapshots DROP COLUMN source_tags;
+ALTER TABLE revenue_poc_discovery_snapshots DROP COLUMN source_series;
+ALTER TABLE revenue_poc_discovery_snapshots DROP COLUMN source_type;
+ALTER TABLE revenue_poc_discovery_snapshots DROP COLUMN policy_market_class;
+ALTER TABLE revenue_poc_discovery_snapshots DROP COLUMN policy_rejection_reason;
+ALTER TABLE revenue_poc_discovery_snapshots DROP COLUMN reporting_class;
+ALTER TABLE revenue_poc_discovery_snapshots DROP COLUMN source_metadata;

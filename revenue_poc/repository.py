@@ -11,6 +11,8 @@ UPGRADE = ROOT / "migrations" / "006_revenue_poc_v1.sql"
 DOWNGRADE = ROOT / "migrations" / "006_revenue_poc_v1_down.sql"
 UPGRADE_V11 = ROOT / "migrations" / "007_revenue_poc_v1_1.sql"
 DOWNGRADE_V11 = ROOT / "migrations" / "007_revenue_poc_v1_1_down.sql"
+UPGRADE_DISCOVERY_METADATA = ROOT / "migrations" / "008_discovery_source_metadata.sql"
+DOWNGRADE_DISCOVERY_METADATA = ROOT / "migrations" / "008_discovery_source_metadata_down.sql"
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
@@ -24,10 +26,22 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     }
     if "routing_tier" not in columns:
         conn.executescript(UPGRADE_V11.read_text(encoding="utf-8"))
+    snapshot_columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(revenue_poc_discovery_snapshots)")
+    }
+    if snapshot_columns and "source_event_category" not in snapshot_columns:
+        conn.executescript(UPGRADE_DISCOVERY_METADATA.read_text(encoding="utf-8"))
     conn.commit()
 
 
 def downgrade_schema(conn: sqlite3.Connection) -> None:
+    snapshot_columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(revenue_poc_discovery_snapshots)")
+    }
+    if "source_event_category" in snapshot_columns:
+        conn.executescript(DOWNGRADE_DISCOVERY_METADATA.read_text(encoding="utf-8"))
     conn.executescript(DOWNGRADE_V11.read_text(encoding="utf-8"))
     conn.executescript(DOWNGRADE.read_text(encoding="utf-8"))
     conn.commit()

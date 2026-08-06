@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 
 from reporting.discovery_breakdown import build_discovery_breakdown
+from reporting.discovery_classification import classify_reporting_class
+from revenue_poc.repository import apply_schema, downgrade_schema
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -77,16 +79,54 @@ class DiscoveryBreakdownTests(unittest.TestCase):
         )
         self.assertIn("generic banned_market_class", data["banned_market_class_limitation"])
 
+    def test_source_backed_sports_entertainment_esports_and_unknown(self) -> None:
+        cases = (
+            ({"event_category": "Sports"}, "sports", "source_metadata"),
+            ({"tags": [{"label": "Entertainment"}]}, "entertainment", "source_metadata"),
+            ({"event_category": "esports"}, "esports", "source_metadata"),
+            ({"event_category": "new-unclassified-type"}, "unknown/other", "source_metadata"),
+            ({"event_title": "Sports Final"}, "unknown/other", "unknown_metadata"),
+        )
+        for metadata, expected, source in cases:
+            with self.subTest(metadata=metadata):
+                self.assertEqual(classify_reporting_class(metadata), (expected, source))
+
+    def test_mixed_historical_and_source_backed_rows(self) -> None:
+        report = report_fixture()
+        report["discovery_shadow"]["rows"] = [
+            {"market_id": "old", "status": "REJECTED", "reason": "banned_market_class"},
+            {
+                "market_id": "sports",
+                "status": "REJECTED",
+                "reason": "banned_market_class",
+                "features": {
+                    "reporting_class": "sports",
+                    "classification_source": "source_metadata",
+                    "source_metadata": {"event_category": "sports"},
+                },
+            },
+            {
+                "market_id": "esports",
+                "status": "REJECTED",
+                "reason": "banned_market_class",
+                "features": {
+                    "reporting_class": "esports",
+                    "classification_source": "source_metadata",
+                    "source_metadata": {"event_category": "esports"},
+                },
+            },
+        ]
+        data = build_discovery_breakdown(report)
+        self.assertEqual(data["banned_market_classes"]["sports"]["count"], 1)
+        self.assertEqual(data["banned_market_classes"]["esports"]["percentage_of_banned"], 25.0)
+        self.assertEqual(data["classification_coverage"]["historical_generic_rows"], 1)
+        self.assertEqual(data["classification_coverage"]["scored_rows_with_source_classification"], 2)
+
     def test_empty_discovery_is_safe(self) -> None:
         data = build_discovery_breakdown({})
         self.assertEqual(data["discovery_source"]["total_market_records_expanded"], 0)
         self.assertEqual(data["survivor_funnel"][0]["count"], 0)
-        self.assertEqual(data["banned_market_classes"], {"generic_banned_market_class": {
-            "count": 0,
-            "percentage_of_scored": 0.0,
-            "examples": [],
-            "subtype_metadata_available": False,
-        }})
+        self.assertEqual(data["banned_market_classes"]["generic_banned_market_class"]["count"], 0)
 
     def test_revenue_gap_reasons_and_read_only_db(self) -> None:
         conn = sqlite3.connect(":memory:")
@@ -109,6 +149,31 @@ class DiscoveryBreakdownTests(unittest.TestCase):
         )
         self.assertEqual(
             data["shortlist_to_revenue_gap"]["groups"]["duplicate_position"]["count"], 1
+        )
+
+    def test_migration_is_append_only_and_reversible(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        apply_schema(conn)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(revenue_poc_discovery_snapshots)")}
+        self.assertIn("source_event_category", columns)
+        conn.execute(
+            "INSERT INTO revenue_poc_discovery_snapshots "
+            "(run_id,timestamp_utc,venue,market_id,status,metadata) VALUES (?,?,?,?,?,?)",
+            ("run", "2026-08-06T00:00:00Z", "polymarket", "m", "REJECTED", "{}"),
+        )
+        conn.commit()
+        before = conn.execute("SELECT COUNT(*) FROM revenue_poc_discovery_snapshots").fetchone()[0]
+        apply_schema(conn)
+        after = conn.execute("SELECT COUNT(*) FROM revenue_poc_discovery_snapshots").fetchone()[0]
+        self.assertEqual(before, after)
+        with self.assertRaises(sqlite3.DatabaseError):
+            conn.execute("UPDATE revenue_poc_discovery_snapshots SET reporting_class='sports'")
+        downgrade_schema(conn)
+        self.assertEqual(
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='revenue_poc_discovery_snapshots'"
+            ).fetchone()[0],
+            0,
         )
 
     def test_script_runs_from_repo_root_home_and_tmp(self) -> None:

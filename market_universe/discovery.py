@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping
 
 from loop_engine.opportunity import score_opportunity
 from loop_engine.prompts import classify_market
+from reporting.discovery_classification import classify_reporting_class, source_metadata
 from market_universe.policy import InstitutionalUniverseConfig, evaluate_market
 from context.temporal import build_temporal_context
 
@@ -48,6 +49,12 @@ def deterministic_score(market: Mapping[str, Any], *, now: datetime | None = Non
     freshness = _num(market.get("freshness_hours"))
     movement = abs(_num(market.get("price_change_24h", market.get("priceChange24h"))))
     quality = evaluate_market(market, config=InstitutionalUniverseConfig.from_env(), now=now)
+    source = source_metadata(market)
+    reporting_class, classification_source = classify_reporting_class(
+        source,
+        policy_market_class=quality.banned_class,
+        policy_category=quality.institutional_category,
+    )
     opportunity = score_opportunity(
         market,
         category=category,
@@ -76,6 +83,12 @@ def deterministic_score(market: Mapping[str, Any], *, now: datetime | None = Non
         "category": category,
         "policy_allowed": quality.policy_allowed,
         "policy_reason": quality.policy_reason,
+        "policy_market_class": quality.banned_class,
+        "policy_classification": quality.classification,
+        "policy_institutional_category": quality.institutional_category,
+        "reporting_class": reporting_class,
+        "classification_source": classification_source,
+        "source_metadata": source,
         "temporal": temporal,
         "opportunity_score": opportunity.opportunity_score,
         "end_date": end,
