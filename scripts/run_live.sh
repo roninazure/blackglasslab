@@ -3,16 +3,32 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
+RELEASE_ROOT="$(pwd -P)"
+RELEASE_SHA="$(basename "$RELEASE_ROOT")"
+if [[ -n "${SWARM_EDGE_ROOT:-}" && "$(basename "$SWARM_EDGE_ROOT")" == "current" ]]; then
+  RUNTIME_ROOT="$(cd -P "$(dirname "$SWARM_EDGE_ROOT")" && pwd)"
+elif [[ "$(basename "$(dirname "$RELEASE_ROOT")")" == "releases" ]]; then
+  RUNTIME_ROOT="$(cd -P "$(dirname "$(dirname "$RELEASE_ROOT")")" && pwd)"
+else
+  RUNTIME_ROOT="$RELEASE_ROOT"
+fi
+
 # Load the shared runtime environment.  .env remains the legacy fallback.
 RUNTIME_ENV_FILE="${BGL_RUNTIME_ENV_FILE:-.env.runtime}"
+if [[ ! -f "$RUNTIME_ENV_FILE" ]]; then
+  RUNTIME_ENV_FILE=.env
+fi
 if [[ -f "$RUNTIME_ENV_FILE" ]]; then
-  set -o allexport
-  source "$RUNTIME_ENV_FILE"
-  set +o allexport
-elif [[ -f .env ]]; then
-  set -o allexport
-  source .env
-  set +o allexport
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    if [[ "$value" == \"*\" && "$value" == *\" ]] || [[ "$value" == \'*\' && "$value" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "$key=$value"
+  done < "$RUNTIME_ENV_FILE"
 fi
 
 # Safety kill switch
@@ -27,9 +43,10 @@ RESOLVE_EVERY="${RESOLVE_EVERY:-6}"    # resolve closed trades every N cycles
 EXPORT_EVERY="${EXPORT_EVERY:-6}"      # export data to JSON + push every N cycles
 DISCOVER_EVERY="${DISCOVER_EVERY:-24}" # refresh watchlist every N cycles
 MAX_CONSECUTIVE_FAILURES="${MAX_CONSECUTIVE_FAILURES:-5}"
-PYTHON_BIN="${PYTHON_BIN:-.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-$RUNTIME_ROOT/venvs/$RELEASE_SHA/bin/python}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
-  PYTHON_BIN="python3"
+  echo "Missing SHA-matched external Python: $PYTHON_BIN" >&2
+  exit 78
 fi
 
 COUNT=0
