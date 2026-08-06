@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +61,62 @@ def json_object(value: str | None) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _canonical_value(value: Any, *, path: str = "metadata") -> Any:
+    """Return a JSON-safe, deterministically ordered representation."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise TypeError(f"{path}: non-finite float is not serializable")
+        return value
+    if isinstance(value, Mapping):
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"{path}: mapping keys must be strings")
+            normalized[key] = _canonical_value(item, path=f"{path}.{key}")
+        return {key: normalized[key] for key in sorted(normalized)}
+    if isinstance(value, (list, tuple)):
+        return [
+            _canonical_value(item, path=f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if isinstance(value, (set, frozenset)):
+        normalized = [_canonical_value(item, path=f"{path}[]") for item in value]
+        return sorted(
+            normalized,
+            key=lambda item: json.dumps(
+                item,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+    raise TypeError(f"{path}: unsupported metadata type {type(value).__name__}")
+
+
+def canonical_json(value: Any, *, field: str = "metadata") -> str:
+    """Serialize structured metadata with stable JSON and no ``repr`` fallback."""
+    return json.dumps(
+        _canonical_value(value, path=field),
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _sqlite_metadata(value: Any, *, field: str, encode_null: bool = False) -> Any:
+    """Keep SQLite scalars native and encode all structured values as JSON."""
+    normalized = _canonical_value(value, path=field)
+    if normalized is None and encode_null:
+        return canonical_json(None, field=field)
+    if isinstance(normalized, (dict, list)):
+        return canonical_json(normalized, field=field)
+    return normalized
+
+
 def persist_discovery_snapshots(
     conn: sqlite3.Connection,
     *,
@@ -99,29 +157,42 @@ def persist_discovery_snapshots(
         if not market_id:
             diagnostics["missing_market_ids"] += 1
             continue
+        diagnostics["rows_prepared"] += 1
         features = row.get("features") if isinstance(row.get("features"), dict) else {}
         source = features.get("source_metadata") if isinstance(features.get("source_metadata"), dict) else {}
         if source and source != {}:
             diagnostics["source_metadata_rows"] += 1
         if features.get("reporting_class"):
             diagnostics["reporting_class_rows"] += 1
-        base = (
-            run_id, timestamp_utc, venue, market_id, row.get("status", "UNKNOWN"),
-            row.get("reason"), int(bool(row.get("fixed_watchlist"))),
-            int(bool(row.get("dynamic_shortlist"))), row.get("score"),
-            json.dumps(features, sort_keys=True),
-        )
-        if enriched:
-            base += (
-                source.get("event_category"), source.get("event_title"),
-                json.dumps(source.get("tags", []), sort_keys=True), source.get("series"),
-                source.get("source_type"), features.get("policy_market_class"),
-                features.get("policy_reason"), features.get("reporting_class"),
-                json.dumps(source, sort_keys=True),
+        try:
+            base = (
+                run_id, timestamp_utc, venue, market_id, row.get("status", "UNKNOWN"),
+                row.get("reason"), int(bool(row.get("fixed_watchlist"))),
+                int(bool(row.get("dynamic_shortlist"))), row.get("score"),
+                canonical_json(features, field="features"),
             )
-        prepared.append(base)
+            if enriched:
+                base += (
+                    _sqlite_metadata(source.get("event_category"), field="source_event_category"),
+                    _sqlite_metadata(source.get("event_title"), field="source_event_title"),
+                    _sqlite_metadata(source.get("tags", []), field="source_tags", encode_null=True),
+                    _sqlite_metadata(source.get("series"), field="source_series"),
+                    _sqlite_metadata(source.get("source_type"), field="source_type"),
+                    _sqlite_metadata(features.get("policy_market_class"), field="policy_market_class"),
+                    _sqlite_metadata(features.get("policy_reason"), field="policy_rejection_reason"),
+                    _sqlite_metadata(features.get("reporting_class"), field="reporting_class"),
+                    canonical_json(source, field="source_metadata"),
+                )
+            prepared.append(base)
+        except (TypeError, ValueError) as exc:
+            diagnostics["rows_failed"] += 1
+            if diagnostics["persistence_error"] is None:
+                diagnostics["persistence_error"] = f"{type(exc).__name__}: {str(exc)[:240]}"
+            if len(diagnostics["persistence_error_samples"]) < 3:
+                diagnostics["persistence_error_samples"].append(
+                    f"market_id={market_id}: {type(exc).__name__}: {str(exc)[:200]}"
+                )
 
-    diagnostics["rows_prepared"] = len(prepared)
     if not prepared:
         return diagnostics
 
@@ -166,6 +237,9 @@ def persist_discovery_snapshots(
     ).fetchone()[0]
     diagnostics["rows_inserted"] = max(0, int(after) - int(before))
     diagnostics["rows_ignored"] = max(
-        0, diagnostics["rows_prepared"] - diagnostics["rows_inserted"] - diagnostics["rows_failed"]
+        0,
+        diagnostics["rows_prepared"]
+        - diagnostics["rows_inserted"]
+        - diagnostics["rows_failed"],
     )
     return diagnostics
