@@ -136,6 +136,20 @@ class EvaluationSnapshot:
 
 
 @dataclass(frozen=True)
+class AlphaSummarySnapshot:
+    status: str = "UNAVAILABLE"
+    ranking_status: str = "unavailable"
+    total_evaluations: int = 0
+    attributable_evaluations: int = 0
+    resolved_positions: int = 0
+    completed_attributions: int = 0
+    decision_coverage: float | None = None
+    resolved_position_coverage: float | None = None
+    ranked_rows: int = 0
+    realized_pnl_usd: float = 0.0
+
+
+@dataclass(frozen=True)
 class ConsoleSnapshot:
     system: SystemSnapshot = field(default_factory=SystemSnapshot)
     portfolio: PortfolioSnapshot = field(default_factory=PortfolioSnapshot)
@@ -144,4 +158,5 @@ class ConsoleSnapshot:
     api: ApiSnapshot = field(default_factory=ApiSnapshot)
     events: tuple[EventSnapshot, ...] = ()
     evaluations: tuple[EvaluationSnapshot, ...] = ()
+    alpha: AlphaSummarySnapshot = field(default_factory=AlphaSummarySnapshot)
     raw: dict[str, Any] = field(default_factory=dict)
