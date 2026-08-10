@@ -352,3 +352,223 @@ def velocity_shadow_report(conn: sqlite3.Connection) -> dict[str, Any]:
             "confidence": "Unavailable unless persisted by the existing evaluation data; no proxy is substituted.",
         },
     }
+
+
+def velocity_coverage_report(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Measure executable-evaluation coverage across the latest valid universe."""
+    latest = conn.execute(
+        """
+        SELECT run_id,timestamp_utc,venue
+        FROM revenue_poc_discovery_snapshots
+        ORDER BY timestamp_utc DESC,id DESC LIMIT 1
+        """
+    ).fetchone()
+    if latest is None:
+        return {
+            "schema_version": "revenue_velocity_evaluation_coverage_v1",
+            "status": "NO_DISCOVERY_DATA",
+        }
+
+    discovery_rows = conn.execute(
+        """
+        SELECT * FROM revenue_poc_discovery_snapshots
+        WHERE run_id=? AND venue=? AND status='VALID'
+        ORDER BY id
+        """,
+        (latest["run_id"], latest["venue"]),
+    ).fetchall()
+    market_ids = {str(row["market_id"]) for row in discovery_rows}
+    evaluations = _latest_evaluations(conn, market_ids, str(latest["timestamp_utc"]))
+    records: list[dict[str, Any]] = []
+    for row in discovery_rows:
+        metadata = _json_object(row["metadata"])
+        days = _days_to_resolution(metadata, str(latest["timestamp_utc"]))
+        horizon = horizon_for_days(days) or "UNKNOWN"
+        evaluation = evaluations.get(str(row["market_id"]))
+        records.append(
+            {
+                "market_id": str(row["market_id"]),
+                "horizon": horizon,
+                "days_to_resolution": days,
+                "category": metadata.get("category") or (evaluation["category"] if evaluation else None),
+                "liquidity_usd": _liquidity(metadata),
+                "spread": _spread(metadata),
+                "executable_edge": _number(evaluation["executable_edge"]) if evaluation else None,
+                "modeled_net_ev_usd": _number(evaluation["expected_value_usd"]) if evaluation else None,
+                "capital_required_usd": _number(evaluation["capital_required_usd"]) if evaluation else None,
+                "dynamic_shortlist": bool(row["dynamic_shortlist"]),
+                "current_production_score": _number(row["deterministic_score"]),
+                "evaluated": evaluation is not None,
+                "evaluation_status": evaluation["production_decision"] if evaluation else "not_evaluated",
+            }
+        )
+
+    by_horizon: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        by_horizon[record["horizon"]].append(record)
+
+    horizon_summary: dict[str, dict[str, Any]] = {}
+    for horizon in (*HORIZONS, "UNKNOWN"):
+        group = by_horizon.get(horizon, [])
+        evaluated = [record for record in group if record["evaluated"]]
+        edges = [record["executable_edge"] for record in evaluated if record["executable_edge"] is not None]
+        velocities = [
+            record["modeled_net_ev_usd"] / (record["capital_required_usd"] * record["days_to_resolution"])
+            for record in evaluated
+            if record["modeled_net_ev_usd"] is not None
+            and record["capital_required_usd"]
+            and record["capital_required_usd"] > 0
+            and record["days_to_resolution"]
+            and record["days_to_resolution"] > 0
+        ]
+        liquidities = [record["liquidity_usd"] for record in group if record["liquidity_usd"] is not None]
+        spreads = [record["spread"] for record in group if record["spread"] is not None]
+        shortlist_count = sum(1 for record in group if record["dynamic_shortlist"])
+        horizon_summary[horizon] = {
+            "valid_markets": len(group),
+            "evaluated_markets": len(evaluated),
+            "unevaluated_markets": len(group) - len(evaluated),
+            "coverage_pct": (100.0 * len(evaluated) / len(group)) if group else None,
+            "shortlisted_markets": shortlist_count,
+            "shortlist_rate_pct": (100.0 * shortlist_count / len(group)) if group else None,
+            "average_liquidity_usd": mean(liquidities) if liquidities else None,
+            "average_spread": mean(spreads) if spreads else None,
+            "average_executable_edge": mean(edges) if edges else None,
+            "average_ev_per_capital_day": mean(velocities) if velocities else None,
+            "median_ev_per_capital_day": median(velocities) if velocities else None,
+        }
+
+    excluded = [record for record in records if not record["evaluated"]]
+    excluded_sorted = sorted(
+        excluded,
+        key=lambda record: _ranked_position(record, rank_key="current_production_score"),
+    )
+    velocity_candidates = [
+        record
+        for record in records
+        if record["evaluated"]
+        and record["modeled_net_ev_usd"] is not None
+        and record["modeled_net_ev_usd"] > 0
+        and record["capital_required_usd"]
+        and record["capital_required_usd"] > 0
+        and record["days_to_resolution"]
+        and record["days_to_resolution"] > 0
+    ]
+    for record in velocity_candidates:
+        record["ev_per_capital_day"] = record["modeled_net_ev_usd"] / (
+            record["capital_required_usd"] * record["days_to_resolution"]
+        )
+    category_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in velocity_candidates:
+        category_groups[str(record["category"] or "UNKNOWN")].append(record)
+    category_velocity = []
+    for category, group in category_groups.items():
+        values = [record["ev_per_capital_day"] for record in group]
+        best = max(group, key=lambda record: record["ev_per_capital_day"])
+        category_velocity.append(
+            {
+                "category": category,
+                "candidate_count": len(group),
+                "average_ev_per_capital_day": mean(values),
+                "median_ev_per_capital_day": median(values),
+                "best_market_id": best["market_id"],
+                "best_ev_per_capital_day": best["ev_per_capital_day"],
+            }
+        )
+    category_velocity.sort(key=lambda item: item["average_ev_per_capital_day"], reverse=True)
+
+    total_valid = len(records)
+    total_shortlisted = sum(1 for record in records if record["dynamic_shortlist"])
+    non_long = [horizon_summary[horizon]["shortlist_rate_pct"] for horizon in HORIZONS[:-1] if horizon_summary[horizon]["shortlist_rate_pct"] is not None]
+    long_rate = horizon_summary["LONG"]["shortlist_rate_pct"]
+    valid_share_long = (100.0 * horizon_summary["LONG"]["valid_markets"] / total_valid) if total_valid else None
+    shortlist_share_long = (100.0 * horizon_summary["LONG"]["shortlisted_markets"] / total_shortlisted) if total_shortlisted else None
+    long_favoring = bool(
+        long_rate is not None
+        and non_long
+        and long_rate > max(non_long)
+        and valid_share_long is not None
+        and shortlist_share_long is not None
+        and shortlist_share_long > valid_share_long
+    )
+    short_horizons = {"FAST", "WEEKLY"}
+    short_evaluated = sum(horizon_summary[horizon]["evaluated_markets"] for horizon in short_horizons)
+    short_positive = sum(
+        1
+        for record in velocity_candidates
+        if record["horizon"] in short_horizons
+    )
+    if short_evaluated == 0:
+        short_economic_conclusion = "not_estimable_no_FAST_or_WEEKLY_evaluations"
+    elif short_positive:
+        short_economic_conclusion = "potentially_justified_positive_short_horizon_candidates"
+    else:
+        short_economic_conclusion = "not_supported_by_current_positive_net_ev"
+
+    api = conn.execute(
+        """
+        SELECT COALESCE(SUM(api_calls),0),COALESCE(SUM(estimated_cost_usd),0),
+               COALESCE(SUM(unknown_cost_calls),0)
+        FROM revenue_poc_api_daily
+        """
+    ).fetchone()
+    return {
+        "schema_version": "revenue_velocity_evaluation_coverage_v1",
+        "status": "OK",
+        "read_only": True,
+        "source": {
+            "run_id": latest["run_id"],
+            "timestamp_utc": latest["timestamp_utc"],
+            "venue": latest["venue"],
+            "production_admission_unchanged": True,
+        },
+        "horizon_summary": horizon_summary,
+        "excluded_before_evaluation": {
+            "count": len(excluded),
+            "by_horizon": {
+                horizon: sum(1 for record in excluded if record["horizon"] == horizon)
+                for horizon in (*HORIZONS, "UNKNOWN")
+            },
+            "by_category": dict(sorted(
+                ((category, sum(1 for record in excluded if record["category"] == category))
+                 for category in {str(record["category"] or "UNKNOWN") for record in excluded}),
+                key=lambda item: item[1], reverse=True,
+            )),
+            "top_by_current_production_rank": excluded_sorted[:20],
+        },
+        "category_velocity_candidates": category_velocity,
+        "shortlist_bias": {
+            "long_duration_favoring": long_favoring,
+            "long_valid_share_pct": valid_share_long,
+            "long_shortlist_share_pct": shortlist_share_long,
+            "long_shortlist_rate_pct": long_rate,
+            "interpretation": (
+                "LONG is selected at a higher rate and is overrepresented in the shortlist."
+                if long_favoring
+                else "No systematic LONG-duration shortlist bias detected by selection rate and share."
+            ),
+        },
+        "short_horizon_economic_justification": {
+            "FAST_WEEKLY_evaluated": short_evaluated,
+            "FAST_WEEKLY_positive_net_ev_candidates": short_positive,
+            "conclusion": short_economic_conclusion,
+            "recommendation": (
+                "Increase shadow-only FAST/WEEKLY coverage before changing production ranking."
+                if short_evaluated == 0
+                else "Use the observed short-horizon candidate economics for a controlled shadow comparison."
+            ),
+        },
+        "api_cost_impact": {
+            "incremental_api_calls_for_report": 0,
+            "incremental_estimated_cost_usd": 0.0,
+            "existing_api_calls": int(api[0] or 0),
+            "existing_estimated_cost_usd": float(api[1] or 0.0),
+            "existing_unknown_cost_calls": int(api[2] or 0),
+        },
+        "definitions": {
+            "evaluated": "A valid discovery market with a persisted executable Revenue evaluation at or before the latest discovery snapshot.",
+            "coverage_pct": "evaluated_markets / valid_markets * 100",
+            "ev_per_capital_day": "modeled_net_ev_usd / (capital_required_usd * days_to_resolution)",
+            "horizons": {"FAST": "0-3d", "WEEKLY": "4-14d", "MONTHLY": "15-45d", "LONG": ">45d"},
+        },
+    }

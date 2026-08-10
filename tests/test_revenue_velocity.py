@@ -5,7 +5,7 @@ import sqlite3
 import unittest
 
 from revenue_poc.repository import apply_schema
-from revenue_poc.velocity import velocity_shadow_report
+from revenue_poc.velocity import velocity_coverage_report, velocity_shadow_report
 
 
 class RevenueVelocityShadowTests(unittest.TestCase):
@@ -106,6 +106,16 @@ class RevenueVelocityShadowTests(unittest.TestCase):
             "SELECT COUNT(*) FROM revenue_poc_discovery_snapshots"
         ).fetchone()[0]
         self.assertEqual(before, after)
+
+    def test_coverage_report_separates_unevaluated_markets(self) -> None:
+        report = velocity_coverage_report(self.conn)
+        self.assertEqual(report["horizon_summary"]["WEEKLY"]["valid_markets"], 1)
+        self.assertEqual(report["horizon_summary"]["WEEKLY"]["evaluated_markets"], 1)
+        self.assertEqual(report["horizon_summary"]["LONG"]["valid_markets"], 1)
+        self.assertEqual(report["horizon_summary"]["LONG"]["unevaluated_markets"], 1)
+        self.assertEqual(report["horizon_summary"]["LONG"]["coverage_pct"], 0.0)
+        self.assertEqual(report["excluded_before_evaluation"]["count"], 1)
+        self.assertEqual(report["short_horizon_economic_justification"]["FAST_WEEKLY_evaluated"], 1)
 
 
 if __name__ == "__main__":

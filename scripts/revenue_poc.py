@@ -20,7 +20,7 @@ from revenue_poc.reporting import (
 )
 from revenue_poc.repository import apply_schema, downgrade_schema
 from revenue_poc.service import RevenuePOCService
-from revenue_poc.velocity import velocity_shadow_report
+from revenue_poc.velocity import velocity_coverage_report, velocity_shadow_report
 from revenue_poc.venue import quote_from_market_and_book, resolved_outcome, yes_token_id
 from swarm_edge_runtime import RUNTIME_PATHS
 
@@ -54,6 +54,7 @@ def main() -> int:
     parser.add_argument("--dashboard", action="store_true")
     parser.add_argument("--analysis", action="store_true")
     parser.add_argument("--velocity-shadow", action="store_true")
+    parser.add_argument("--velocity-coverage", action="store_true")
     parser.add_argument("--refresh-marks", action="store_true")
     parser.add_argument("--resolve-shadow", action="store_true")
     parser.add_argument("--lifecycle-fixture", type=Path)
@@ -62,7 +63,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.downgrade and (args.migrate or args.ingest_shadow):
         parser.error("downgrade cannot be combined with migration or ingestion")
-    if args.velocity_shadow:
+    if args.velocity_shadow or args.velocity_coverage:
         conn = sqlite3.connect(f"file:{args.db.resolve()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only=ON")
@@ -161,6 +162,10 @@ def main() -> int:
             report = velocity_shadow_report(conn)
             write_report(args.output_dir / "revenue_velocity_shadow_v1.json", report)
             print(json.dumps({"velocity_shadow": report}, sort_keys=True))
+        if args.velocity_coverage:
+            report = velocity_coverage_report(conn)
+            write_report(args.output_dir / "revenue_velocity_evaluation_coverage_v1.json", report)
+            print(json.dumps({"velocity_coverage": report}, sort_keys=True))
     finally:
         conn.close()
     return 0
