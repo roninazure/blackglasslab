@@ -9,7 +9,7 @@ from rich.console import Console
 from operator_console.data import OperatorDataSource
 from operator_console.render import render_command
 
-COMMANDS = ("watch", "portfolio", "positions", "revenue-status", "discovery-breakdown", "alpha-leaderboard")
+COMMANDS = ("watch", "portfolio", "positions", "revenue-status", "discovery-breakdown", "alpha-leaderboard", "investment-report")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -33,6 +33,9 @@ def parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser(
         "alpha-leaderboard", help="Print the read-only realized-alpha scoreboard"
+    )
+    subparsers.add_parser(
+        "investment-report", help="Print the read-only institutional operating report"
     )
     return result
 

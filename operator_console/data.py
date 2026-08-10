@@ -25,6 +25,7 @@ from operator_console.models import (
 )
 from reporting.discovery_breakdown import build_discovery_breakdown
 from revenue_poc.reporting import alpha_leaderboard_report, portfolio_dashboard
+from revenue_poc.velocity import velocity_shadow_report
 from swarm_edge_runtime import RuntimePaths, get_runtime_paths
 
 _CYCLE_RE = re.compile(r"^==\s+([^ ]+)\s+:\s+infer loop")
@@ -585,6 +586,11 @@ class OperatorDataSource:
                     raise RuntimeError("Revenue POC schema unavailable")
                 dashboard = portfolio_dashboard(conn)
                 alpha_report = alpha_leaderboard_report(conn)
+                velocity_report = velocity_shadow_report(conn)
+                categories = Counter(
+                    str(item["category"] or "UNKNOWN")
+                    for item in velocity_report.get("all_valid_opportunities", [])
+                )
                 last_cycle = self._latest_cycle(conn, report)
                 p = dashboard["portfolio"]
                 perf = dashboard["performance"]
@@ -644,6 +650,8 @@ class OperatorDataSource:
                         "database": str(self.paths.db_path),
                         "logs": str(self.paths.log_dir),
                         "alpha_leaderboard": alpha_report,
+                        "velocity_shadow": velocity_report,
+                        "discovery_categories": dict(categories.most_common()),
                     },
                 )
                 self._last_valid = snapshot
