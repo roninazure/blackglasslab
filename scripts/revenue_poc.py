@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from revenue_poc.config import RevenueConfig
 from revenue_poc.reporting import (
+    alpha_attribution_report,
     funnel_analysis,
     portfolio_dashboard,
     write_report,
@@ -55,6 +56,7 @@ def main() -> int:
     parser.add_argument("--analysis", action="store_true")
     parser.add_argument("--velocity-shadow", action="store_true")
     parser.add_argument("--velocity-coverage", action="store_true")
+    parser.add_argument("--alpha-attribution", action="store_true")
     parser.add_argument("--refresh-marks", action="store_true")
     parser.add_argument("--resolve-shadow", action="store_true")
     parser.add_argument("--lifecycle-fixture", type=Path)
@@ -63,7 +65,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.downgrade and (args.migrate or args.ingest_shadow):
         parser.error("downgrade cannot be combined with migration or ingestion")
-    if args.velocity_shadow or args.velocity_coverage:
+    if args.velocity_shadow or args.velocity_coverage or args.alpha_attribution:
         conn = sqlite3.connect(f"file:{args.db.resolve()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only=ON")
@@ -166,6 +168,10 @@ def main() -> int:
             report = velocity_coverage_report(conn)
             write_report(args.output_dir / "revenue_velocity_evaluation_coverage_v1.json", report)
             print(json.dumps({"velocity_coverage": report}, sort_keys=True))
+        if args.alpha_attribution:
+            report = alpha_attribution_report(conn)
+            write_report(args.output_dir / "revenue_alpha_attribution_v1.json", report)
+            print(json.dumps({"alpha_attribution": report}, sort_keys=True))
     finally:
         conn.close()
     return 0
