@@ -404,6 +404,210 @@ def alpha_attribution_report(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+MIN_REALIZED_SAMPLE_SIZE = 5
+
+
+def _alpha_tables_available(conn: sqlite3.Connection) -> bool:
+    tables = {
+        str(row[0])
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    return {
+        "revenue_poc_attribution_entries",
+        "revenue_poc_attribution_completions",
+        "revenue_poc_evaluations",
+        "revenue_poc_positions",
+    }.issubset(tables)
+
+
+def _sample_status(evaluations: int, admitted: int, resolved: int) -> str:
+    if resolved >= MIN_REALIZED_SAMPLE_SIZE:
+        return "realized"
+    if resolved:
+        return "insufficient sample"
+    if admitted:
+        return "unresolved"
+    return "modeled only" if evaluations else "unresolved"
+
+
+def alpha_leaderboard_report(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Build a read-only, realized-alpha scoreboard from immutable attribution rows."""
+    empty_summary: dict[str, Any] = {
+        "total_evaluations": 0,
+        "attributable_evaluations": 0,
+        "decision_coverage": None,
+        "total_positions": 0,
+        "resolved_positions": 0,
+        "completed_attributions": 0,
+        "resolved_position_coverage": None,
+        "attribution_status_counts": {"COMPLETE": 0, "PARTIAL_PROXY": 0, "INCOMPLETE": 0, "unresolved": 0},
+        "ranking_status": "unavailable",
+        "minimum_realized_sample": MIN_REALIZED_SAMPLE_SIZE,
+        "ranked_rows": 0,
+        "portfolio_max_drawdown_usd": None,
+    }
+    if not _alpha_tables_available(conn):
+        return {"summary": empty_summary, "leaderboard": [], "limitations": ["Attribution schema unavailable."]}
+
+    total_evaluations = int(conn.execute("SELECT COUNT(*) FROM revenue_poc_evaluations").fetchone()[0])
+    attributable = int(conn.execute("SELECT COUNT(*) FROM revenue_poc_attribution_entries").fetchone()[0])
+    total_positions = int(conn.execute("SELECT COUNT(*) FROM revenue_poc_positions").fetchone()[0])
+    resolved_positions = int(
+        conn.execute("SELECT COUNT(*) FROM revenue_poc_positions WHERE status='RESOLVED'").fetchone()[0]
+    )
+    completed = int(conn.execute("SELECT COUNT(*) FROM revenue_poc_attribution_completions").fetchone()[0])
+
+    rows = conn.execute(
+        """
+        SELECT a.strategy_id,a.strategy_version,a.category,a.horizon_bucket,a.source_type,
+               a.event_family_id,e.id AS evaluation_id,p.id AS position_id,p.status,
+               p.size_usd,p.opened_at_utc,
+               c.resolved_at_utc,c.capital_days,c.fees_usd,c.slippage_usd,
+               c.realized_net_pnl_usd,c.attribution_status,
+               COALESCE((SELECT m.unrealized_pnl_usd FROM revenue_poc_marks m
+                         WHERE m.position_id=p.id ORDER BY m.quote_timestamp_utc DESC,m.id DESC LIMIT 1),0),
+               COALESCE((SELECT SUM(ac.estimated_cost_usd) FROM revenue_poc_api_calls ac
+                         WHERE ac.source_shadow_forecast_id=e.source_shadow_forecast_id),0),
+               (SELECT COUNT(*) FROM revenue_poc_api_calls ac
+                WHERE ac.source_shadow_forecast_id=e.source_shadow_forecast_id
+                  AND ac.estimated_cost_usd IS NULL)
+        FROM revenue_poc_attribution_entries a
+        JOIN revenue_poc_evaluations e ON e.id=a.evaluation_id
+        LEFT JOIN revenue_poc_positions p ON p.evaluation_id=e.id
+        LEFT JOIN revenue_poc_attribution_completions c ON c.entry_id=a.id
+        ORDER BY a.id
+        """
+    ).fetchall()
+    grouped: dict[tuple[str, ...], dict[str, Any]] = {}
+    status_counts = {"COMPLETE": 0, "PARTIAL_PROXY": 0, "INCOMPLETE": 0, "unresolved": 0}
+    for row in rows:
+        key = tuple(str(row[index] or "UNKNOWN") for index in range(5)) + (str(row[5] or "UNKNOWN"),)
+        group = grouped.setdefault(
+            key,
+            {
+                "strategy_id": key[0], "strategy_version": key[1], "category": key[2],
+                "horizon_bucket": key[3], "source_type": key[4], "event_family_id": key[5],
+                "evaluations": 0, "admitted_positions": 0, "resolved_positions": 0,
+                "realized_net_pnl_usd": 0.0, "unrealized_pnl_usd": 0.0, "capital_days": 0.0,
+                "fees_usd": 0.0, "slippage_usd": 0.0, "api_cost_usd": 0.0,
+                "api_unknown_cost_calls": 0, "winners": [], "losers": [],
+                "holding_days": [], "completion_statuses": [], "unresolved_entries": 0,
+            },
+        )
+        group["evaluations"] += 1
+        if row[7] is not None:
+            group["admitted_positions"] += 1
+            group["unrealized_pnl_usd"] += float(row[17] or 0.0) if row[8] == "OPEN" else 0.0
+        group["api_cost_usd"] += float(row[18] or 0.0)
+        group["api_unknown_cost_calls"] += int(row[19] or 0)
+        if row[11] is None:
+            if row[8] == "RESOLVED":
+                group["resolved_positions"] += 1
+                group["completion_statuses"].append("INCOMPLETE")
+                status_counts["INCOMPLETE"] += 1
+            else:
+                group["unresolved_entries"] += 1
+            continue
+        pnl = float(row[15] or 0.0)
+        group["resolved_positions"] += 1
+        group["realized_net_pnl_usd"] += pnl
+        group["capital_days"] += float(row[12] or 0.0)
+        group["fees_usd"] += float(row[13] or 0.0)
+        group["slippage_usd"] += float(row[14] or 0.0)
+        group["completion_statuses"].append(str(row[16] or "INCOMPLETE"))
+        if pnl > 0:
+            group["winners"].append(pnl)
+        elif pnl < 0:
+            group["losers"].append(pnl)
+        if row[10] and row[11]:
+            try:
+                from datetime import datetime
+                opened = datetime.fromisoformat(str(row[10]))
+                closed = datetime.fromisoformat(str(row[11]))
+                group["holding_days"].append(max(0.0, (closed - opened).total_seconds() / 86400.0))
+            except ValueError:
+                pass
+        status = str(row[16] or "INCOMPLETE")
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+    leaderboard = []
+    for group in grouped.values():
+        resolved = group.pop("resolved_positions")
+        winners = group.pop("winners")
+        losers = group.pop("losers")
+        holding_days = group.pop("holding_days")
+        statuses = group.pop("completion_statuses")
+        if resolved and all(status == "COMPLETE" for status in statuses):
+            attribution_status = "COMPLETE"
+        elif any(status == "PARTIAL_PROXY" for status in statuses):
+            attribution_status = "PARTIAL_PROXY"
+        elif resolved:
+            attribution_status = "INCOMPLETE"
+        else:
+            attribution_status = "unresolved"
+        sample_status = _sample_status(group["evaluations"], group["admitted_positions"], resolved)
+        group.update(
+            resolved_positions=resolved,
+            win_rate=_ratio(len(winners), resolved),
+            profit_factor=round(sum(winners) / abs(sum(losers)), 6) if losers else None,
+            average_winner_usd=round(sum(winners) / len(winners), 6) if winners else None,
+            average_loser_usd=round(sum(losers) / len(losers), 6) if losers else None,
+            average_holding_days=round(sum(holding_days) / len(holding_days), 6) if holding_days else None,
+            realized_pnl_per_capital_day=_ratio(group["realized_net_pnl_usd"], group["capital_days"]),
+            max_drawdown_usd=None,
+            max_drawdown_status="portfolio_only",
+            attribution_status=attribution_status,
+            attribution_coverage=_ratio(resolved, group["admitted_positions"]),
+            sample_size_status=sample_status,
+            ranking_eligible=resolved >= MIN_REALIZED_SAMPLE_SIZE,
+            rank=None,
+            data_cost_usd=None,
+            cost_status="api_only",
+        )
+        for field in ("realized_net_pnl_usd", "unrealized_pnl_usd", "capital_days", "fees_usd", "slippage_usd", "api_cost_usd"):
+            group[field] = round(group[field], 6)
+        leaderboard.append(group)
+    eligible = sorted(
+        (item for item in leaderboard if item["ranking_eligible"]),
+        key=lambda item: (item["realized_pnl_per_capital_day"] or float("-inf"), item["realized_net_pnl_usd"]),
+        reverse=True,
+    )
+    for rank, item in enumerate(eligible, start=1):
+        item["rank"] = rank
+    leaderboard.sort(key=lambda item: (item["rank"] is None, item["rank"] or 0, item["strategy_id"]))
+    try:
+        drawdown_value = conn.execute("SELECT MAX(drawdown_usd) FROM revenue_poc_equity_points").fetchone()[0]
+        drawdown = float(drawdown_value) if drawdown_value is not None else None
+    except sqlite3.Error:
+        drawdown = None
+    coverage = _ratio(attributable, total_evaluations)
+    resolved_coverage = _ratio(completed, resolved_positions)
+    summary = {
+        **empty_summary,
+        "total_evaluations": total_evaluations,
+        "attributable_evaluations": attributable,
+        "decision_coverage": coverage,
+        "total_positions": total_positions,
+        "resolved_positions": resolved_positions,
+        "completed_attributions": completed,
+        "resolved_position_coverage": resolved_coverage,
+        "attribution_status_counts": status_counts,
+        "ranking_status": "realized" if eligible else ("insufficient sample" if leaderboard else "no attributable data"),
+        "ranked_rows": len(eligible),
+        "portfolio_max_drawdown_usd": round(drawdown, 6) if drawdown is not None else None,
+    }
+    return {
+        "summary": summary,
+        "leaderboard": leaderboard,
+        "limitations": [
+            "Only immutable attribution entries are dimensioned; historical evaluations without entries are uncovered.",
+            "Group max drawdown is unavailable because equity points are portfolio-level, not attribution-dimensioned.",
+            "API cost is attributable by source forecast when present; data-provider cost is not separately persisted.",
+            f"Realized ranking requires at least {MIN_REALIZED_SAMPLE_SIZE} resolved positions per group.",
+        ],
+    }
+
+
 def write_report(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

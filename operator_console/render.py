@@ -202,6 +202,13 @@ def revenue_status(snapshot: ConsoleSnapshot, console: Console) -> None:
     console.print(system_table(snapshot))
     console.print(portfolio_table(snapshot))
     console.print(api_table(snapshot))
+    alpha = snapshot.alpha
+    console.print(
+        f"[cyan]ALPHA SCOREBOARD[/] status={alpha.status} ranking={alpha.ranking_status} "
+        f"evaluations={alpha.attributable_evaluations}/{alpha.total_evaluations} "
+        f"resolved={alpha.resolved_positions} completions={alpha.completed_attributions} "
+        f"coverage={percent(alpha.resolved_position_coverage)}"
+    )
     pipeline = snapshot.pipeline
     console.print(
         f"[bold cyan]PIPELINE[/] watchlist={pipeline.watchlist_size} fetched={pipeline.fetched} "
@@ -239,6 +246,29 @@ def revenue_status(snapshot: ConsoleSnapshot, console: Console) -> None:
         console.print(render_discovery_breakdown(breakdown))
 
 
+def alpha_leaderboard(snapshot: ConsoleSnapshot, console: Console) -> None:
+    report = snapshot.raw.get("alpha_leaderboard", {})
+    summary = report.get("summary", {})
+    console.print(
+        f"[bold cyan]ALPHA LEADERBOARD[/] ranking={summary.get('ranking_status', 'unavailable')} "
+        f"decision_coverage={percent(summary.get('decision_coverage'))} "
+        f"resolved_coverage={percent(summary.get('resolved_position_coverage'))}"
+    )
+    table = Table("Rank", "Strategy", "Category", "Horizon", "Source", "Status", "Sample", "Resolved", "Net P&L", "P&L/cap-day")
+    for item in report.get("leaderboard", []):
+        table.add_row(
+            str(item.get("rank") or "—"),
+            f"{item.get('strategy_id')}/{item.get('strategy_version')}",
+            str(item.get("category")), str(item.get("horizon_bucket")), str(item.get("source_type")),
+            str(item.get("attribution_status")), str(item.get("sample_size_status")),
+            str(item.get("resolved_positions", 0)), money(item.get("realized_net_pnl_usd"), signed=True),
+            money(item.get("realized_pnl_per_capital_day"), signed=True),
+        )
+    console.print(table)
+    if not report.get("leaderboard"):
+        console.print("No attributable opportunities available.")
+
+
 def render_command(command: str, snapshot: ConsoleSnapshot, console: Console) -> None:
     if command == "portfolio":
         console.print(portfolio_table(snapshot))
@@ -249,5 +279,7 @@ def render_command(command: str, snapshot: ConsoleSnapshot, console: Console) ->
             console.print(render_discovery_breakdown(snapshot.pipeline.discovery_breakdown))
         else:
             console.print("DISCOVERY BREAKDOWN unavailable: no persisted discovery data")
+    elif command == "alpha-leaderboard":
+        alpha_leaderboard(snapshot, console)
     else:
         revenue_status(snapshot, console)

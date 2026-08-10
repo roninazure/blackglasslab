@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from operator_console.models import (
+    AlphaSummarySnapshot,
     ApiSnapshot,
     ConsoleSnapshot,
     EvaluationSnapshot,
@@ -23,7 +24,7 @@ from operator_console.models import (
     SystemSnapshot,
 )
 from reporting.discovery_breakdown import build_discovery_breakdown
-from revenue_poc.reporting import portfolio_dashboard
+from revenue_poc.reporting import alpha_leaderboard_report, portfolio_dashboard
 from swarm_edge_runtime import RuntimePaths, get_runtime_paths
 
 _CYCLE_RE = re.compile(r"^==\s+([^ ]+)\s+:\s+infer loop")
@@ -583,6 +584,7 @@ class OperatorDataSource:
                 if not required.issubset(tables):
                     raise RuntimeError("Revenue POC schema unavailable")
                 dashboard = portfolio_dashboard(conn)
+                alpha_report = alpha_leaderboard_report(conn)
                 last_cycle = self._latest_cycle(conn, report)
                 p = dashboard["portfolio"]
                 perf = dashboard["performance"]
@@ -599,6 +601,26 @@ class OperatorDataSource:
                     open_positions=int(p["open_positions"]),
                     resolved_positions=int(p["resolved_positions"]),
                     capital_utilization=float(execution["capital_utilization"] or 0),
+                )
+                alpha_summary = alpha_report["summary"]
+                status_counts = alpha_summary["attribution_status_counts"]
+                alpha_status = (
+                    "COMPLETE" if status_counts["COMPLETE"] and not status_counts["PARTIAL_PROXY"] and not status_counts["INCOMPLETE"]
+                    else "PARTIAL_PROXY" if status_counts["PARTIAL_PROXY"]
+                    else "INCOMPLETE" if status_counts["INCOMPLETE"]
+                    else "unresolved"
+                )
+                alpha = AlphaSummarySnapshot(
+                    status=alpha_status,
+                    ranking_status=str(alpha_summary["ranking_status"]),
+                    total_evaluations=int(alpha_summary["total_evaluations"]),
+                    attributable_evaluations=int(alpha_summary["attributable_evaluations"]),
+                    resolved_positions=int(alpha_summary["resolved_positions"]),
+                    completed_attributions=int(alpha_summary["completed_attributions"]),
+                    decision_coverage=alpha_summary["decision_coverage"],
+                    resolved_position_coverage=alpha_summary["resolved_position_coverage"],
+                    ranked_rows=int(alpha_summary["ranked_rows"]),
+                    realized_pnl_usd=sum(float(item["realized_net_pnl_usd"]) for item in alpha_report["leaderboard"]),
                 )
                 if include_logs:
                     self._cached_log_events = self._log_events()
@@ -617,9 +639,11 @@ class OperatorDataSource:
                     api=self._api(conn, dashboard),
                     events=tuple(events[:100]),
                     evaluations=self._evaluations(conn),
+                    alpha=alpha,
                     raw={
                         "database": str(self.paths.db_path),
                         "logs": str(self.paths.log_dir),
+                        "alpha_leaderboard": alpha_report,
                     },
                 )
                 self._last_valid = snapshot
