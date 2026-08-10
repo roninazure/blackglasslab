@@ -13,9 +13,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from revenue_poc.config import RevenueConfig
-from revenue_poc.reporting import funnel_analysis, portfolio_dashboard, write_report
+from revenue_poc.reporting import (
+    funnel_analysis,
+    portfolio_dashboard,
+    write_report,
+)
 from revenue_poc.repository import apply_schema, downgrade_schema
 from revenue_poc.service import RevenuePOCService
+from revenue_poc.velocity import velocity_shadow_report
 from revenue_poc.venue import quote_from_market_and_book, resolved_outcome, yes_token_id
 from swarm_edge_runtime import RUNTIME_PATHS
 
@@ -48,6 +53,7 @@ def main() -> int:
     parser.add_argument("--ingest-shadow", action="store_true")
     parser.add_argument("--dashboard", action="store_true")
     parser.add_argument("--analysis", action="store_true")
+    parser.add_argument("--velocity-shadow", action="store_true")
     parser.add_argument("--refresh-marks", action="store_true")
     parser.add_argument("--resolve-shadow", action="store_true")
     parser.add_argument("--lifecycle-fixture", type=Path)
@@ -56,7 +62,12 @@ def main() -> int:
     args = parser.parse_args()
     if args.downgrade and (args.migrate or args.ingest_shadow):
         parser.error("downgrade cannot be combined with migration or ingestion")
-    conn = sqlite3.connect(args.db)
+    if args.velocity_shadow:
+        conn = sqlite3.connect(f"file:{args.db.resolve()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only=ON")
+    else:
+        conn = sqlite3.connect(args.db)
     conn.execute("PRAGMA foreign_keys=ON")
     try:
         if args.migrate or args.ingest_shadow:
@@ -146,6 +157,10 @@ def main() -> int:
             analysis = funnel_analysis(conn, RUNTIME_PATHS.signals_dir / "infer_pipeline_report.json")
             write_report(args.output_dir / "revenue_poc_funnel_analysis.json", analysis)
             print(json.dumps({"analysis": analysis}, sort_keys=True))
+        if args.velocity_shadow:
+            report = velocity_shadow_report(conn)
+            write_report(args.output_dir / "revenue_velocity_shadow_v1.json", report)
+            print(json.dumps({"velocity_shadow": report}, sort_keys=True))
     finally:
         conn.close()
     return 0
