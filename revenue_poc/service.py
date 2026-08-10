@@ -51,6 +51,18 @@ def _float_or_none(value: Any) -> float | None:
         return None
 
 
+def _horizon_bucket(days: float | None) -> str:
+    if days is None:
+        return "UNKNOWN"
+    if days <= 3:
+        return "FAST"
+    if days <= 14:
+        return "WEEKLY"
+    if days <= 45:
+        return "MONTHLY"
+    return "LONG"
+
+
 def _execution_sources(
     snapshot: dict[str, Any],
     *,
@@ -255,6 +267,7 @@ class RevenuePOCService:
                         ),
                     )
                     evaluation_id = int(cursor.lastrowid)
+                    self._record_attribution_entry(evaluation_id, row, economics, metadata)
                     self._record_threshold_experiments(evaluation_id, economics, threshold)
                     self._api_increment(date_utc, markets_evaluated=1)
                     if int(row[14]):
@@ -452,6 +465,79 @@ class RevenuePOCService:
                 "INSERT INTO revenue_poc_decisions (evaluation_id,timestamp_utc,decision,reason,expected_lost_pnl_usd,details) VALUES (?,?,?,?,?,?)",
                 (evaluation_id, timestamp, decision, reason, max(0.0, float(lost_ev)), json.dumps(payload, sort_keys=True)),
             )
+
+    def _record_attribution_entry(
+        self, evaluation_id: int, source_row: Any, economics: Any, metadata: dict[str, Any]
+    ) -> None:
+        source = metadata.get("source_metadata")
+        source = source if isinstance(source, dict) else {}
+        source_type = str(source.get("source_type") or metadata.get("source_type") or "shadow_forecast")
+        source_id = str(source.get("source_id") or metadata.get("source_id") or f"shadow_forecast:{int(source_row[0])}")
+        event_family = str(source.get("event_family_id") or metadata.get("event_family_id") or source.get("series") or f"market:{source_row[4]}")
+        side = str(economics.side)
+        benchmark = float(source_row[7]) if side == "YES" else 1.0 - float(source_row[7])
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO revenue_poc_attribution_entries
+                (evaluation_id,recorded_at_utc,strategy_id,strategy_version,source_id,
+                 source_type,event_family_id,category,horizon_bucket,entry_benchmark_price,
+                 entry_benchmark_source,attribution_basis_version,metadata)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (evaluation_id, str(source_row[2]), "revenue_poc", "revenue-poc-v1",
+                 source_id, source_type, event_family, str(source_row[6]),
+                 _horizon_bucket(economics.expected_holding_days), benchmark,
+                 "market_probability_normalized_to_side", "alpha-attribution-v1",
+                 json.dumps({"proxy_labels": ["source_id", "event_family_id"]}, sort_keys=True)),
+            )
+
+    def _record_attribution_completion(
+        self, position_id: int, outcome: str, resolved_at: str, pnl: float,
+        realized_fee: float, realized_slippage: float,
+    ) -> None:
+        row = self.conn.execute(
+            """
+            SELECT p.evaluation_id,p.opened_at_utc,p.entry_price,p.size_usd,p.side,
+                   p.model_probability,a.id,a.entry_benchmark_price
+            FROM revenue_poc_positions p
+            LEFT JOIN revenue_poc_attribution_entries a ON a.evaluation_id=p.evaluation_id
+            WHERE p.id=?
+            """, (position_id,),
+        ).fetchone()
+        if row is None or row[6] is None:
+            return
+        mark = self.conn.execute(
+            "SELECT mark_price FROM revenue_poc_marks WHERE position_id=? ORDER BY quote_timestamp_utc DESC,id DESC LIMIT 1",
+            (position_id,),
+        ).fetchone()
+        exit_benchmark = float(mark[0]) if mark else None
+        shares = float(row[3]) / float(row[2])
+        settlement = 1.0 if str(row[4]) == outcome else 0.0
+        model = float(row[5]) if str(row[4]) == "YES" else 1.0 - float(row[5])
+        benchmark = float(row[7])
+        forecast = (model - benchmark) * shares
+        resolution = (settlement - model) * shares
+        structural = (benchmark - float(row[2])) * shares - realized_fee - realized_slippage
+        elapsed = max(0.0, ((_datetime(resolved_at) or self.now) - (_datetime(row[1]) or self.now)).total_seconds() / 86400.0)
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO revenue_poc_attribution_completions
+            (entry_id,position_id,recorded_at_utc,exit_benchmark_price,exit_benchmark_source,
+             settlement_outcome,settlement_price,resolved_at_utc,capital_days,fees_usd,
+             slippage_usd,close_classification,forecast_alpha_usd,event_alpha_usd,
+             resolution_alpha_usd,structural_alpha_usd,realized_net_pnl_usd,
+             attribution_status,metadata)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (int(row[6]), position_id, _utc_now(), exit_benchmark,
+             "last_executable_mark" if exit_benchmark is not None else "settlement_proxy",
+             outcome, settlement, resolved_at, float(row[3]) * elapsed,
+             realized_fee, realized_slippage, "RESOLUTION", forecast, 0.0,
+             resolution, structural, pnl,
+             "COMPLETE" if exit_benchmark is not None else "PARTIAL_PROXY",
+             json.dumps({"event_alpha": "unavailable_without_peer_benchmark"}, sort_keys=True)),
+        )
 
     def _record_threshold_experiments(self, evaluation_id: int, economics: Any, adaptive: float) -> None:
         thresholds = (("0.5%", 0.005), ("1.0%", 0.01), ("1.5%", 0.015),
@@ -671,6 +757,9 @@ class RevenuePOCService:
             )
             if cursor.rowcount != 1:
                 return False
+            self._record_attribution_completion(
+                position_id, outcome, resolved_at, pnl, realized_fee, realized_slippage
+            )
             self._record_equity_point(resolved_at, "RESOLUTION", position_id)
         return True
 

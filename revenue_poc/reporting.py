@@ -343,6 +343,67 @@ def funnel_analysis(conn: sqlite3.Connection, pipeline_path: Path | None = None)
     }
 
 
+def alpha_attribution_report(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Return reconciled, immutable Revenue alpha attribution evidence."""
+    resolved = int(conn.execute("SELECT COUNT(*) FROM revenue_poc_positions WHERE status='RESOLVED'").fetchone()[0])
+    entries = int(conn.execute("SELECT COUNT(*) FROM revenue_poc_attribution_entries").fetchone()[0])
+    completed = int(conn.execute("SELECT COUNT(*) FROM revenue_poc_attribution_completions").fetchone()[0])
+    rows = []
+    for row in conn.execute(
+        """
+        SELECT a.strategy_id,a.strategy_version,a.source_id,a.source_type,a.event_family_id,
+               a.category,a.horizon_bucket,a.entry_benchmark_price,
+               c.exit_benchmark_price,c.settlement_outcome,c.resolved_at_utc,c.capital_days,
+               c.fees_usd,c.slippage_usd,c.close_classification,c.forecast_alpha_usd,
+               c.event_alpha_usd,c.resolution_alpha_usd,c.structural_alpha_usd,
+               c.realized_net_pnl_usd,c.attribution_status
+        FROM revenue_poc_attribution_entries a
+        JOIN revenue_poc_attribution_completions c ON c.entry_id=a.id
+        ORDER BY c.id
+        """
+    ).fetchall():
+        components = [float(row[index] or 0.0) for index in (15, 16, 17, 18)]
+        realized = float(row[19])
+        rows.append({
+            "strategy_id": row[0], "strategy_version": row[1], "source_id": row[2],
+            "source_type": row[3], "event_family_id": row[4], "category": row[5],
+            "horizon_bucket": row[6], "entry_benchmark_price": round(float(row[7]), 8),
+            "exit_benchmark_price": row[8], "settlement_outcome": row[9],
+            "resolved_at_utc": row[10], "capital_days": round(float(row[11]), 6),
+            "fees_usd": round(float(row[12]), 6), "slippage_usd": round(float(row[13]), 6),
+            "close_classification": row[14],
+            "forecast_alpha_usd": round(components[0], 6), "event_alpha_usd": round(components[1], 6),
+            "resolution_alpha_usd": round(components[2], 6), "structural_alpha_usd": round(components[3], 6),
+            "realized_net_pnl_usd": round(realized, 6),
+            "reconciliation_residual_usd": round(sum(components) - realized, 8),
+            "attribution_status": row[20],
+        })
+    residual = round(sum(item["reconciliation_residual_usd"] for item in rows), 8)
+    complete_coverage = (completed / resolved) if resolved else None
+    return {
+        "coverage": {
+            "resolved_positions": resolved,
+            "decision_entries": entries,
+            "completed_attributions": completed,
+            "resolved_position_coverage": round(complete_coverage, 6) if complete_coverage is not None else None,
+            "target": 0.95,
+            "target_met": bool(complete_coverage is not None and complete_coverage >= 0.95),
+        },
+        "reconciliation": {
+            "attribution_rows": len(rows),
+            "total_residual_usd": residual,
+            "within_one_cent": abs(residual) <= 0.01,
+        },
+        "attributions": rows,
+        "limitations": [
+            "Event alpha is zero-labelled until a peer/event-family benchmark is available.",
+            "Missing marks produce PARTIAL_PROXY completion status and use settlement as the exit proxy.",
+            "Source and event-family identifiers fall back to shadow forecast or market identifiers when absent.",
+            "Existing historical positions are not rewritten; they remain uncovered unless a new immutable completion record exists.",
+        ],
+    }
+
+
 def write_report(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
