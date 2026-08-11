@@ -51,7 +51,7 @@ def main(
         run_console(data_source)
         return 0
 
-    snapshot = data_source.read(include_logs=True)
+    snapshot = data_source.read(include_logs=True, include_reports=True)
     command = "revenue-status" if args.command == "watch" else args.command
     render_command(command, snapshot, Console())
     return 0 if snapshot.system.database_status.startswith("OK") else 2
