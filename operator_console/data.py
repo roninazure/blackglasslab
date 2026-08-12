@@ -5,6 +5,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import threading
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import closing
@@ -85,6 +86,8 @@ class OperatorDataSource:
         )
         self._last_valid: ConsoleSnapshot | None = None
         self._cached_log_events: tuple[EventSnapshot, ...] = ()
+        self._slow_refresh_lock = threading.Lock()
+        self._slow_reports: dict[str, object] = {}
 
     def _connect(self) -> sqlite3.Connection:
         uri = f"file:{self.paths.db_path.resolve()}?mode=ro"
@@ -409,7 +412,9 @@ class OperatorDataSource:
     def _api(
         self, conn: sqlite3.Connection, dashboard: dict[str, object]
     ) -> ApiSnapshot:
-        api = dashboard["api"]
+        api = dashboard.get("api")
+        if not isinstance(api, dict):
+            api = {}
         account = conn.execute(
             "SELECT daily_api_budget_usd FROM revenue_poc_accounts WHERE id=1"
         ).fetchone()
@@ -417,8 +422,8 @@ class OperatorDataSource:
         daily = conn.execute(
             "SELECT * FROM revenue_poc_api_daily WHERE date_utc=?", (today,)
         ).fetchone()
-        cache_tokens = int(api["cache_creation_input_tokens"]) + int(
-            api["cache_read_input_tokens"]
+        cache_tokens = int(api.get("cache_creation_input_tokens", 0) or 0) + int(
+            api.get("cache_read_input_tokens", 0) or 0
         )
         return ApiSnapshot(
             daily_budget=float(account[0]) if account else 0.0,
@@ -427,7 +432,7 @@ class OperatorDataSource:
                 if daily and daily["estimated_cost_usd"] is not None
                 else None
             ),
-            remaining_budget=api["remaining_daily_budget_usd"],
+            remaining_budget=api.get("remaining_daily_budget_usd"),
             calls_today=int(daily["api_calls"]) if daily else 0,
             input_tokens=int(daily["input_tokens"]) if daily else 0,
             output_tokens=int(daily["output_tokens"]) if daily else 0,
@@ -437,12 +442,12 @@ class OperatorDataSource:
             )
             if daily
             else cache_tokens,
-            calls_avoided=int(api["calls_avoided"]),
-            cost_per_evaluation=api["cost_per_evaluated_market"],
-            cost_per_candidate=api["cost_per_candidate"],
-            cost_per_admitted_trade=api["cost_per_admitted_trade"],
-            unknown_historical_calls=int(api["unknown_cost_calls"]),
-            measurement=str(api["cost_measurement"]),
+            calls_avoided=int(api.get("calls_avoided", 0) or 0),
+            cost_per_evaluation=api.get("cost_per_evaluated_market"),
+            cost_per_candidate=api.get("cost_per_candidate"),
+            cost_per_admitted_trade=api.get("cost_per_admitted_trade"),
+            unknown_historical_calls=int(api.get("unknown_cost_calls", 0) or 0),
+            measurement=str(api.get("cost_measurement", "pending slow report")),
             reserved_budget=float(
                 (api.get("budget") or {}).get("reserved_usd", 0.0) or 0.0
             ),
@@ -457,6 +462,79 @@ class OperatorDataSource:
                 api.get("provider_cache_savings_usd", 0.0) or 0.0
             ),
         )
+
+    def _fast_portfolio(
+        self, conn: sqlite3.Connection, positions: tuple[PositionSnapshot, ...]
+    ) -> PortfolioSnapshot:
+        account = conn.execute(
+            "SELECT starting_balance_usd FROM revenue_poc_accounts WHERE id=1"
+        ).fetchone()
+        if account is None:
+            raise RuntimeError("Revenue POC is not initialized")
+        starting = float(account[0])
+        open_positions = tuple(item for item in positions if item.status == "OPEN")
+        resolved_positions = tuple(item for item in positions if item.status == "RESOLVED")
+        deployed = sum(item.stake for item in open_positions)
+        realized = sum(item.net_pnl or 0.0 for item in resolved_positions)
+        unrealized = sum(item.net_pnl or 0.0 for item in open_positions)
+        open_fees = sum(item.fees for item in open_positions)
+        open_slippage = sum(item.slippage for item in open_positions)
+        cash = starting + realized - deployed - open_fees - open_slippage
+        equity = cash + deployed + unrealized
+        drawdown = conn.execute(
+            "SELECT COALESCE(MAX(drawdown_usd),0) FROM revenue_poc_equity_points"
+        ).fetchone()[0]
+        return PortfolioSnapshot(
+            starting_balance=starting,
+            cash=round(cash, 4),
+            deployed_capital=round(deployed, 4),
+            equity=round(equity, 4),
+            realized_pnl=round(realized, 4),
+            unrealized_pnl=round(unrealized, 4),
+            modeled_open_ev=round(sum(item.modeled_ev for item in open_positions), 4),
+            maximum_drawdown=float(drawdown or 0.0),
+            open_positions=len(open_positions),
+            resolved_positions=len(resolved_positions),
+            capital_utilization=(deployed / starting) if starting else 0.0,
+        )
+
+    def _slow_dashboard(self) -> dict[str, object]:
+        value = self._slow_reports.get("dashboard")
+        return value if isinstance(value, dict) else {"api": {}}
+
+    def refresh_slow(self) -> bool:
+        """Refresh expensive read-only reports once, without overlapping work."""
+        if not self._slow_refresh_lock.acquire(blocking=False):
+            return False
+        try:
+            report = _safe_json(self.paths.signals_dir / "infer_pipeline_report.json")
+            with closing(self._connect()) as conn:
+                tables = self._tables(conn)
+                required = {
+                    "revenue_poc_accounts",
+                    "revenue_poc_positions",
+                    "revenue_poc_evaluations",
+                }
+                if not required.issubset(tables):
+                    raise RuntimeError("Revenue POC schema unavailable")
+                dashboard = portfolio_dashboard(conn)
+                alpha_report = alpha_leaderboard_report(conn)
+                velocity_report = velocity_shadow_report(conn)
+                categories = Counter(
+                    str(item["category"] or "UNKNOWN")
+                    for item in velocity_report.get("all_valid_opportunities", [])
+                )
+                self._slow_reports = {
+                    "dashboard": dashboard,
+                    "alpha_leaderboard": alpha_report,
+                    "velocity_shadow": velocity_report,
+                    "discovery_categories": dict(categories.most_common()),
+                }
+            return True
+        except (OSError, sqlite3.Error, RuntimeError):
+            return False
+        finally:
+            self._slow_refresh_lock.release()
 
     def _evaluations(self, conn: sqlite3.Connection) -> tuple[EvaluationSnapshot, ...]:
         rows = conn.execute(
@@ -571,7 +649,9 @@ class OperatorDataSource:
             events.append(EventSnapshot(None, "ERROR", line, "ERROR"))
         return tuple(events[-80:])
 
-    def read(self, *, include_logs: bool = True) -> ConsoleSnapshot:
+    def read(
+        self, *, include_logs: bool = True, include_reports: bool = True
+    ) -> ConsoleSnapshot:
         now = self.now().astimezone(UTC)
         report = _safe_json(self.paths.signals_dir / "infer_pipeline_report.json")
         try:
@@ -584,49 +664,48 @@ class OperatorDataSource:
                 }
                 if not required.issubset(tables):
                     raise RuntimeError("Revenue POC schema unavailable")
-                dashboard = portfolio_dashboard(conn)
-                alpha_report = alpha_leaderboard_report(conn)
-                velocity_report = velocity_shadow_report(conn)
-                categories = Counter(
-                    str(item["category"] or "UNKNOWN")
-                    for item in velocity_report.get("all_valid_opportunities", [])
-                )
+                if include_reports:
+                    self.refresh_slow()
+                dashboard = self._slow_dashboard()
                 last_cycle = self._latest_cycle(conn, report)
-                p = dashboard["portfolio"]
-                perf = dashboard["performance"]
-                execution = dashboard["execution"]
-                portfolio = PortfolioSnapshot(
-                    starting_balance=float(p["starting_balance_usd"]),
-                    cash=float(p["cash_usd"]),
-                    deployed_capital=float(p["deployed_capital_usd"]),
-                    equity=float(p["equity_usd"]),
-                    realized_pnl=float(perf["realized_pnl_usd"]),
-                    unrealized_pnl=float(perf["unrealized_pnl_usd"]),
-                    modeled_open_ev=float(perf["expected_value_open_usd"]),
-                    maximum_drawdown=float(perf["maximum_drawdown_usd"]),
-                    open_positions=int(p["open_positions"]),
-                    resolved_positions=int(p["resolved_positions"]),
-                    capital_utilization=float(execution["capital_utilization"] or 0),
+                positions = self._positions(conn, now)
+                portfolio = self._fast_portfolio(conn, positions)
+                pipeline = self._pipeline(conn, report)
+                alpha_report = self._slow_reports.get("alpha_leaderboard", {})
+                if not isinstance(alpha_report, dict):
+                    alpha_report = {}
+                velocity_report = self._slow_reports.get("velocity_shadow", {})
+                if not isinstance(velocity_report, dict):
+                    velocity_report = {}
+                categories = self._slow_reports.get("discovery_categories", {})
+                if not isinstance(categories, dict):
+                    categories = {}
+                alpha_summary = alpha_report.get("summary", {})
+                if not isinstance(alpha_summary, dict):
+                    alpha_summary = {}
+                status_counts = alpha_summary.get(
+                    "attribution_status_counts",
+                    {"COMPLETE": 0, "PARTIAL_PROXY": 0, "INCOMPLETE": 0},
                 )
-                alpha_summary = alpha_report["summary"]
-                status_counts = alpha_summary["attribution_status_counts"]
+                if not isinstance(status_counts, dict):
+                    status_counts = {}
                 alpha_status = (
-                    "COMPLETE" if status_counts["COMPLETE"] and not status_counts["PARTIAL_PROXY"] and not status_counts["INCOMPLETE"]
-                    else "PARTIAL_PROXY" if status_counts["PARTIAL_PROXY"]
-                    else "INCOMPLETE" if status_counts["INCOMPLETE"]
+                    "COMPLETE" if status_counts.get("COMPLETE", 0) and not status_counts.get("PARTIAL_PROXY", 0) and not status_counts.get("INCOMPLETE", 0)
+                    else "PARTIAL_PROXY" if status_counts.get("PARTIAL_PROXY", 0)
+                    else "INCOMPLETE" if status_counts.get("INCOMPLETE", 0)
                     else "unresolved"
                 )
                 alpha = AlphaSummarySnapshot(
                     status=alpha_status,
-                    ranking_status=str(alpha_summary["ranking_status"]),
-                    total_evaluations=int(alpha_summary["total_evaluations"]),
-                    attributable_evaluations=int(alpha_summary["attributable_evaluations"]),
-                    resolved_positions=int(alpha_summary["resolved_positions"]),
-                    completed_attributions=int(alpha_summary["completed_attributions"]),
-                    decision_coverage=alpha_summary["decision_coverage"],
-                    resolved_position_coverage=alpha_summary["resolved_position_coverage"],
-                    ranked_rows=int(alpha_summary["ranked_rows"]),
-                    realized_pnl_usd=sum(float(item["realized_net_pnl_usd"]) for item in alpha_report["leaderboard"]),
+                    ranking_status=str(alpha_summary.get("ranking_status", "unavailable")),
+                    total_evaluations=int(alpha_summary.get("total_evaluations", 0)),
+                    attributable_evaluations=int(alpha_summary.get("attributable_evaluations", 0)),
+                    resolved_positions=int(alpha_summary.get("resolved_positions", 0)),
+                    completed_attributions=int(alpha_summary.get("completed_attributions", 0)),
+                    decision_coverage=alpha_summary.get("decision_coverage"),
+                    resolved_position_coverage=alpha_summary.get("resolved_position_coverage"),
+                    ranked_rows=int(alpha_summary.get("ranked_rows", 0)),
+                    realized_pnl_usd=sum(float(item["realized_net_pnl_usd"]) for item in alpha_report.get("leaderboard", [])),
                 )
                 if include_logs:
                     self._cached_log_events = self._log_events()
@@ -640,8 +719,8 @@ class OperatorDataSource:
                         database_status="OK / READ-ONLY", last_cycle=last_cycle
                     ),
                     portfolio=portfolio,
-                    positions=self._positions(conn, now),
-                    pipeline=self._pipeline(conn, report),
+                    positions=positions,
+                    pipeline=pipeline,
                     api=self._api(conn, dashboard),
                     events=tuple(events[:100]),
                     evaluations=self._evaluations(conn),
@@ -651,7 +730,7 @@ class OperatorDataSource:
                         "logs": str(self.paths.log_dir),
                         "alpha_leaderboard": alpha_report,
                         "velocity_shadow": velocity_report,
-                        "discovery_categories": dict(categories.most_common()),
+                        "discovery_categories": dict(categories),
                     },
                 )
                 self._last_valid = snapshot

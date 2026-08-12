@@ -263,8 +263,10 @@ class OperatorConsoleApp(App[None]):
     def on_mount(self) -> None:
         self._configure_tables()
         self._load(include_logs=True)
+        self._start_slow_refresh()
         self.set_interval(2.0, self._refresh_database)
         self.set_interval(5.0, self._refresh_logs)
+        self.set_interval(45.0, self._start_slow_refresh)
         self._update_compact(self.size.width)
 
     def _configure_tables(self) -> None:
@@ -296,7 +298,13 @@ class OperatorConsoleApp(App[None]):
         )
 
     def _load(self, *, include_logs: bool) -> None:
-        self.snapshot = self.source.read(include_logs=include_logs)
+        try:
+            self.snapshot = self.source.read(
+                include_logs=include_logs, include_reports=False
+            )
+        except TypeError:
+            # Keep lightweight test and embedding data sources compatible.
+            self.snapshot = self.source.read(include_logs=include_logs)
         try:
             self._render()
         except NoMatches:
@@ -310,8 +318,14 @@ class OperatorConsoleApp(App[None]):
     def _refresh_logs(self) -> None:
         self._load(include_logs=True)
 
+    def _start_slow_refresh(self) -> None:
+        refresh = getattr(self.source, "refresh_slow", None)
+        if refresh is not None:
+            self.run_worker(refresh, thread=True)
+
     def action_refresh_screen(self) -> None:
         self._load(include_logs=True)
+        self._start_slow_refresh()
         self.notify("Display refreshed from read-only sources", timeout=1.5)
 
     def action_tab(self, tab_id: str) -> None:
