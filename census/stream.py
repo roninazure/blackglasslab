@@ -87,7 +87,10 @@ async def consume_market_stream(assets: Iterable[str], on_message: Callable[[dic
     while not stop.is_set():
         connected_at = time.monotonic()
         try:
-            async with connect(WS_URL, ping_interval=None, open_timeout=20) as socket:
+            # The declared 100-event bootstrap can exceed the websockets default
+            # 1 MiB frame limit. It is public data only; keep frame size unlimited
+            # and persist bounded episode state rather than raw messages.
+            async with connect(WS_URL, ping_interval=None, open_timeout=20, max_size=None) as socket:
                 stats.record("connection")
                 if not first: stats.record("reconnect")
                 first = False

@@ -22,6 +22,7 @@ ALLOWED_HOSTS = {"gamma-api.polymarket.com", "clob.polymarket.com"}
 DEFAULT_DB = Path(os.environ.get("SWARM_CENSUS_DB", "census/census.sqlite"))
 DEFAULT_PID = Path(os.environ.get("SWARM_CENSUS_PID", "census/census.pid"))
 ENGINE_NAMES = ("revenue_directional_control", "sports_event_driven", "short_duration_crypto", "negrisk_structural", "maker_spread_rebate")
+MAX_STREAM_ASSETS = int(os.environ.get("SWARM_CENSUS_MAX_STREAM_ASSETS", "1000"))
 
 
 def utc_now() -> str:
@@ -110,7 +111,7 @@ def capture_revenue_control(store: CensusStore, production_db: Path | None = Non
         latest = conn.execute("SELECT realized_pnl_usd,unrealized_pnl_usd,deployed_capital_usd FROM revenue_poc_equity_points ORDER BY timestamp_utc DESC,id DESC LIMIT 1").fetchone()
         if latest is None: raise RuntimeError("Revenue control unavailable: no equity point")
         opportunity_count = conn.execute("SELECT COUNT(*) FROM revenue_poc_evaluations").fetchone()[0]
-        admission_count = conn.execute("SELECT COUNT(*) FROM revenue_poc_evaluations WHERE lower(production_decision) IN ('admitted','admit','open','accepted')").fetchone()[0]
+        admission_count = conn.execute("SELECT COUNT(*) FROM revenue_poc_evaluations WHERE lower(production_decision) IN ('admitted','admit','open','accepted','candidate_pending_approval')").fetchone()[0]
         row = {"captured_at_utc": utc_now(), "production_db_path": str(path), "position_count": position_count, "horizon_mix": horizon_mix, "realized_pnl_usd": float(latest[0]), "unrealized_pnl_usd": float(latest[1]), "deployed_capital_usd": float(latest[2]), "opportunity_count": opportunity_count, "admission_count": admission_count, "status": "OK"}
         store.record_revenue_control(row); store.commit(); conn.close(); return row
     except Exception:
@@ -127,9 +128,11 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
     started_utc, started_mono = utc_now(), time.monotonic()
     client = PublicGetClient(); params = urllib.parse.urlencode({"limit": min(max(limit, 1), 1000), "offset": 0, "active": "true", "closed": "false", "order": "liquidity", "ascending": "false"})
     payload = client.get(f"https://gamma-api.polymarket.com/events?{params}")
-    store = CensusStore(db); capture_revenue_control(store)
+    store = CensusStore(db); control = capture_revenue_control(store)
     markets: dict[str, tuple[dict[str, Any], dict[str, Any], str, str, float | None]] = {}; events: dict[str, dict[str, Any]] = {}
     eligible = {name: set() for name in ENGINE_NAMES}; tracked = {name: set() for name in ENGINE_NAMES}; neg_seen: set[str] = set()
+    eligible["revenue_directional_control"] = {f"control:{i}" for i in range(int(control["position_count"]))}
+    tracked["revenue_directional_control"] = set(eligible["revenue_directional_control"])
     for event in payload if isinstance(payload, list) else []:
         event_id = str(event.get("id") or event.get("slug") or "")
         events[event_id] = event
@@ -140,8 +143,21 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
             for token in tokens: markets[str(token)] = (market, event, engine, category, horizon)
             if event.get("negRisk") and event_id not in neg_seen:
                 neg_seen.add(event_id); store.record_neg_risk(utc_now(), event_id=event_id, candidate_basket=1, validated_basket=int(engine == "negrisk_structural"), rejection_reason=unsupported_reason, executable_simultaneous_depth_usd=None, gross_structural_edge_usd=None, net_economics_status="UNKNOWN", metadata={"market_count": len(event.get("markets", []))})
-    store.record_coverage(started_utc, sampling_mode="gamma_events_active_closed_false_order_liquidity", requested_events=limit, observed_events=len(payload) if isinstance(payload, list) else 0, observed_markets=len({v[0].get("id") or v[0].get("slug") for v in markets.values()}), observed_tokens=len(markets), exclusion_reason="bounded liquidity-ordered bootstrap; not entire Polymarket universe", metadata={"stream_url": "wss://ws-subscriptions-clob.polymarket.com/ws/market"})
-    books, tracker, previous_mid = BookState(), DurabilityTracker(), {}; active_labels: dict[str, tuple[str, str, str | None]] = {}; stats = StreamStats(started_utc); stop = asyncio.Event(); loop = asyncio.get_running_loop()
+    stream_assets: list[str] = []
+    basket_budget = MAX_STREAM_ASSETS // 2
+    neg_events = sorted((event for event in events.values() if negrisk_event_valid(event)), key=lambda event: len(event.get("markets", [])))
+    for event in neg_events:
+        if negrisk_event_valid(event):
+            basket_tokens = [str(token) for child in event.get("markets", []) for token in _list(child.get("clobTokenIds"))]
+            if len(stream_assets) + len(basket_tokens) <= basket_budget: stream_assets.extend(token for token in basket_tokens if token in markets)
+    grouped: dict[str, list[str]] = {engine: [] for engine in ENGINE_NAMES}
+    for token, (_market, _event, engine, _category, _horizon) in markets.items():
+        if token not in stream_assets and engine in grouped: grouped[engine].append(token)
+    while len(stream_assets) < MAX_STREAM_ASSETS and any(grouped.values()):
+        for engine in ENGINE_NAMES:
+            if grouped[engine] and len(stream_assets) < MAX_STREAM_ASSETS: stream_assets.append(grouped[engine].pop(0))
+    store.record_coverage(started_utc, sampling_mode="gamma_events_active_closed_false_order_liquidity", requested_events=limit, observed_events=len(payload) if isinstance(payload, list) else 0, observed_markets=len({v[0].get("id") or v[0].get("slug") for v in markets.values()}), observed_tokens=len(markets), exclusion_reason="bounded liquidity-ordered bootstrap; stream subscription sampled to protect public WebSocket", metadata={"stream_url": "wss://ws-subscriptions-clob.polymarket.com/ws/market", "streamed_tokens": len(stream_assets), "stream_asset_limit": MAX_STREAM_ASSETS})
+    books, tracker, previous_mid = BookState(), DurabilityTracker(), {}; active_labels: dict[str, tuple[str, str, str | None]] = {}; neg_live_seen: set[str] = set(); stats = StreamStats(started_utc); stop = asyncio.Event(); loop = asyncio.get_running_loop()
     for signum in (signal.SIGTERM, signal.SIGINT):
         try: loop.add_signal_handler(signum, stop.set)
         except (NotImplementedError, RuntimeError): pass
@@ -160,7 +176,9 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
                 for child in event.get("markets", []):
                     child_tokens = _list(child.get("clobTokenIds")); child_quote = books.top(str(child_tokens[0])) if child_tokens else {}; basket.append(child_quote)
                 if basket and all(q.get("ask") is not None and q.get("ask_size", 0) > 0 for q in basket):
-                    asks = [float(q["ask"]) for q in basket]; sizes = [float(q["ask_size"]) for q in basket]; gross = 1.0 - sum(asks); simultaneous = min(a * s for a, s in zip(asks, sizes)); store.record_neg_risk(utc_now(), event_id=eid, candidate_basket=1, validated_basket=1, executable_simultaneous_depth_usd=simultaneous, gross_structural_edge_usd=gross, net_economics_status="UNKNOWN", metadata={"fee_source": meta["fee_source"], "slippage_source": "UNKNOWN"})
+                    asks = [float(q["ask"]) for q in basket]; sizes = [float(q["ask_size"]) for q in basket]; gross = 1.0 - sum(asks); simultaneous = min(a * s for a, s in zip(asks, sizes))
+                    if eid not in neg_live_seen:
+                        neg_live_seen.add(eid); store.record_neg_risk(utc_now(), event_id=eid, candidate_basket=1, validated_basket=1, executable_simultaneous_depth_usd=simultaneous, gross_structural_edge_usd=gross, net_economics_status="UNKNOWN", metadata={"fee_source": meta["fee_source"], "slippage_source": "UNKNOWN"})
                     executable = gross > 0; depth = simultaneous
             if engine == "unsupported": continue
             key = _episode_key(engine, market_id); active_labels[key] = (engine, market_id, str(event.get("id") or event.get("slug") or "") or None)
@@ -169,14 +187,23 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
         for state in tracker.expire(mono):
             engine, market_id, event_id = active_labels.pop(state.key, ("maker_spread_rebate", state.key, None)); store.record_episode(state, engine=engine, market_id=market_id, event_id=event_id, ended_at_utc=utc_now(), metadata={})
     try:
-        await consume_market_stream(list(markets), on_message, stop=stop, stats=stats)
+        await consume_market_stream(stream_assets, on_message, stop=stop, stats=stats)
     finally:
         for key, state in list(tracker.active.items()):
             closed = tracker.disappear(key, time.monotonic_ns(), reason=None, continuous=True)
             if closed:
                 engine, market_id, event_id = active_labels.get(key, ("maker_spread_rebate", key, None)); store.record_episode(closed, engine=engine, market_id=market_id, event_id=event_id, ended_at_utc=utc_now(), metadata={})
         stopped_utc = utc_now(); duration = time.monotonic() - started_mono; stats_row = {"started_at_utc": started_utc, "stopped_at_utc": stopped_utc, "connection_count": stats.connection_count, "reconnect_count": stats.reconnect_count, "disconnect_count": stats.disconnect_count, "protocol_error_count": stats.protocol_error_count, "error_count": stats.error_count, "last_message_at_utc": stats.last_message_at_utc, "messages": stats.messages, "messages_per_second": stats.messages / duration if duration else 0, "stale_stream_events": stats.stale_stream_events, "max_recovery_seconds": stats.max_recovery_seconds, "duration_seconds": duration, "automatic_shutdown": int(duration_hours is not None and duration >= duration_hours * 3600), "details": stats.details}; store.record_stream_health(stats_row)
-        store.record_engine_coverage([{"alpha_engine": e, "eligible_markets": len(eligible[e]), "tracked_markets": len(tracked[e]), "opportunity_episodes": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes WHERE alpha_engine=?", (e,)).fetchone()[0], "supported": 1, "unsupported_reason": None} for e in ENGINE_NAMES] + [{"alpha_engine": "unsupported", "eligible_markets": len([1 for v in markets.values() if v[2] == "unsupported"]), "tracked_markets": 0, "opportunity_episodes": 0, "supported": 0, "unsupported_reason": "invalid_neg_risk_event_basket or no supported live model"}]); store.record_resources({"captured_at_utc": stopped_utc, "cpu_user_seconds": resource.getrusage(resource.RUSAGE_SELF).ru_utime, "cpu_system_seconds": resource.getrusage(resource.RUSAGE_SELF).ru_stime, "max_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss if os.uname().sysname != "Darwin" else resource.getrusage(resource.RUSAGE_SELF).ru_maxrss), "db_bytes": db.stat().st_size if db.exists() else 0, "wal_bytes": db.with_name(db.name + "-wal").stat().st_size if db.with_name(db.name + "-wal").exists() else 0, "persisted_episodes": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes").fetchone()[0], "episodes_per_minute": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes").fetchone()[0] / max(duration / 60, 1), "details": {"messages_per_second": stats.messages / duration if duration else 0}}); store.event(stopped_utc, "stopped", {"transport": "public_market_websocket", "automatic_shutdown": stats_row["automatic_shutdown"]}); store.close(); deadline_task.cancel()
+        engine_rows = []
+        for e in ENGINE_NAMES:
+            supported = int(e == "revenue_directional_control" or bool(eligible[e]))
+            reason = None if supported else "no eligible markets in bounded bootstrap sample"
+            if e == "revenue_directional_control": reason = "read-only production control; no public stream route"
+            engine_rows.append({"alpha_engine": e, "eligible_markets": len(eligible[e]), "tracked_markets": len(tracked[e]), "opportunity_episodes": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes WHERE alpha_engine=?", (e,)).fetchone()[0], "supported": supported, "unsupported_reason": reason})
+        store.record_engine_coverage(engine_rows + [{"alpha_engine": "unsupported", "eligible_markets": len([1 for v in markets.values() if v[2] == "unsupported"]), "tracked_markets": 0, "opportunity_episodes": 0, "supported": 0, "unsupported_reason": "invalid_neg_risk_event_basket or no supported live model"}])
+        try: production_age = max(0.0, time.time() - canonical_production_db().stat().st_mtime)
+        except OSError: production_age = None
+        store.record_resources({"captured_at_utc": stopped_utc, "cpu_user_seconds": resource.getrusage(resource.RUSAGE_SELF).ru_utime, "cpu_system_seconds": resource.getrusage(resource.RUSAGE_SELF).ru_stime, "max_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss), "db_bytes": db.stat().st_size if db.exists() else 0, "wal_bytes": db.with_name(db.name + "-wal").stat().st_size if db.with_name(db.name + "-wal").exists() else 0, "persisted_episodes": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes").fetchone()[0], "episodes_per_minute": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes").fetchone()[0] / max(duration / 60, 1), "production_freshness_seconds": production_age, "details": {"messages_per_second": stats.messages / duration if duration else 0}}); store.event(stopped_utc, "stopped", {"transport": "public_market_websocket", "automatic_shutdown": stats_row["automatic_shutdown"]}); store.close(); deadline_task.cancel()
 
 
 def run_stream_forever(**kwargs: Any) -> None: asyncio.run(run_stream(**kwargs))
