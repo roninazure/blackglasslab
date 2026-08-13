@@ -10,6 +10,7 @@ import sqlite3
 import time
 import urllib.parse
 import urllib.request
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,28 @@ def canonical_production_db() -> Path:
                 value = line.split("=", 1)[1].strip().strip("'\"")
                 break
     return Path(value or "memory/runs.sqlite").expanduser().resolve()
+
+
+def authoritative_production_cycle() -> dict[str, Any]:
+    """Read the same cycle source used by operator status/watch, read-only."""
+    from operator_console.data import OperatorDataSource
+
+    source = OperatorDataSource(environ=dict(os.environ))
+    report = {}
+    try:
+        report_path = source.paths.signals_dir / "infer_pipeline_report.json"
+        if report_path.exists(): report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        report = {}
+    with closing(source._connect()) as conn:  # same read-only connection/status boundary as watch
+        timestamp = source._latest_cycle(conn, report)
+        row = conn.execute("SELECT run_id,timestamp_utc FROM revenue_poc_evaluations ORDER BY timestamp_utc DESC,id DESC LIMIT 1").fetchone()
+    now = datetime.now(timezone.utc)
+    freshness = max(0.0, (now - timestamp).total_seconds()) if timestamp else None
+    system = source._system_status(database_status="OK / READ-ONLY", last_cycle=timestamp)
+    tolerance = source.cycle_interval * 1.5
+    warning = None if freshness is not None and freshness <= tolerance else f"production cycle stale: freshness={freshness} tolerance={tolerance}"
+    return {"captured_at_utc": utc_now(), "cycle_id": str(row[0]) if row else None, "cycle_timestamp_utc": timestamp.isoformat().replace("+00:00", "Z") if timestamp else None, "freshness_seconds": freshness, "runner_pid": system.launchd_pid, "runner_state": system.runtime_status, "cycle_state": system.cycle_state, "warning": warning, "source": "operator_console.data.OperatorDataSource._latest_cycle/_system_status", "tolerance_seconds": tolerance}
 
 
 class PublicGetClient:
@@ -129,6 +152,7 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
     client = PublicGetClient(); params = urllib.parse.urlencode({"limit": min(max(limit, 1), 1000), "offset": 0, "active": "true", "closed": "false", "order": "liquidity", "ascending": "false"})
     payload = client.get(f"https://gamma-api.polymarket.com/events?{params}")
     store = CensusStore(db); control = capture_revenue_control(store)
+    initial_cycle = authoritative_production_cycle(); store.record_production_cycle(initial_cycle); store.commit()
     markets: dict[str, tuple[dict[str, Any], dict[str, Any], str, str, float | None]] = {}; events: dict[str, dict[str, Any]] = {}
     eligible = {name: set() for name in ENGINE_NAMES}; tracked = {name: set() for name in ENGINE_NAMES}; neg_seen: set[str] = set()
     eligible["revenue_directional_control"] = {f"control:{i}" for i in range(int(control["position_count"]))}
@@ -157,7 +181,7 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
         for engine in ENGINE_NAMES:
             if grouped[engine] and len(stream_assets) < MAX_STREAM_ASSETS: stream_assets.append(grouped[engine].pop(0))
     store.record_coverage(started_utc, sampling_mode="gamma_events_active_closed_false_order_liquidity", requested_events=limit, observed_events=len(payload) if isinstance(payload, list) else 0, observed_markets=len({v[0].get("id") or v[0].get("slug") for v in markets.values()}), observed_tokens=len(markets), exclusion_reason="bounded liquidity-ordered bootstrap; stream subscription sampled to protect public WebSocket", metadata={"stream_url": "wss://ws-subscriptions-clob.polymarket.com/ws/market", "streamed_tokens": len(stream_assets), "stream_asset_limit": MAX_STREAM_ASSETS})
-    books, tracker, previous_mid = BookState(), DurabilityTracker(), {}; active_labels: dict[str, tuple[str, str, str | None]] = {}; neg_live_seen: set[str] = set(); stats = StreamStats(started_utc); stop = asyncio.Event(); loop = asyncio.get_running_loop()
+    books, tracker, previous_mid = BookState(), DurabilityTracker(), {}; active_labels: dict[str, tuple[str, str, str | None]] = {}; neg_live_seen: set[str] = set(); stats = StreamStats(started_utc); stop = asyncio.Event(); loop = asyncio.get_running_loop(); last_cycle_check = 0.0
     for signum in (signal.SIGTERM, signal.SIGINT):
         try: loop.add_signal_handler(signum, stop.set)
         except (NotImplementedError, RuntimeError): pass
@@ -165,6 +189,10 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
         if duration_hours is not None: await asyncio.sleep(max(0.0, duration_hours * 3600)); stop.set()
     deadline_task = asyncio.create_task(deadline())
     async def on_message(message: dict[str, Any], mono: int) -> None:
+        nonlocal last_cycle_check
+        if time.monotonic() - last_cycle_check >= 60.0:
+            cycle = authoritative_production_cycle(); store.record_production_cycle(cycle); last_cycle_check = time.monotonic()
+            if cycle["warning"]: store.event(cycle["captured_at_utc"], "production_cycle_warning", cycle)
         changed = books.apply(message)
         for asset in changed:
             if asset not in markets: continue
@@ -201,9 +229,9 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
             if e == "revenue_directional_control": reason = "read-only production control; no public stream route"
             engine_rows.append({"alpha_engine": e, "eligible_markets": len(eligible[e]), "tracked_markets": len(tracked[e]), "opportunity_episodes": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes WHERE alpha_engine=?", (e,)).fetchone()[0], "supported": supported, "unsupported_reason": reason})
         store.record_engine_coverage(engine_rows + [{"alpha_engine": "unsupported", "eligible_markets": len([1 for v in markets.values() if v[2] == "unsupported"]), "tracked_markets": 0, "opportunity_episodes": 0, "supported": 0, "unsupported_reason": "invalid_neg_risk_event_basket or no supported live model"}])
-        try: production_age = max(0.0, time.time() - canonical_production_db().stat().st_mtime)
-        except OSError: production_age = None
-        store.record_resources({"captured_at_utc": stopped_utc, "cpu_user_seconds": resource.getrusage(resource.RUSAGE_SELF).ru_utime, "cpu_system_seconds": resource.getrusage(resource.RUSAGE_SELF).ru_stime, "max_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss), "db_bytes": db.stat().st_size if db.exists() else 0, "wal_bytes": db.with_name(db.name + "-wal").stat().st_size if db.with_name(db.name + "-wal").exists() else 0, "persisted_episodes": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes").fetchone()[0], "episodes_per_minute": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes").fetchone()[0] / max(duration / 60, 1), "production_freshness_seconds": production_age, "details": {"messages_per_second": stats.messages / duration if duration else 0}}); store.event(stopped_utc, "stopped", {"transport": "public_market_websocket", "automatic_shutdown": stats_row["automatic_shutdown"]}); store.close(); deadline_task.cancel()
+        final_cycle = authoritative_production_cycle(); store.record_production_cycle(final_cycle)
+        if final_cycle["warning"]: store.event(final_cycle["captured_at_utc"], "production_cycle_warning", final_cycle)
+        store.record_resources({"captured_at_utc": stopped_utc, "cpu_user_seconds": resource.getrusage(resource.RUSAGE_SELF).ru_utime, "cpu_system_seconds": resource.getrusage(resource.RUSAGE_SELF).ru_stime, "max_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss), "db_bytes": db.stat().st_size if db.exists() else 0, "wal_bytes": db.with_name(db.name + "-wal").stat().st_size if db.with_name(db.name + "-wal").exists() else 0, "persisted_episodes": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes").fetchone()[0], "episodes_per_minute": store.conn.execute("SELECT COUNT(*) FROM opportunity_episodes").fetchone()[0] / max(duration / 60, 1), "production_freshness_seconds": final_cycle["freshness_seconds"], "details": {"messages_per_second": stats.messages / duration if duration else 0, "production_cycle_source": final_cycle["source"]}}); store.event(stopped_utc, "stopped", {"transport": "public_market_websocket", "automatic_shutdown": stats_row["automatic_shutdown"]}); store.close(); deadline_task.cancel()
 
 
 def run_stream_forever(**kwargs: Any) -> None: asyncio.run(run_stream(**kwargs))

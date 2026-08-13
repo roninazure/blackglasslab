@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS resource_telemetry (
   db_bytes INTEGER NOT NULL, wal_bytes INTEGER NOT NULL, persisted_episodes INTEGER NOT NULL,
   episodes_per_minute REAL NOT NULL, production_freshness_seconds REAL, details_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS production_cycle_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, captured_at_utc TEXT NOT NULL,
+  cycle_id TEXT, cycle_timestamp_utc TEXT, freshness_seconds REAL,
+  runner_pid INTEGER, runner_state TEXT NOT NULL, cycle_state TEXT NOT NULL,
+  warning TEXT, source TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS collector_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at_utc TEXT NOT NULL,
   event_type TEXT NOT NULL, detail_json TEXT NOT NULL
@@ -120,6 +126,9 @@ class CensusStore:
 
     def record_resources(self, row: dict[str, Any]) -> None:
         self.conn.execute("INSERT OR REPLACE INTO resource_telemetry(id,captured_at_utc,cpu_user_seconds,cpu_system_seconds,max_rss_bytes,db_bytes,wal_bytes,persisted_episodes,episodes_per_minute,production_freshness_seconds,details_json) VALUES(1,?,?,?,?,?,?,?,?,?,?)", (row["captured_at_utc"], row["cpu_user_seconds"], row["cpu_system_seconds"], row["max_rss_bytes"], row["db_bytes"], row["wal_bytes"], row["persisted_episodes"], row["episodes_per_minute"], row.get("production_freshness_seconds"), _json(row.get("details", {}))))
+
+    def record_production_cycle(self, row: dict[str, Any]) -> None:
+        self.conn.execute("INSERT INTO production_cycle_snapshots(captured_at_utc,cycle_id,cycle_timestamp_utc,freshness_seconds,runner_pid,runner_state,cycle_state,warning,source) VALUES(?,?,?,?,?,?,?,?,?)", (row["captured_at_utc"], row.get("cycle_id"), row.get("cycle_timestamp_utc"), row.get("freshness_seconds"), row.get("runner_pid"), row["runner_state"], row["cycle_state"], row.get("warning"), row["source"]))
 
     def commit(self) -> None:
         self.conn.commit()
