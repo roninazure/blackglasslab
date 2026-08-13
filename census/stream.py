@@ -10,6 +10,10 @@ from typing import Any
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
 
+class StreamStartupError(RuntimeError):
+    """The public market stream did not become live inside its startup bounds."""
+
+
 class BookState:
     def __init__(self) -> None:
         self.books: dict[str, dict[str, dict[float, float]]] = {}
@@ -76,7 +80,18 @@ class StreamStats:
         if len(self.details) < 100: self.details.append({"kind": kind, **(detail or {})})
 
 
-async def consume_market_stream(assets: Iterable[str], on_message: Callable[[dict[str, Any], int], Awaitable[None]], *, stop: asyncio.Event, stats: StreamStats, stale_seconds: float = 30.0) -> None:
+async def consume_market_stream(
+    assets: Iterable[str],
+    on_message: Callable[[dict[str, Any], int], Awaitable[None]],
+    *,
+    stop: asyncio.Event,
+    stats: StreamStats,
+    startup_event: Callable[[str, str, dict[str, Any]], Awaitable[None]] | None = None,
+    connect_timeout: float = 20.0,
+    subscription_timeout: float = 10.0,
+    first_message_timeout: float = 30.0,
+    stale_seconds: float = 30.0,
+) -> None:
     try:
         from websockets.asyncio.client import connect
         from websockets.exceptions import ConnectionClosed, WebSocketException
@@ -84,17 +99,38 @@ async def consume_market_stream(assets: Iterable[str], on_message: Callable[[dic
         raise RuntimeError("websockets==16.1.1 is required for live census streaming") from exc
     assets = [str(asset) for asset in assets]
     first = True
+    startup_complete = False
+    startup_phase = "websocket_connection"
+
+    async def notify(phase: str, state: str, detail: dict[str, Any] | None = None) -> None:
+        if startup_event is not None:
+            await startup_event(phase, state, detail or {})
+
     while not stop.is_set():
-        connected_at = time.monotonic()
         try:
             # The declared 100-event bootstrap can exceed the websockets default
             # 1 MiB frame limit. It is public data only; keep frame size unlimited
             # and persist bounded episode state rather than raw messages.
-            async with connect(WS_URL, ping_interval=None, open_timeout=20, max_size=None) as socket:
+            if not startup_complete:
+                startup_phase = "websocket_connection"
+                await notify(startup_phase, "before", {"url": WS_URL, "timeout_seconds": connect_timeout})
+            async with connect(WS_URL, ping_interval=None, open_timeout=connect_timeout, max_size=None) as socket:
                 stats.record("connection")
                 if not first: stats.record("reconnect")
                 first = False
-                await socket.send(json.dumps({"assets_ids": assets, "type": "market", "custom_feature_enabled": True, "initial_dump": True}))
+                if not startup_complete:
+                    await notify(startup_phase, "after", {"connection_count": stats.connection_count})
+                    startup_phase = "subscription_construction_send"
+                    await notify(startup_phase, "before", {"asset_count": len(assets), "timeout_seconds": subscription_timeout})
+                    subscription_deadline = time.monotonic() + subscription_timeout
+                subscription = json.dumps({"assets_ids": assets, "type": "market", "custom_feature_enabled": True, "initial_dump": True})
+                send_timeout = max(0.001, subscription_deadline - time.monotonic()) if not startup_complete else subscription_timeout
+                await asyncio.wait_for(socket.send(subscription), timeout=send_timeout)
+                if not startup_complete:
+                    await notify(startup_phase, "after", {"asset_count": len(assets), "payload_bytes": len(subscription.encode("utf-8"))})
+                    startup_phase = "first_message_receipt"
+                    await notify(startup_phase, "before", {"timeout_seconds": first_message_timeout})
+                    first_message_deadline = time.monotonic() + first_message_timeout
                 last_ping = time.monotonic(); last_message = time.monotonic()
                 while not stop.is_set():
                     now = time.monotonic()
@@ -103,9 +139,17 @@ async def consume_market_stream(assets: Iterable[str], on_message: Callable[[dic
                     if now - last_message >= stale_seconds:
                         stats.record("stale_stream", {"stale_seconds": now - last_message})
                         last_message = now
+                    receive_timeout = 1.0
+                    if not startup_complete:
+                        remaining = first_message_deadline - now
+                        if remaining <= 0:
+                            raise StreamStartupError(f"first_message_receipt timed out after {first_message_timeout:.1f}s")
+                        receive_timeout = min(receive_timeout, remaining)
                     try:
-                        raw = await asyncio.wait_for(socket.recv(), timeout=1.0)
-                    except asyncio.TimeoutError:
+                        raw = await asyncio.wait_for(socket.recv(), timeout=receive_timeout)
+                    except TimeoutError:
+                        if not startup_complete and time.monotonic() >= first_message_deadline:
+                            raise StreamStartupError(f"first_message_receipt timed out after {first_message_timeout:.1f}s")
                         continue
                     if raw in {"PONG", "pong"}: continue
                     try:
@@ -113,12 +157,26 @@ async def consume_market_stream(assets: Iterable[str], on_message: Callable[[dic
                     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                         stats.record("protocol_error", {"error": f"{type(exc).__name__}: {exc}"})
                         continue
+                    messages = [message for message in (payload if isinstance(payload, list) else [payload]) if isinstance(message, dict)]
+                    if not messages:
+                        continue
                     last_message = time.monotonic(); stats.messages += 1; stats.last_message_at_utc = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z")
-                    for message in payload if isinstance(payload, list) else [payload]:
+                    if not startup_complete:
+                        startup_complete = True
+                        await notify(startup_phase, "after", {"messages": stats.messages, "last_message_at_utc": stats.last_message_at_utc})
+                    for message in messages:
                         if isinstance(message, dict): await on_message(message, time.monotonic_ns())
-        except (ConnectionClosed, WebSocketException, OSError, asyncio.TimeoutError) as exc:
+        except StreamStartupError as exc:
+            await notify(startup_phase, "failed", {"error": f"{type(exc).__name__}: {exc}"})
+            raise
+        except (ConnectionClosed, WebSocketException, OSError, TimeoutError) as exc:
             stats.record("disconnect", {"error": f"{type(exc).__name__}: {exc}"})
+            if not startup_complete:
+                await notify(startup_phase, "failed", {"error": f"{type(exc).__name__}: {exc}"})
+                raise StreamStartupError(f"{startup_phase} failed: {type(exc).__name__}: {exc}") from exc
             if not stop.is_set(): await asyncio.sleep(2.0)
         except Exception as exc:
             stats.record("error", {"error": f"{type(exc).__name__}: {exc}"})
+            if not startup_complete:
+                await notify(startup_phase, "failed", {"error": f"{type(exc).__name__}: {exc}"})
             raise

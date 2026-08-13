@@ -76,6 +76,12 @@ CREATE TABLE IF NOT EXISTS collector_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at_utc TEXT NOT NULL,
   event_type TEXT NOT NULL, detail_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS collector_status (
+  id INTEGER PRIMARY KEY CHECK (id=1),
+  status TEXT NOT NULL CHECK (status IN ('STARTING','RUNNING','FAILED','STOPPED')),
+  phase TEXT NOT NULL, started_at_utc TEXT NOT NULL, updated_at_utc TEXT NOT NULL,
+  running_at_utc TEXT, stopped_at_utc TEXT, error TEXT
+);
 """
 
 
@@ -100,6 +106,24 @@ class CensusStore:
 
     def event(self, recorded_at_utc: str, event_type: str, detail: dict[str, Any]) -> None:
         self.conn.execute("INSERT INTO collector_events(recorded_at_utc,event_type,detail_json) VALUES(?,?,?)", (recorded_at_utc, event_type, _json(detail)))
+
+    def initialize_status(self, started_at_utc: str) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO collector_status(id,status,phase,started_at_utc,updated_at_utc,running_at_utc,stopped_at_utc,error) VALUES(1,'STARTING','initializing',?,?,NULL,NULL,NULL)",
+            (started_at_utc, started_at_utc),
+        )
+
+    def update_status(self, status: str, phase: str, updated_at_utc: str, *, error: str | None = None) -> None:
+        running_at = updated_at_utc if status == "RUNNING" else None
+        stopped_at = updated_at_utc if status in {"FAILED", "STOPPED"} else None
+        self.conn.execute(
+            """UPDATE collector_status
+               SET status=?,phase=?,updated_at_utc=?,
+                   running_at_utc=COALESCE(running_at_utc,?),
+                   stopped_at_utc=COALESCE(?,stopped_at_utc),error=?
+               WHERE id=1""",
+            (status, phase, updated_at_utc, running_at, stopped_at, error),
+        )
 
     def record_coverage(self, recorded_at_utc: str, **values: Any) -> None:
         self.conn.execute("INSERT INTO coverage(recorded_at_utc,sampling_mode,requested_events,observed_events,observed_markets,observed_tokens,exclusion_reason,metadata_json) VALUES(?,?,?,?,?,?,?,?)", (recorded_at_utc, values.get("sampling_mode", "UNKNOWN"), values.get("requested_events"), values.get("observed_events"), values.get("observed_markets"), values.get("observed_tokens"), values.get("exclusion_reason"), _json(values.get("metadata", {}))))
