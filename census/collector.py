@@ -10,7 +10,7 @@ import sqlite3
 import time
 import urllib.parse
 import urllib.request
-from contextlib import closing
+from contextlib import closing, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +33,9 @@ SUBSCRIPTION_SEND_TIMEOUT = float(os.environ.get("SWARM_CENSUS_SUBSCRIPTION_SEND
 FIRST_MESSAGE_TIMEOUT = float(os.environ.get("SWARM_CENSUS_FIRST_MESSAGE_TIMEOUT", "30"))
 INITIAL_PERSISTENCE_TIMEOUT = float(os.environ.get("SWARM_CENSUS_INITIAL_PERSISTENCE_TIMEOUT", "10"))
 RUNTIME_PERSIST_INTERVAL = float(os.environ.get("SWARM_CENSUS_RUNTIME_PERSIST_INTERVAL", "2"))
+COLLECTOR_HEARTBEAT_INTERVAL = max(
+    5.0, float(os.environ.get("SWARM_CENSUS_HEARTBEAT_INTERVAL", "30"))
+)
 
 
 class StartupPhaseError(RuntimeError):
@@ -292,6 +295,7 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
     recorder = StartupRecorder(store, log_path)
     stats = StreamStats(started_utc)
     deadline_task: asyncio.Task[None] | None = None
+    heartbeat_task: asyncio.Task[None] | None = None
     automatic_deadline_reached = False
     startup_complete = False
 
@@ -355,7 +359,19 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
             automatic_deadline_reached = True
             stop.set()
 
+        async def heartbeat() -> None:
+            while not stop.is_set():
+                try:
+                    await asyncio.wait_for(
+                        stop.wait(), timeout=COLLECTOR_HEARTBEAT_INTERVAL
+                    )
+                except TimeoutError:
+                    if startup_complete:
+                        store.update_status("RUNNING", "running", utc_now())
+                        store.commit()
+
         deadline_task = asyncio.create_task(deadline())
+        heartbeat_task = asyncio.create_task(heartbeat())
 
         def stream_health_row(*, stopped_at_utc: str | None = None) -> dict[str, Any]:
             duration = time.monotonic() - started_mono
@@ -385,6 +401,38 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
         async def on_startup_event(phase: str, state: str, detail: dict[str, Any]) -> None:
             recorder.emit(phase, state, detail)
 
+        def persist_closed(states: list[Any] | tuple[Any, ...]) -> None:
+            for state in states:
+                engine, market_id, event_id = active_labels.pop(
+                    state.key,
+                    ("maker_spread_rebate", state.tracking_key, None),
+                )
+                store.record_episode(
+                    state,
+                    engine=engine,
+                    market_id=market_id,
+                    event_id=event_id,
+                    ended_at_utc=utc_now(),
+                    metadata={
+                        "checkpoint_reasons": {
+                            str(checkpoint): reason
+                            for checkpoint, reason in state.checkpoint_reasons.items()
+                            if reason is not None
+                        }
+                    },
+                )
+
+        async def on_stream_gap(reason: str, mono: int) -> None:
+            closed = tracker.close_all(reason=reason)
+            if closed:
+                persist_closed(closed)
+                store.event(
+                    utc_now(),
+                    "durability_observation_gap",
+                    {"reason": reason, "closed_intervals": len(closed), "at_ns": mono},
+                )
+                store.commit()
+
         async def on_message(message: dict[str, Any], mono: int) -> None:
             nonlocal last_cycle_check, last_persist, latest_cycle, startup_complete
             if time.monotonic() - last_cycle_check >= 60.0:
@@ -392,27 +440,72 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
                 store.record_production_cycle(latest_cycle)
                 last_cycle_check = time.monotonic()
                 if latest_cycle["warning"]: store.event(latest_cycle["captured_at_utc"], "production_cycle_warning", latest_cycle)
+            persist_closed(tracker.expire(mono))
             changed = books.apply(message)
             for asset in changed:
                 if asset not in markets: continue
                 market, event, engine, _category, _horizon = markets[asset]; market_id = str(market.get("id") or market.get("conditionId") or market.get("slug")); tracked[engine].add(market_id)
-                quote = books.top(asset); executable = all(quote[k] is not None and quote[k] > 0 for k in ("bid", "ask", "bid_size", "ask_size")); mid = (quote["bid"] + quote["ask"]) / 2 if executable else None; movement = mid - previous_mid[asset] if mid is not None and asset in previous_mid and previous_mid[asset] is not None else None; previous_mid[asset] = mid
-                meta = _fee_metadata(market); depth = min(float(quote["bid"] * quote["bid_size"]), float(quote["ask"] * quote["ask_size"])) if executable else None; adverse = movement
+                quote = books.top(asset); book_valid = all(quote[k] is not None and quote[k] > 0 for k in ("bid", "ask", "bid_size", "ask_size")); mid = (quote["bid"] + quote["ask"]) / 2 if book_valid else None; movement = mid - previous_mid[asset] if mid is not None and asset in previous_mid and previous_mid[asset] is not None else None; previous_mid[asset] = mid
+                meta = _fee_metadata(market); depth = min(float(quote["bid"] * quote["bid_size"]), float(quote["ask"] * quote["ask_size"])) if book_valid else None; adverse = movement
+                qualifying = book_valid
+                economic_executable: bool | None = None
+                execution_validation_status = "NOT_ECONOMICALLY_VALIDATED"
+                durability_basis = "observable_two_sided_book"
+                gross_edge = (quote["ask"] - quote["bid"]) * min(float(quote["bid_size"]), float(quote["ask_size"])) if book_valid else None
+                episode_bid, episode_ask = quote["bid"], quote["ask"]
+                tracking_market_id = market_id
                 if engine == "negrisk_structural":
                     eid = str(event.get("id") or event.get("slug") or ""); basket = []
+                    basket_assets = {
+                        str(tokens[0])
+                        for child in event.get("markets", [])
+                        if (tokens := _list(child.get("clobTokenIds")))
+                    }
+                    if asset not in basket_assets:
+                        continue
                     for child in event.get("markets", []):
                         child_tokens = _list(child.get("clobTokenIds")); child_quote = books.top(str(child_tokens[0])) if child_tokens else {}; basket.append(child_quote)
-                    if basket and all(q.get("ask") is not None and q.get("ask_size", 0) > 0 for q in basket):
+                    basket_valid = bool(basket) and all(q.get("ask") is not None and q.get("ask_size", 0) > 0 for q in basket)
+                    gross_edge = None
+                    depth = None
+                    if basket_valid:
                         asks = [float(q["ask"]) for q in basket]; sizes = [float(q["ask_size"]) for q in basket]; gross = 1.0 - sum(asks); simultaneous = min(a * s for a, s in zip(asks, sizes))
                         if eid not in neg_live_seen:
                             neg_live_seen.add(eid); store.record_neg_risk(utc_now(), event_id=eid, candidate_basket=1, validated_basket=1, executable_simultaneous_depth_usd=simultaneous, gross_structural_edge_usd=gross, net_economics_status="UNKNOWN", metadata={"fee_source": meta["fee_source"], "slippage_source": "UNKNOWN"})
-                        executable = gross > 0; depth = simultaneous
+                        gross_edge = gross; depth = simultaneous
+                    economic_executable = bool(basket_valid and gross_edge is not None and gross_edge > 0)
+                    qualifying = economic_executable
+                    book_valid = basket_valid
+                    execution_validation_status = "VALIDATED_EXECUTABLE" if economic_executable else "VALIDATED_NOT_EXECUTABLE"
+                    durability_basis = "negrisk_structural_executable_basket"
+                    episode_bid, episode_ask = None, None
+                    tracking_market_id = eid
                 if engine == "unsupported": continue
-                key = _episode_key(engine, market_id); active_labels[key] = (engine, market_id, str(event.get("id") or event.get("slug") or "") or None)
-                state = tracker.observe(key, mono, utc_now(), executable=executable, bid=quote["bid"], ask=quote["ask"], depth_usd=depth, movement=movement, adverse_selection=adverse)
-                state.gross_edge_usd = (quote["ask"] - quote["bid"]) * min(float(quote["bid_size"]), float(quote["ask_size"])) if executable else state.gross_edge_usd; state.fee_source, state.fee_rate = meta["fee_source"], meta["fee_rate"]; state.maker_rebate_rate, state.maker_rebate_economics = meta["maker_rebate_rate"], meta["maker_rebate_economics"]; state.slippage_source = "UNKNOWN"; state.rejection_reason = "fill_probability_not_measured" if engine == "maker_spread_rebate" else "directional_fill_model_not_implemented"
-            for state in tracker.expire(mono):
-                engine, market_id, event_id = active_labels.pop(state.key, ("maker_spread_rebate", state.key, None)); store.record_episode(state, engine=engine, market_id=market_id, event_id=event_id, ended_at_utc=utc_now(), metadata={})
+                tracking_key = _episode_key(engine, tracking_market_id)
+                transition = tracker.observe(
+                    tracking_key,
+                    mono,
+                    utc_now(),
+                    qualifying=qualifying,
+                    book_valid=book_valid,
+                    economic_executable=economic_executable,
+                    execution_validation_status=execution_validation_status,
+                    durability_basis=durability_basis,
+                    bid=episode_bid,
+                    ask=episode_ask,
+                    depth_usd=depth,
+                    gross_edge_usd=gross_edge,
+                    movement=movement,
+                    adverse_selection=adverse,
+                )
+                persist_closed(transition.closed)
+                state = transition.active
+                if state is not None:
+                    active_labels[state.key] = (engine, tracking_market_id, str(event.get("id") or event.get("slug") or "") or None)
+                    state.fee_source, state.fee_rate = meta["fee_source"], meta["fee_rate"]
+                    state.maker_rebate_rate, state.maker_rebate_economics = meta["maker_rebate_rate"], meta["maker_rebate_economics"]
+                    state.slippage_source = "UNKNOWN"
+                    state.rejection_reason = "fill_probability_not_measured" if engine == "maker_spread_rebate" else "directional_fill_model_not_implemented"
 
             if not startup_complete:
                 recorder.emit("initial_coverage_engine_persistence", "before", {"timeout_seconds": INITIAL_PERSISTENCE_TIMEOUT})
@@ -436,14 +529,11 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
                 persist_runtime()
                 last_persist = time.monotonic()
 
-        await consume_market_stream(bootstrap.stream_assets, on_message, stop=stop, stats=stats, startup_event=on_startup_event, connect_timeout=WEBSOCKET_CONNECT_TIMEOUT, subscription_timeout=SUBSCRIPTION_SEND_TIMEOUT, first_message_timeout=FIRST_MESSAGE_TIMEOUT)
+        await consume_market_stream(bootstrap.stream_assets, on_message, stop=stop, stats=stats, startup_event=on_startup_event, on_stream_gap=on_stream_gap, connect_timeout=WEBSOCKET_CONNECT_TIMEOUT, subscription_timeout=SUBSCRIPTION_SEND_TIMEOUT, first_message_timeout=FIRST_MESSAGE_TIMEOUT)
         if not startup_complete:
             raise StartupPhaseError("market stream ended before RUNNING criteria were satisfied")
 
-        for key in list(tracker.active):
-            closed = tracker.disappear(key, time.monotonic_ns(), reason=None, continuous=True)
-            if closed:
-                engine, market_id, event_id = active_labels.get(key, ("maker_spread_rebate", key, None)); store.record_episode(closed, engine=engine, market_id=market_id, event_id=event_id, ended_at_utc=utc_now(), metadata={})
+        persist_closed(tracker.close_all(reason="collector_stopped"))
         latest_cycle = await asyncio.to_thread(authoritative_production_cycle, production_db)
         store.record_production_cycle(latest_cycle)
         if latest_cycle["warning"]: store.event(latest_cycle["captured_at_utc"], "production_cycle_warning", latest_cycle)
@@ -466,8 +556,11 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
             _append_log(log_path, "collector_failure_persistence_error", {"error": f"{type(persistence_exc).__name__}: {persistence_exc}", "original_error": f"{type(exc).__name__}: {exc}"})
         raise
     finally:
-        if deadline_task is not None:
-            deadline_task.cancel()
+        for task in (deadline_task, heartbeat_task):
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
         store.close()
 
 

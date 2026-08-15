@@ -39,7 +39,7 @@ def main() -> int:
         if not pid.exists():
             if state:
                 error = f" error={state['error']}" if state.get("error") else ""
-                print(f"{state['status']} phase={state['phase']} db={db}{error}")
+                print(f"{state['status']} phase={state['phase']} updated_at_utc={state['updated_at_utc']} db={db}{error}")
                 return 2 if state["status"] == "FAILED" else 1
             print("STOPPED"); return 1
         try:
@@ -51,7 +51,7 @@ def main() -> int:
         if not state:
             print(f"STARTING phase=initializing pid={value} db={db}"); return 0
         error = f" error={state['error']}" if state.get("error") else ""
-        print(f"{state['status']} phase={state['phase']} pid={value} db={db}{error}")
+        print(f"{state['status']} phase={state['phase']} updated_at_utc={state['updated_at_utc']} pid={value} db={db}{error}")
         return 2 if state["status"] == "FAILED" else 0
     if args.command == "stop":
         if pid.exists():

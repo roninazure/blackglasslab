@@ -87,6 +87,7 @@ async def consume_market_stream(
     stop: asyncio.Event,
     stats: StreamStats,
     startup_event: Callable[[str, str, dict[str, Any]], Awaitable[None]] | None = None,
+    on_stream_gap: Callable[[str, int], Awaitable[None]] | None = None,
     connect_timeout: float = 20.0,
     subscription_timeout: float = 10.0,
     first_message_timeout: float = 30.0,
@@ -138,6 +139,8 @@ async def consume_market_stream(
                         await socket.send("PING"); last_ping = now
                     if now - last_message >= stale_seconds:
                         stats.record("stale_stream", {"stale_seconds": now - last_message})
+                        if on_stream_gap is not None:
+                            await on_stream_gap("stream_silence", time.monotonic_ns())
                         last_message = now
                     receive_timeout = 1.0
                     if not startup_complete:
@@ -174,6 +177,8 @@ async def consume_market_stream(
             if not startup_complete:
                 await notify(startup_phase, "failed", {"error": f"{type(exc).__name__}: {exc}"})
                 raise StreamStartupError(f"{startup_phase} failed: {type(exc).__name__}: {exc}") from exc
+            if on_stream_gap is not None:
+                await on_stream_gap("stream_disconnect", time.monotonic_ns())
             if not stop.is_set(): await asyncio.sleep(2.0)
         except Exception as exc:
             stats.record("error", {"error": f"{type(exc).__name__}: {exc}"})

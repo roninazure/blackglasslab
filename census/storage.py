@@ -14,13 +14,15 @@ CREATE TABLE IF NOT EXISTS opportunity_episodes (
   alpha_engine TEXT NOT NULL, market_id TEXT NOT NULL, event_id TEXT,
   started_at_utc TEXT NOT NULL, ended_at_utc TEXT NOT NULL,
   start_monotonic_ns INTEGER NOT NULL, end_monotonic_ns INTEGER NOT NULL,
-  lifetime_seconds REAL NOT NULL,
+  lifetime_seconds REAL NOT NULL, observed_executable_seconds REAL,
   best_bid REAL, best_ask REAL, best_spread REAL,
   worst_spread REAL, best_executable_depth_usd REAL, worst_executable_depth_usd REAL,
   gross_edge_usd REAL, fee_source TEXT NOT NULL, fee_rate REAL,
   maker_rebate_rate REAL, maker_rebate_economics TEXT NOT NULL,
   net_executable_edge_usd REAL, slippage_source TEXT NOT NULL,
-  executable INTEGER NOT NULL, theoretical INTEGER NOT NULL,
+  executable INTEGER NOT NULL, theoretical INTEGER NOT NULL, book_valid INTEGER,
+  execution_validation_status TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
+  durability_basis TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
   survives_1s INTEGER, survives_5s INTEGER, survives_30s INTEGER, survives_60s INTEGER,
   durability_unknown_reason TEXT, quote_count INTEGER NOT NULL,
   quote_movement_json TEXT NOT NULL, adverse_selection_proxy_json TEXT NOT NULL,
@@ -102,7 +104,28 @@ class CensusStore:
         self.conn = sqlite3.connect(self.path, timeout=30)
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
+        self._migrate_episode_semantics()
         self.conn.commit()
+
+    def _migrate_episode_semantics(self) -> None:
+        """Add explicit semantics without rewriting legacy census evidence."""
+        columns = {
+            str(row[1])
+            for row in self.conn.execute("PRAGMA table_info(opportunity_episodes)")
+        }
+        additions = {
+            "observed_executable_seconds": "REAL",
+            "book_valid": "INTEGER",
+            "execution_validation_status": (
+                "TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN'"
+            ),
+            "durability_basis": "TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN'",
+        }
+        for name, declaration in additions.items():
+            if name not in columns:
+                self.conn.execute(
+                    f"ALTER TABLE opportunity_episodes ADD COLUMN {name} {declaration}"
+                )
 
     def event(self, recorded_at_utc: str, event_type: str, detail: dict[str, Any]) -> None:
         self.conn.execute("INSERT INTO collector_events(recorded_at_utc,event_type,detail_json) VALUES(?,?,?)", (recorded_at_utc, event_type, _json(detail)))
@@ -129,11 +152,20 @@ class CensusStore:
         self.conn.execute("INSERT INTO coverage(recorded_at_utc,sampling_mode,requested_events,observed_events,observed_markets,observed_tokens,exclusion_reason,metadata_json) VALUES(?,?,?,?,?,?,?,?)", (recorded_at_utc, values.get("sampling_mode", "UNKNOWN"), values.get("requested_events"), values.get("observed_events"), values.get("observed_markets"), values.get("observed_tokens"), values.get("exclusion_reason"), _json(values.get("metadata", {}))))
 
     def record_episode(self, state: Any, *, engine: str, market_id: str, event_id: str | None, ended_at_utc: str, metadata: dict[str, Any]) -> None:
+        if engine != "negrisk_structural" and state.economic_executable is not None:
+            raise ValueError(
+                "economic executability must remain UNKNOWN for unvalidated engines"
+            )
+        validated_executable = int(
+            engine == "negrisk_structural"
+            and state.economic_executable is True
+            and state.execution_validation_status == "VALIDATED_EXECUTABLE"
+        )
         self.conn.execute(
             """INSERT OR REPLACE INTO opportunity_episodes
-            (opportunity_key,alpha_engine,market_id,event_id,started_at_utc,ended_at_utc,start_monotonic_ns,end_monotonic_ns,lifetime_seconds,best_bid,best_ask,best_spread,worst_spread,best_executable_depth_usd,worst_executable_depth_usd,gross_edge_usd,fee_source,fee_rate,maker_rebate_rate,maker_rebate_economics,net_executable_edge_usd,slippage_source,executable,theoretical,survives_1s,survives_5s,survives_30s,survives_60s,durability_unknown_reason,quote_count,quote_movement_json,adverse_selection_proxy_json,rejection_reason,metadata_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (state.key, engine, market_id, event_id, state.started_at_utc, ended_at_utc, state.started_ns, state.end_ns, state.lifetime_seconds, state.best_bid, state.best_ask, state.best_spread, state.worst_spread, state.best_depth_usd, state.worst_depth_usd, state.gross_edge_usd, state.fee_source, state.fee_rate, state.maker_rebate_rate, state.maker_rebate_economics, state.net_edge_usd, state.slippage_source, int(state.executable and engine == "negrisk_structural"), 1, state.checkpoints[1.0], state.checkpoints[5.0], state.checkpoints[30.0], state.checkpoints[60.0], state.unknown_reason, state.quote_count, _json(state.quote_movements), _json(state.adverse_selection), state.rejection_reason, _json(metadata)),
+            (opportunity_key,alpha_engine,market_id,event_id,started_at_utc,ended_at_utc,start_monotonic_ns,end_monotonic_ns,lifetime_seconds,observed_executable_seconds,best_bid,best_ask,best_spread,worst_spread,best_executable_depth_usd,worst_executable_depth_usd,gross_edge_usd,fee_source,fee_rate,maker_rebate_rate,maker_rebate_economics,net_executable_edge_usd,slippage_source,executable,theoretical,book_valid,execution_validation_status,durability_basis,survives_1s,survives_5s,survives_30s,survives_60s,durability_unknown_reason,quote_count,quote_movement_json,adverse_selection_proxy_json,rejection_reason,metadata_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (state.key, engine, market_id, event_id, state.started_at_utc, ended_at_utc, state.started_ns, state.end_ns, state.lifetime_seconds, state.observed_executable_seconds, state.best_bid, state.best_ask, state.best_spread, state.worst_spread, state.best_depth_usd, state.worst_depth_usd, state.gross_edge_usd, state.fee_source, state.fee_rate, state.maker_rebate_rate, state.maker_rebate_economics, state.net_edge_usd, state.slippage_source, validated_executable, int(state.book_valid), int(state.book_valid), state.execution_validation_status, state.durability_basis, state.checkpoints[1.0], state.checkpoints[5.0], state.checkpoints[30.0], state.checkpoints[60.0], state.unknown_reason, state.quote_count, _json(state.quote_movements), _json(state.adverse_selection), state.rejection_reason, _json(metadata)),
         )
 
     def record_engine_coverage(self, rows: list[dict[str, Any]]) -> None:
