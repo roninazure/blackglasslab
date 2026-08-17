@@ -23,6 +23,32 @@ class SportsEvent:
     moneylines: tuple[BookMoneyline, ...]
 
 
+@dataclass(frozen=True)
+class OddsQuota:
+    limit: int | None
+    used: int | None
+    remaining: int | None
+    reset_epoch: int | None
+
+
+@dataclass(frozen=True)
+class OddsResponse:
+    events: tuple[SportsEvent, ...]
+    quota: OddsQuota
+
+
+def _header_int(headers, name: str) -> int | None:
+    value = headers.get(name)
+
+    if value is None:
+        return None
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_utc(value: str) -> datetime:
     return datetime.fromisoformat(
         value.replace("Z", "+00:00")
@@ -34,13 +60,13 @@ def _quote_age_seconds(updated_at: str, now: datetime) -> float:
     return max(0.0, (now - updated).total_seconds())
 
 
-def fetch_odds(
+def fetch_odds_with_quota(
     *,
     api_key: str,
     sport_key: str,
     timeout: float = 20.0,
     now: datetime | None = None,
-) -> list[SportsEvent]:
+) -> OddsResponse:
     if not api_key:
         raise ValueError("api_key is required")
 
@@ -59,6 +85,13 @@ def fetch_odds(
 
     with urllib.request.urlopen(req, timeout=timeout) as r:
         payload = json.load(r)
+
+        quota = OddsQuota(
+            limit=_header_int(r.headers, "x-ratelimit-limit"),
+            used=_header_int(r.headers, "x-ratelimit-used"),
+            remaining=_header_int(r.headers, "x-ratelimit-remaining"),
+            reset_epoch=_header_int(r.headers, "x-ratelimit-reset"),
+        )
 
     if payload.get("success") is not True:
         raise RuntimeError(
@@ -129,4 +162,25 @@ def fetch_odds(
             )
         )
 
-    return events
+    return OddsResponse(
+        events=tuple(events),
+        quota=quota,
+    )
+
+
+def fetch_odds(
+    *,
+    api_key: str,
+    sport_key: str,
+    timeout: float = 20.0,
+    now: datetime | None = None,
+) -> list[SportsEvent]:
+    """Backward-compatible event-only API."""
+    return list(
+        fetch_odds_with_quota(
+            api_key=api_key,
+            sport_key=sport_key,
+            timeout=timeout,
+            now=now,
+        ).events
+    )
