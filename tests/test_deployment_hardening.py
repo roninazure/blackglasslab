@@ -231,3 +231,13 @@ class DeploymentHardeningTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_manifest_git_sha_falls_back_to_immutable_release_name(tmp_path):
+    from scripts.deployment_manifest import git_sha
+
+    sha = "a" * 40
+    release = tmp_path / sha
+    release.mkdir()
+
+    assert git_sha(release) == sha

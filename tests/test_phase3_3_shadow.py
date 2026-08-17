@@ -296,9 +296,14 @@ class Phase33ShadowTests(unittest.TestCase):
                 "BGL_SHADOW_LEDGER_ENABLED": "1",
                 "BGL_SHADOW_THRESHOLD_BUCKETS": "0.02,0.03,0.04,0.05",
             }
+            runtime_paths = SimpleNamespace(
+                backup_dir=root / "backups",
+            )
+
             with (
                 mock.patch.object(live_runner, "WATCHLIST_PATH", watchlist),
                 mock.patch.object(live_runner, "SIGNALS_DIR", root / "signals"),
+                mock.patch.object(live_runner, "RUNTIME_PATHS", runtime_paths),
                 mock.patch.object(
                     live_runner, "get_adapter", return_value=FakeAdapter()
                 ),
