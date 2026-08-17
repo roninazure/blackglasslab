@@ -18,6 +18,7 @@ def market(
     return PolymarketMoneyline(
         event_id=event_id,
         market_id=market_id,
+        condition_id="condition-1",
         slug=slug,
         event_date="2026-08-17",
         team_a=team_a,

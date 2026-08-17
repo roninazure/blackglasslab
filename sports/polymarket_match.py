@@ -16,6 +16,7 @@ GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 class PolymarketMoneyline:
     event_id: str
     market_id: str
+    condition_id: str
     slug: str
     event_date: str
     team_a: str
@@ -126,6 +127,7 @@ def fetch_polymarket_mlb_moneylines(
             PolymarketMoneyline(
                 event_id=str(event.get("id") or ""),
                 market_id=str(market.get("id") or ""),
+                condition_id=str(market.get("conditionId") or ""),
                 slug=slug,
                 event_date=event_date,
                 team_a=str(outcomes[0]),
