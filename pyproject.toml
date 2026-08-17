@@ -18,7 +18,7 @@ dependencies = [
 
 [tool.setuptools]
 py-modules = ["swarm_edge_io", "swarm_edge_runtime"]
-packages = ["maker_spread_economics", "negrisk_economics", "sports"]
+packages = ["maker_spread_economics", "negrisk_economics", "sports", "crypto_markets"]
 
 [dependency-groups]
 dev = [
