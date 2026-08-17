@@ -411,4 +411,194 @@ class AlphaCensusTests(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM collector_events WHERE event_type='collector_failed'").fetchone()[0], 1)
 
 
+
+class GammaPaginationTests(unittest.TestCase):
+
+    def test_gamma_bootstrap_paginates_to_requested_target(self) -> None:
+        from census.collector import _gamma_bootstrap
+
+        class Client:
+            def __init__(self):
+                self.urls = []
+
+            def get(self, url):
+                import urllib.parse
+
+                self.urls.append(url)
+                query = urllib.parse.parse_qs(
+                    urllib.parse.urlparse(url).query
+                )
+                offset = int(query["offset"][0])
+                limit = int(query["limit"][0])
+
+                return [
+                    {
+                        "id": str(offset + i),
+                        "markets": [],
+                    }
+                    for i in range(limit)
+                ]
+
+        client = Client()
+
+        rows = _gamma_bootstrap(
+            client,
+            requested_events=250,
+        )
+
+        self.assertEqual(len(rows), 250)
+        self.assertEqual(len(client.urls), 3)
+
+        import urllib.parse
+
+        offsets = [
+            int(
+                urllib.parse.parse_qs(
+                    urllib.parse.urlparse(url).query
+                )["offset"][0]
+            )
+            for url in client.urls
+        ]
+
+        self.assertEqual(offsets, [0, 100, 200])
+
+
+    def test_gamma_bootstrap_deduplicates_events(self) -> None:
+        from census.collector import _gamma_bootstrap
+
+        class Client:
+            def __init__(self):
+                self.calls = 0
+
+            def get(self, _url):
+                self.calls += 1
+
+                if self.calls == 1:
+                    return [
+                        {"id": "1", "markets": []},
+                        {"id": "2", "markets": []},
+                    ]
+
+                return [
+                    {"id": "2", "markets": []},
+                    {"id": "3", "markets": []},
+                ]
+
+        with patch(
+            "census.collector.GAMMA_BOOTSTRAP_PAGE_SIZE",
+            2,
+        ):
+            rows = _gamma_bootstrap(
+                Client(),
+                requested_events=3,
+            )
+
+        self.assertEqual(
+            [row["id"] for row in rows],
+            ["1", "2", "3"],
+        )
+
+
+    def test_gamma_bootstrap_rejects_malformed_page(self) -> None:
+        from census.collector import _gamma_bootstrap
+
+        class Client:
+            def get(self, _url):
+                return {"unexpected": "object"}
+
+        with self.assertRaisesRegex(
+            TypeError,
+            "Gamma response was not a list",
+        ):
+            _gamma_bootstrap(
+                Client(),
+                requested_events=100,
+            )
+
+
+    def test_gamma_bootstrap_stops_on_short_page(self) -> None:
+        from census.collector import _gamma_bootstrap
+
+        class Client:
+            def __init__(self):
+                self.calls = 0
+
+            def get(self, _url):
+                self.calls += 1
+                return [
+                    {"id": "1", "markets": []},
+                    {"id": "2", "markets": []},
+                ]
+
+        client = Client()
+
+        with patch(
+            "census.collector.GAMMA_BOOTSTRAP_PAGE_SIZE",
+            100,
+        ):
+            rows = _gamma_bootstrap(
+                client,
+                requested_events=1000,
+            )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(client.calls, 1)
+
+
+    def test_larger_discovery_does_not_raise_stream_asset_cap(self) -> None:
+        from census.collector import _classify_bootstrap
+
+        payload = []
+
+        for event_index in range(20):
+            markets = []
+
+            for market_index in range(10):
+                token_base = (
+                    event_index * 1000
+                    + market_index * 2
+                )
+
+                markets.append(
+                    {
+                        "id": (
+                            f"market-{event_index}-"
+                            f"{market_index}"
+                        ),
+                        "question": "NBA winner",
+                        "clobTokenIds": [
+                            f"token-{token_base}",
+                            f"token-{token_base + 1}",
+                        ],
+                    }
+                )
+
+            payload.append(
+                {
+                    "id": f"event-{event_index}",
+                    "title": "NBA game",
+                    "markets": markets,
+                }
+            )
+
+        with patch(
+            "census.collector.MAX_STREAM_ASSETS",
+            17,
+        ):
+            result = _classify_bootstrap(
+                payload,
+                control_positions=0,
+                timeout_seconds=5,
+            )
+
+        self.assertLessEqual(
+            len(result.stream_assets),
+            17,
+        )
+        self.assertEqual(
+            len(result.stream_assets),
+            17,
+        )
+
+
 if __name__ == "__main__": unittest.main()

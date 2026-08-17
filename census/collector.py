@@ -27,6 +27,8 @@ ENGINE_NAMES = ("revenue_directional_control", "sports_event_driven", "short_dur
 MAX_STREAM_ASSETS = int(os.environ.get("SWARM_CENSUS_MAX_STREAM_ASSETS", "1000"))
 PRODUCTION_CONTROL_TIMEOUT = float(os.environ.get("SWARM_CENSUS_PRODUCTION_CONTROL_TIMEOUT", "15"))
 GAMMA_BOOTSTRAP_TIMEOUT = float(os.environ.get("SWARM_CENSUS_GAMMA_BOOTSTRAP_TIMEOUT", "30"))
+GAMMA_BOOTSTRAP_PAGE_SIZE = int(os.environ.get("SWARM_CENSUS_GAMMA_PAGE_SIZE", "100"))
+GAMMA_BOOTSTRAP_MAX_EVENTS = int(os.environ.get("SWARM_CENSUS_GAMMA_MAX_EVENTS", "1000"))
 CLASSIFICATION_TIMEOUT = float(os.environ.get("SWARM_CENSUS_CLASSIFICATION_TIMEOUT", "20"))
 WEBSOCKET_CONNECT_TIMEOUT = float(os.environ.get("SWARM_CENSUS_WEBSOCKET_CONNECT_TIMEOUT", "20"))
 SUBSCRIPTION_SEND_TIMEOUT = float(os.environ.get("SWARM_CENSUS_SUBSCRIPTION_SEND_TIMEOUT", "10"))
@@ -92,6 +94,59 @@ class PublicGetClient:
         req = urllib.request.Request(url, method="GET", headers={"User-Agent": "swarm-edge-alpha-census/2.0", "Accept": "application/json"})
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=20) as response:
             return json.loads(response.read())
+
+
+def _gamma_bootstrap(client: PublicGetClient, *, requested_events: int) -> list[dict[str, Any]]:
+    """Fetch a bounded, deduplicated active Gamma event universe."""
+    target = min(
+        max(int(requested_events), 1),
+        max(GAMMA_BOOTSTRAP_MAX_EVENTS, 1),
+    )
+    page_size = min(max(GAMMA_BOOTSTRAP_PAGE_SIZE, 1), 100)
+    events: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    offset = 0
+
+    while len(events) < target:
+        fetch_limit = min(page_size, target - len(events))
+        params = urllib.parse.urlencode(
+            {
+                "limit": fetch_limit,
+                "offset": offset,
+                "active": "true",
+                "closed": "false",
+                "order": "liquidity",
+                "ascending": "false",
+            }
+        )
+        payload = client.get(
+            f"https://gamma-api.polymarket.com/events?{params}"
+        )
+        if not isinstance(payload, list):
+            raise TypeError("Gamma response was not a list")
+
+        if not payload:
+            break
+
+        for event in payload:
+            if not isinstance(event, dict):
+                continue
+            key = str(event.get("id") or event.get("slug") or "")
+            if not key:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            events.append(event)
+            if len(events) >= target:
+                break
+
+        offset += fetch_limit
+
+        if len(payload) < fetch_limit:
+            break
+
+    return events
 
 
 def _list(value: Any) -> list[Any]:
@@ -352,16 +407,32 @@ async def run_stream(*, db: Path, pid: Path, limit: int, duration_hours: float |
         recorder.emit("production_control_capture", "after", {"position_count": control["position_count"], "cycle_id": initial_cycle.get("cycle_id")})
 
         client = PublicGetClient()
-        params = urllib.parse.urlencode({"limit": min(max(limit, 1), 1000), "offset": 0, "active": "true", "closed": "false", "order": "liquidity", "ascending": "false"})
-        gamma_url = f"https://gamma-api.polymarket.com/events?{params}"
-        recorder.emit("gamma_bootstrap", "before", {"timeout_seconds": GAMMA_BOOTSTRAP_TIMEOUT, "requested_events": limit})
+        recorder.emit(
+            "gamma_bootstrap",
+            "before",
+            {
+                "timeout_seconds": GAMMA_BOOTSTRAP_TIMEOUT,
+                "requested_events": limit,
+                "page_size": GAMMA_BOOTSTRAP_PAGE_SIZE,
+                "max_events": GAMMA_BOOTSTRAP_MAX_EVENTS,
+            },
+        )
         try:
-            payload = await asyncio.wait_for(asyncio.to_thread(client.get, gamma_url), timeout=GAMMA_BOOTSTRAP_TIMEOUT)
-            if not isinstance(payload, list):
-                raise TypeError("Gamma response was not a list")
+            payload = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _gamma_bootstrap,
+                    client,
+                    requested_events=limit,
+                ),
+                timeout=GAMMA_BOOTSTRAP_TIMEOUT,
+            )
         except Exception as exc:
             raise fail_phase("gamma_bootstrap", exc) from exc
-        recorder.emit("gamma_bootstrap", "after", {"observed_events": len(payload)})
+        recorder.emit(
+            "gamma_bootstrap",
+            "after",
+            {"observed_events": len(payload)},
+        )
 
         recorder.emit("market_token_classification", "before", {"timeout_seconds": CLASSIFICATION_TIMEOUT})
         try:

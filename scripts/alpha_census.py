@@ -32,7 +32,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("start", "status", "stop"):
         p = sub.add_parser(name); p.add_argument("--db"); p.add_argument("--pid")
-        if name == "start": p.add_argument("--interval", type=float, default=60.0, help="bootstrap/recovery interval only"); p.add_argument("--limit", type=int, default=100); p.add_argument("--duration-hours", type=float); p.add_argument("--foreground", action="store_true")
+        if name == "start": p.add_argument("--interval", type=float, default=60.0, help="bootstrap/recovery interval only"); p.add_argument("--limit", type=int, default=1000); p.add_argument("--duration-hours", type=float); p.add_argument("--foreground", action="store_true")
     args = parser.parse_args(); db, pid = _paths(args)
     if args.command == "status":
         state = read_collector_status(db)
