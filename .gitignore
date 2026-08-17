@@ -67,3 +67,4 @@ bgl.db
 .DS_Store
 reports/sports_scan_latest.json
 reports/sports_quota_state.json
+reports/sports_watch_state.json
