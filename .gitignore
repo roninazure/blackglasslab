@@ -65,3 +65,4 @@ markets/_pm_search/
 bgl.db
 *.db
 .DS_Store
+reports/sports_scan_latest.json
