@@ -118,6 +118,31 @@ def negrisk_event_valid(event: dict[str, Any]) -> bool:
     return len(ids) == len(markets) and len(set(ids)) == len(ids) and all(len(_list(m.get("clobTokenIds"))) >= 2 for m in markets if isinstance(m, dict))
 
 
+ESPORTS_CODES = {
+    "cs2", "csgo", "lol", "dota2", "valorant", "rl", "ow",
+}
+
+SPORTS_CODES = {
+    # Tier 1
+    "nfl", "cfb", "nba", "ncaab", "mlb", "nhl",
+    # Tier 2 / permanent research coverage
+    "wnba", "mls", "epl", "ucl", "ufc", "f1",
+    "atp", "wta", "pga",
+}
+
+
+def _sport_code(event: dict[str, Any]) -> str | None:
+    """Return authoritative Polymarket sport code when present."""
+    sport = event.get("sport")
+    if isinstance(sport, dict):
+        value = sport.get("sport")
+        if value:
+            return str(value).strip().lower()
+    if isinstance(sport, str) and sport.strip():
+        return sport.strip().lower()
+    return None
+
+
 def _classify(market: dict[str, Any], event: dict[str, Any], *, valid_neg_risk: bool | None = None) -> tuple[str, str, float | None, str | None]:
     text = " ".join(str(market.get(k, "")) + " " + str(event.get(k, "")) for k in ("question", "slug", "title", "tags", "sport", "league")).lower()
     end = market.get("endDate") or event.get("endDate") or event.get("gameStartTime")
@@ -128,7 +153,16 @@ def _classify(market: dict[str, Any], event: dict[str, Any], *, valid_neg_risk: 
     if event.get("negRisk"):
         valid = negrisk_event_valid(event) if valid_neg_risk is None else valid_neg_risk
         return ("negrisk_structural", "neg_risk", horizon, None) if valid else ("unsupported", "unsupported", horizon, "invalid_neg_risk_event_basket")
-    if any(x in text for x in ("nba", "nfl", "mlb", "nhl", "soccer", "tennis", "golf", "sports")): return "sports_event_driven", "sports", horizon, None
+    sport_code = _sport_code(event)
+    if sport_code in ESPORTS_CODES:
+        return "sports_event_driven", "esports", horizon, None
+    if sport_code in SPORTS_CODES:
+        return "sports_event_driven", sport_code, horizon, None
+    if sport_code:
+        # Venue-authoritative sport metadata wins over keyword inference.
+        return "sports_event_driven", sport_code, horizon, None
+    if any(x in text for x in ("nba", "nfl", "mlb", "nhl", "soccer", "tennis", "golf", "sports")):
+        return "sports_event_driven", "sports", horizon, None
     if any(x in text for x in ("bitcoin", "btc", "ethereum", "eth", "solana", "crypto")) and horizon is not None and horizon <= 7 * 86400: return "short_duration_crypto", "crypto", horizon, None
     return "maker_spread_rebate", "other", horizon, None
 
