@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 from sports.clob import fetch_top_of_book
 from sports.evaluator import evaluate_two_way_moneyline
 from sports.fair_value import consensus_two_way_moneyline
-from sports.odds_provider import fetch_odds
+from sports.odds_provider import fetch_odds_with_quota
 from sports.polymarket_match import (
     fetch_polymarket_mlb_moneylines,
     match_moneyline,
@@ -28,6 +28,75 @@ DEFAULT_STAKE_USD = 10.0
 DEFAULT_MIN_EDGE = 0.02
 DEFAULT_MIN_BOOKS = 4
 DEFAULT_MAX_QUOTE_AGE = 300.0
+DEFAULT_QUOTA_RESERVE = 5
+DEFAULT_QUOTA_STATE = "reports/sports_quota_state.json"
+
+
+def load_quota_state(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    return data if isinstance(data, dict) else None
+
+
+def quota_allows_request(
+    state: dict | None,
+    *,
+    now: datetime,
+    reserve: int = DEFAULT_QUOTA_RESERVE,
+) -> bool:
+    if not state:
+        return True
+
+    remaining = state.get("remaining")
+    reset_epoch = state.get("reset_epoch")
+
+    if remaining is None:
+        return True
+
+    try:
+        remaining = int(remaining)
+    except (TypeError, ValueError):
+        return True
+
+    if remaining > reserve:
+        return True
+
+    if reset_epoch is None:
+        return False
+
+    try:
+        reset_at = datetime.fromtimestamp(
+            int(reset_epoch),
+            tz=timezone.utc,
+        )
+    except (TypeError, ValueError, OSError):
+        return False
+
+    return now >= reset_at
+
+
+def persist_quota_state(path: Path, response, now: datetime) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "captured_at_utc": now.isoformat(),
+        "limit": response.quota.limit,
+        "used": response.quota.used,
+        "remaining": response.quota.remaining,
+        "reset_epoch": response.quota.reset_epoch,
+    }
+
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    )
+
+
 
 SPORT_KEYS = {
     "mlb": "baseball_mlb",
@@ -108,11 +177,31 @@ def main() -> int:
 
     now = datetime.now(timezone.utc)
 
-    sportsbook_events = fetch_odds(
+    quota_state_path = Path(DEFAULT_QUOTA_STATE)
+    quota_state = load_quota_state(quota_state_path)
+
+    if not quota_allows_request(
+        quota_state,
+        now=now,
+        reserve=DEFAULT_QUOTA_RESERVE,
+    ):
+        raise SystemExit(
+            "SPORTS_SCAN_BLOCKED: API quota reserve reached"
+        )
+
+    odds_response = fetch_odds_with_quota(
         api_key=api_key,
         sport_key=SPORT_KEYS[args.sport],
         now=now,
     )
+
+    persist_quota_state(
+        quota_state_path,
+        odds_response,
+        now,
+    )
+
+    sportsbook_events = list(odds_response.events)
 
     if args.sport != "mlb":
         raise SystemExit(
