@@ -19,3 +19,8 @@ dependencies = [
 [tool.setuptools]
 py-modules = ["swarm_edge_io", "swarm_edge_runtime"]
 packages = ["maker_spread_economics", "negrisk_economics"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8,<9",
+]
