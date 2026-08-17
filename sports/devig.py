@@ -21,3 +21,16 @@ def devig_two_way(
         raise ValueError("invalid implied probability total")
 
     return pa / total, pb / total
+
+
+def american_to_decimal(american_odds: float) -> float:
+    """Convert American odds to decimal odds."""
+    odds = float(american_odds)
+
+    if odds == 0:
+        raise ValueError("American odds cannot be zero")
+
+    if odds > 0:
+        return 1.0 + (odds / 100.0)
+
+    return 1.0 + (100.0 / abs(odds))
