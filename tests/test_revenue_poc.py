@@ -299,3 +299,113 @@ class RevenuePOCTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class RevenuePOCExecutionGateTests(unittest.TestCase):
+    def test_fresh_execution_quote_is_persisted_and_admitted(self) -> None:
+        conn = _database()
+        _forecast(conn, 1001, market="fresh-clob", model=0.60, market_p=0.50)
+
+        def provider(**kwargs):
+            return {
+                "best_bid": 0.49,
+                "best_ask": 0.51,
+                "depth_usd": 100.0,
+                "depth_source": "venue_clob_top_level",
+                "fee_rate": 0.0,
+                "fee_source": "venue_market_fee_flag",
+                "quote_source": "polymarket_clob",
+                "quote_timestamp_utc": "2026-08-18T16:00:00+00:00",
+                "quote_age_seconds": 0.2,
+                "validated_side": "YES",
+            }
+
+        result = RevenuePOCService(
+            conn, RevenueConfig()
+        ).ingest_shadow_forecasts(execution_quote_provider=provider)
+
+        self.assertEqual(result["admitted"], 1)
+
+        row = conn.execute(
+            """
+            SELECT executable_bid,executable_ask,depth_usd,depth_source,metadata
+            FROM revenue_poc_evaluations
+            """
+        ).fetchone()
+
+        self.assertEqual(row[0], 0.49)
+        self.assertEqual(row[1], 0.51)
+        self.assertEqual(row[2], 100.0)
+        self.assertEqual(row[3], "venue_clob_top_level")
+        self.assertEqual(
+            json.loads(row[4])["execution_validation"]["status"],
+            "FRESH_CLOB_VALIDATED",
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT COUNT(*) FROM revenue_poc_positions"
+            ).fetchone()[0],
+            1,
+        )
+        conn.close()
+
+    def test_execution_provider_failure_fails_closed(self) -> None:
+        conn = _database()
+        _forecast(conn, 1002, market="provider-failure")
+
+        def provider(**kwargs):
+            raise RuntimeError("fixture venue unavailable")
+
+        result = RevenuePOCService(
+            conn, RevenueConfig()
+        ).ingest_shadow_forecasts(execution_quote_provider=provider)
+
+        self.assertEqual(result["admitted"], 0)
+        self.assertEqual(result["rejected"], 1)
+        self.assertEqual(
+            conn.execute(
+                "SELECT COUNT(*) FROM revenue_poc_positions"
+            ).fetchone()[0],
+            0,
+        )
+
+        reason = conn.execute(
+            """
+            SELECT reason
+            FROM revenue_poc_decisions
+            ORDER BY id DESC LIMIT 1
+            """
+        ).fetchone()[0]
+
+        self.assertTrue(reason.startswith("execution_validation_failed:"))
+        conn.close()
+
+    def test_fresh_repricing_that_removes_edge_cannot_admit(self) -> None:
+        conn = _database()
+        _forecast(conn, 1003, market="edge-gone", model=0.60, market_p=0.50)
+
+        def provider(**kwargs):
+            return {
+                "best_bid": 0.595,
+                "best_ask": 0.605,
+                "depth_usd": 100.0,
+                "depth_source": "venue_clob_top_level",
+                "fee_rate": 0.0,
+                "fee_source": "venue_market_fee_flag",
+                "quote_source": "polymarket_clob",
+                "quote_timestamp_utc": "2026-08-18T16:00:00+00:00",
+                "quote_age_seconds": 0.2,
+                "validated_side": "NO",
+            }
+
+        result = RevenuePOCService(
+            conn, RevenueConfig()
+        ).ingest_shadow_forecasts(execution_quote_provider=provider)
+
+        self.assertEqual(result["admitted"], 0)
+        self.assertEqual(
+            conn.execute(
+                "SELECT COUNT(*) FROM revenue_poc_positions"
+            ).fetchone()[0],
+            0,
+        )
+        conn.close()

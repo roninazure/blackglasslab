@@ -85,6 +85,66 @@ def quote_from_market_and_book(
     }
 
 
+def validate_executable_quote(
+    quote: dict[str, Any],
+    *,
+    side: str,
+    position_size_usd: float,
+    max_quote_age_seconds: float,
+    now: datetime | None = None,
+) -> dict[str, float]:
+    """Fail closed unless a fresh CLOB quote can support the paper entry."""
+    side = str(side).strip().upper()
+    if side not in {"YES", "NO"}:
+        raise ValueError("execution side must be YES or NO")
+
+    try:
+        bid = float(quote["best_bid"])
+        ask = float(quote["best_ask"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("executable quote requires numeric best bid and ask") from exc
+
+    if not 0 < bid <= ask < 1:
+        raise ValueError("invalid executable top of book")
+
+    timestamp = str(quote.get("quote_timestamp_utc") or "").strip()
+    if not timestamp:
+        raise ValueError("executable quote timestamp is required")
+
+    try:
+        quote_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("invalid executable quote timestamp") from exc
+
+    if quote_time.tzinfo is None:
+        quote_time = quote_time.replace(tzinfo=timezone.utc)
+    quote_time = quote_time.astimezone(timezone.utc)
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    age_seconds = (current - quote_time).total_seconds()
+
+    if age_seconds < 0 or age_seconds > float(max_quote_age_seconds):
+        raise ValueError("executable quote is stale or future-dated")
+
+    depth_key = "ask_depth_usd" if side == "YES" else "bid_depth_usd"
+
+    try:
+        depth_usd = float(quote[depth_key])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("executable-side depth is required") from exc
+
+    if depth_usd < float(position_size_usd):
+        raise ValueError("insufficient executable-side depth")
+
+    entry_price = ask if side == "YES" else 1.0 - bid
+
+    return {
+        "entry_price": entry_price,
+        "depth_usd": depth_usd,
+        "quote_age_seconds": age_seconds,
+    }
+
+
 def resolved_outcome(market: dict[str, Any]) -> str | None:
     if not bool(market.get("closed")):
         return None

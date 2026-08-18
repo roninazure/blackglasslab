@@ -153,7 +153,11 @@ class RevenuePOCService:
         remaining = self.remaining_api_budget(date_utc)
         return remaining is not None and max(0.0, estimated_call_cost_usd) <= remaining
 
-    def ingest_shadow_forecasts(self) -> dict[str, int]:
+    def ingest_shadow_forecasts(
+        self,
+        *,
+        execution_quote_provider: Any = None,
+    ) -> dict[str, int]:
         """Convert immutable shadow observations into executable paper decisions."""
         self.initialize()
         rows = self.conn.execute(
@@ -211,6 +215,105 @@ class RevenuePOCService:
                 slippage_bps=self.config.slippage_bps,
                 expected_holding_days=float(row[12]) if row[12] is not None else None,
             )
+            execution_validation_failure: str | None = None
+
+            if execution_quote_provider is not None:
+                try:
+                    quote = execution_quote_provider(
+                        market_id=str(row[4]),
+                        category=str(row[6]),
+                        model_probability=float(row[8]),
+                        expected_holding_days=(
+                            float(row[12]) if row[12] is not None else None
+                        ),
+                        position_size_usd=self.config.position_size_usd,
+                    )
+
+                    if not isinstance(quote, dict):
+                        raise ValueError(
+                            "execution quote provider returned no usable quote"
+                        )
+
+                    bid = float(quote["best_bid"])
+                    ask = float(quote["best_ask"])
+                    depth = float(quote["depth_usd"])
+
+                    fresh_market_probability = (bid + ask) / 2.0
+
+                    economics = evaluate_execution(
+                        model_probability=float(row[8]),
+                        market_probability=fresh_market_probability,
+                        stake_usd=self.config.position_size_usd,
+                        best_bid=bid,
+                        best_ask=ask,
+                        depth_usd=depth,
+                        fee_rate=_float_or_none(quote.get("fee_rate")),
+                        fee_bps=self.config.fee_bps,
+                        slippage_bps=self.config.slippage_bps,
+                        expected_holding_days=(
+                            float(row[12]) if row[12] is not None else None
+                        ),
+                    )
+
+                    validated_side = str(
+                        quote.get("validated_side") or ""
+                    ).upper()
+
+                    if validated_side and validated_side != economics.side:
+                        raise ValueError(
+                            "validated execution side does not match fresh economics"
+                        )
+
+                    spread = economics.spread
+                    depth_source = str(
+                        quote.get("depth_source")
+                        or "venue_clob_top_level"
+                    )
+
+                    sources = {
+                        "bid": bid,
+                        "ask": ask,
+                        "quote_timestamp_utc": str(
+                            quote.get("quote_timestamp_utc") or ""
+                        ),
+                        "quote_timestamp_source": "venue",
+                        "bid_source": "venue_top_of_book",
+                        "ask_source": "venue_top_of_book",
+                        "fee_source": str(
+                            quote.get("fee_source") or "unknown"
+                        ),
+                        "fee_rate": _float_or_none(
+                            quote.get("fee_rate")
+                        ),
+                        "fallback_fee_bps": self.config.fee_bps,
+                    }
+
+                    metadata["execution_validation"] = {
+                        "status": "FRESH_CLOB_VALIDATED",
+                        "quote_source": quote.get("quote_source"),
+                        "quote_timestamp_utc": quote.get(
+                            "quote_timestamp_utc"
+                        ),
+                        "quote_age_seconds": quote.get(
+                            "quote_age_seconds"
+                        ),
+                        "depth_source": depth_source,
+                        "depth_usd": depth,
+                        "side": economics.side,
+                        "entry_price": economics.entry_price,
+                        "executable_edge": economics.executable_edge,
+                        "expected_value_usd": economics.expected_value_usd,
+                    }
+
+                except Exception as exc:
+                    execution_validation_failure = (
+                        f"{type(exc).__name__}:{exc}"
+                    )
+                    metadata["execution_validation"] = {
+                        "status": "FAILED",
+                        "error": execution_validation_failure,
+                    }
+
             state = {
                 "venue": row[3], "market_id": row[4],
                 "model_probability": round(float(row[8]), 8),
@@ -288,6 +391,21 @@ class RevenuePOCService:
                 counts["cache_hits"] += 1
                 with self.conn:
                     self._api_increment(date_utc, cache_hits=1, calls_avoided=int(row[14]))
+                continue
+
+            if execution_validation_failure is not None:
+                self._decision(
+                    evaluation_id,
+                    row[2],
+                    "REJECT",
+                    f"execution_validation_failed:{execution_validation_failure}",
+                    economics.expected_value_usd,
+                    details={
+                        "execution_validation_status": "FAILED",
+                        "execution_validation_error": execution_validation_failure,
+                    },
+                )
+                counts["rejected"] += 1
                 continue
 
             end_date = _datetime(row[13])

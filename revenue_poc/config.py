@@ -31,6 +31,7 @@ class RevenueConfig:
     estimated_api_cost_per_call_usd: float = 0.0
     fee_bps: float = 0.0
     slippage_bps: float = 10.0
+    max_quote_age_seconds: float = 5.0
 
     @classmethod
     def from_env(cls) -> "RevenueConfig":
@@ -47,6 +48,9 @@ class RevenueConfig:
             ),
             fee_bps=_number("BGL_REVENUE_FEE_BPS", 0.0),
             slippage_bps=_number("BGL_REVENUE_SLIPPAGE_BPS", 10.0),
+            max_quote_age_seconds=_number(
+                "BGL_REVENUE_MAX_QUOTE_AGE_SECONDS", 5.0
+            ),
         )
         config.validate()
         return config
@@ -67,6 +71,8 @@ class RevenueConfig:
             self.slippage_bps,
         ) < 0:
             raise ValueError("cost controls cannot be negative")
+        if self.max_quote_age_seconds <= 0:
+            raise ValueError("maximum quote age must be positive")
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

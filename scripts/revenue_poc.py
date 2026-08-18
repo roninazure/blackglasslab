@@ -22,7 +22,12 @@ from revenue_poc.reporting import (
 from revenue_poc.repository import apply_schema, downgrade_schema
 from revenue_poc.service import RevenuePOCService
 from revenue_poc.velocity import velocity_coverage_report, velocity_shadow_report
-from revenue_poc.venue import quote_from_market_and_book, resolved_outcome, yes_token_id
+from revenue_poc.venue import (
+    quote_from_market_and_book,
+    resolved_outcome,
+    validate_executable_quote,
+    yes_token_id,
+)
 from swarm_edge_runtime import RUNTIME_PATHS
 
 
@@ -84,8 +89,74 @@ def main() -> int:
         if args.migrate:
             apply_schema(conn)
         if args.ingest_shadow:
-            result = RevenuePOCService(conn, RevenueConfig.from_env()).ingest_shadow_forecasts()
-            print(json.dumps({"ingest": result}, sort_keys=True))
+            from adapters.polymarket_adapter import PolymarketAdapter
+
+            config = RevenueConfig.from_env()
+            adapter = PolymarketAdapter()
+
+            def execution_quote_provider(
+                *,
+                market_id: str,
+                category: str,
+                model_probability: float,
+                expected_holding_days: float | None,
+                position_size_usd: float,
+            ) -> dict[str, object]:
+                market = adapter.get_market(market_id)
+
+                if bool(market.get("closed")):
+                    raise ValueError("market is closed")
+
+                book = adapter.get_order_book(
+                    yes_token_id(market)
+                )
+
+                quote = quote_from_market_and_book(
+                    market,
+                    book,
+                    category=category,
+                )
+
+                bid = float(quote["best_bid"])
+                ask = float(quote["best_ask"])
+                market_probability = (bid + ask) / 2.0
+                side = (
+                    "YES"
+                    if float(model_probability) >= market_probability
+                    else "NO"
+                )
+
+                validated = validate_executable_quote(
+                    quote,
+                    side=side,
+                    position_size_usd=position_size_usd,
+                    max_quote_age_seconds=config.max_quote_age_seconds,
+                )
+
+                result = dict(quote)
+                result["depth_usd"] = validated["depth_usd"]
+                result["quote_age_seconds"] = validated[
+                    "quote_age_seconds"
+                ]
+                result["validated_side"] = side
+                result["execution_validation_status"] = (
+                    "FRESH_CLOB_VALIDATED"
+                )
+                return result
+
+            result = RevenuePOCService(
+                conn,
+                config,
+            ).ingest_shadow_forecasts(
+                execution_quote_provider=execution_quote_provider
+            )
+
+            print(
+                json.dumps(
+                    {"ingest": result},
+                    sort_keys=True,
+                )
+            )
         service = RevenuePOCService(conn, RevenueConfig.from_env())
         if args.lifecycle_fixture:
             payload = json.loads(args.lifecycle_fixture.read_text(encoding="utf-8"))
