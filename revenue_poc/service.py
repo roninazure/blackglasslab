@@ -157,18 +157,35 @@ class RevenuePOCService:
         self,
         *,
         execution_quote_provider: Any = None,
+        source_run_id: str | None = None,
     ) -> dict[str, int]:
         """Convert immutable shadow observations into executable paper decisions."""
         self.initialize()
-        rows = self.conn.execute(
-            """
-            SELECT id,run_id,timestamp_utc,venue,market_id,question,category,
-                   market_probability,model_probability,absolute_edge,
-                   production_decision,rejection_reason,time_to_resolution_days,
-                   market_end_date,llm_used,metadata
-            FROM shadow_forecasts ORDER BY timestamp_utc,id
-            """
-        ).fetchall()
+
+        if source_run_id is None:
+            rows = self.conn.execute(
+                """
+                SELECT id,run_id,timestamp_utc,venue,market_id,question,category,
+                       market_probability,model_probability,absolute_edge,
+                       production_decision,rejection_reason,time_to_resolution_days,
+                       market_end_date,llm_used,metadata
+                FROM shadow_forecasts
+                ORDER BY timestamp_utc,id
+                """
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT id,run_id,timestamp_utc,venue,market_id,question,category,
+                       market_probability,model_probability,absolute_edge,
+                       production_decision,rejection_reason,time_to_resolution_days,
+                       market_end_date,llm_used,metadata
+                FROM shadow_forecasts
+                WHERE run_id=?
+                ORDER BY timestamp_utc,id
+                """,
+                (source_run_id,),
+            ).fetchall()
         counts = {"source": len(rows), "evaluated": 0, "cache_hits": 0, "admitted": 0, "rejected": 0}
         candidates: list[tuple[float, int, Any, str]] = []
         for row in rows:

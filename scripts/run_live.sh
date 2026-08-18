@@ -61,6 +61,7 @@ while true; do
   echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) : infer loop == (cycle $((COUNT + 1)))"
 
   # --- INFER ---
+  INFER_SUCCEEDED=0
   if BGL_REQUIRE_APPROVAL="${BGL_REQUIRE_APPROVAL:-1}" \
   BGL_INFER_USE_LLM="${BGL_INFER_USE_LLM:-1}" \
   BGL_ACTIVE_UNIVERSE_SIZE="${BGL_ACTIVE_UNIVERSE_SIZE:-75}" \
@@ -82,6 +83,7 @@ while true; do
   BGL_MAX_DISAGREEMENT="${BGL_MAX_DISAGREEMENT:-0.45}" \
   BGL_MAX_DISAGREE="${BGL_MAX_DISAGREE:-0.45}" \
   "$PYTHON_BIN" live_runner.py --mode infer --source polymarket --paper --loops 1; then
+    INFER_SUCCEEDED=1
     CONSECUTIVE_FAILURES=0
   else
     CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
@@ -94,10 +96,12 @@ while true; do
 
   # --- INDEPENDENT REVENUE POC PAPER LANE ---
   # Existing deployments remain unchanged unless explicitly enabled.
-  if [[ "${BGL_REVENUE_POC_ENABLED:-0}" == "1" ]]; then
+  if [[ "${BGL_REVENUE_POC_ENABLED:-0}" == "1" && "$INFER_SUCCEEDED" == "1" ]]; then
     "$PYTHON_BIN" scripts/revenue_poc.py --db "${BGL_DB_PATH:-memory/runs.sqlite}" \
       --ingest-shadow --refresh-marks --resolve-shadow --dashboard --analysis \
       || echo "== [WARN] Revenue POC paper lane exited non-zero =="
+  elif [[ "${BGL_REVENUE_POC_ENABLED:-0}" == "1" ]]; then
+    echo "== [WARN] Revenue POC skipped because current inference cycle failed =="
   fi
 
   COUNT=$((COUNT + 1))

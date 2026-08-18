@@ -409,3 +409,51 @@ class RevenuePOCExecutionGateTests(unittest.TestCase):
             0,
         )
         conn.close()
+
+def test_ingest_source_run_id_excludes_older_runs():
+    conn = _database()
+
+    _forecast(
+        conn,
+        2001,
+        market="old-run",
+        model=0.60,
+        market_p=0.50,
+        timestamp="2026-08-18T10:00:00+00:00",
+    )
+    _forecast(
+        conn,
+        2002,
+        market="new-run",
+        model=0.60,
+        market_p=0.50,
+        timestamp="2026-08-18T11:00:00+00:00",
+    )
+
+    conn.execute(
+        "UPDATE shadow_forecasts SET run_id='infer-old' WHERE id=2001"
+    )
+    conn.execute(
+        "UPDATE shadow_forecasts SET run_id='infer-new' WHERE id=2002"
+    )
+    conn.commit()
+
+    result = RevenuePOCService(
+        conn,
+        RevenueConfig(),
+    ).ingest_shadow_forecasts(
+        source_run_id="infer-new"
+    )
+
+    assert result["source"] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM revenue_poc_evaluations"
+    ).fetchone()[0] == 1
+
+    market_id = conn.execute(
+        "SELECT market_id FROM revenue_poc_evaluations"
+    ).fetchone()[0]
+
+    assert market_id == "new-run"
+
+    conn.close()

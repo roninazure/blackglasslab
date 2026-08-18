@@ -144,12 +144,31 @@ def main() -> int:
                 )
                 return result
 
+            latest_run = conn.execute(
+                """
+                SELECT run_id
+                FROM shadow_forecasts
+                ORDER BY timestamp_utc DESC, id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+            if latest_run is None or not str(latest_run[0]).strip():
+                raise RuntimeError(
+                    "no shadow forecast run available for revenue ingestion"
+                )
+
+            source_run_id = str(latest_run[0])
+
             result = RevenuePOCService(
                 conn,
                 config,
             ).ingest_shadow_forecasts(
-                execution_quote_provider=execution_quote_provider
+                execution_quote_provider=execution_quote_provider,
+                source_run_id=source_run_id,
             )
+
+            result["source_run_id"] = source_run_id
 
             print(
                 json.dumps(
