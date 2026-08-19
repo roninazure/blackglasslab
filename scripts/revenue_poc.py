@@ -110,11 +110,15 @@ def main() -> int:
                 book = adapter.get_order_book(
                     yes_token_id(market)
                 )
+                observed_at_utc = datetime.now(
+                    timezone.utc
+                ).isoformat()
 
                 quote = quote_from_market_and_book(
                     market,
                     book,
                     category=category,
+                    observed_at_utc=observed_at_utc,
                 )
 
                 bid = float(quote["best_bid"])
@@ -137,6 +141,9 @@ def main() -> int:
                 result["depth_usd"] = validated["depth_usd"]
                 result["quote_age_seconds"] = validated[
                     "quote_age_seconds"
+                ]
+                result["book_state_age_seconds"] = validated[
+                    "book_state_age_seconds"
                 ]
                 result["validated_side"] = side
                 result["execution_validation_status"] = (

@@ -12,7 +12,12 @@ from revenue_poc.economics import adaptive_threshold, evaluate_execution
 from revenue_poc.reporting import portfolio_dashboard
 from revenue_poc.repository import apply_schema, downgrade_schema
 from revenue_poc.service import RevenuePOCService
-from revenue_poc.venue import quote_from_market_and_book, resolved_outcome, yes_token_id
+from revenue_poc.venue import (
+    quote_from_market_and_book,
+    resolved_outcome,
+    validate_executable_quote,
+    yes_token_id,
+)
 
 
 def _database() -> sqlite3.Connection:
@@ -51,6 +56,49 @@ def _forecast(conn: sqlite3.Connection, forecast_id: int, *, market: str, catego
 
 
 class RevenuePOCTests(unittest.TestCase):
+    def test_live_observation_accepts_old_unchanged_book_state(self) -> None:
+        now = datetime(2026, 8, 19, 12, 30, 0, tzinfo=timezone.utc)
+        quote = {
+            "best_bid": 0.40,
+            "best_ask": 0.42,
+            "bid_depth_usd": 100.0,
+            "ask_depth_usd": 100.0,
+            "quote_timestamp_utc": "2026-08-19T12:28:00+00:00",
+            "observed_at_utc": "2026-08-19T12:29:59+00:00",
+        }
+
+        result = validate_executable_quote(
+            quote,
+            side="YES",
+            position_size_usd=25.0,
+            max_quote_age_seconds=5.0,
+            now=now,
+        )
+
+        self.assertEqual(result["entry_price"], 0.42)
+        self.assertEqual(result["quote_age_seconds"], 1.0)
+        self.assertEqual(result["book_state_age_seconds"], 120.0)
+
+    def test_stale_local_observation_still_fails_closed(self) -> None:
+        now = datetime(2026, 8, 19, 12, 30, 0, tzinfo=timezone.utc)
+        quote = {
+            "best_bid": 0.40,
+            "best_ask": 0.42,
+            "bid_depth_usd": 100.0,
+            "ask_depth_usd": 100.0,
+            "quote_timestamp_utc": "2026-08-19T12:29:59+00:00",
+            "observed_at_utc": "2026-08-19T12:29:50+00:00",
+        }
+
+        with self.assertRaisesRegex(ValueError, "observation is stale"):
+            validate_executable_quote(
+                quote,
+                side="YES",
+                position_size_usd=25.0,
+                max_quote_age_seconds=5.0,
+                now=now,
+            )
+
     def test_executable_economics_uses_ask_not_midpoint(self) -> None:
         economics = evaluate_execution(
             model_probability=0.55, market_probability=0.50, best_bid=0.49,

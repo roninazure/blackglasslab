@@ -314,6 +314,9 @@ class RevenuePOCService:
                         "quote_age_seconds": quote.get(
                             "quote_age_seconds"
                         ),
+                        "book_state_age_seconds": quote.get(
+                            "book_state_age_seconds"
+                        ),
                         "depth_source": depth_source,
                         "depth_usd": depth,
                         "side": economics.side,

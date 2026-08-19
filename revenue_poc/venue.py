@@ -54,6 +54,7 @@ def quote_from_market_and_book(
     book: dict[str, Any],
     *,
     category: str,
+    observed_at_utc: str | None = None,
 ) -> dict[str, Any]:
     bid, bid_size = _top(book.get("bids"), best="bid")
     ask, ask_size = _top(book.get("asks"), best="ask")
@@ -77,6 +78,10 @@ def quote_from_market_and_book(
         "fee_rate": fee_rate,
         "fee_source": fee_source,
         "quote_timestamp_utc": _timestamp(book.get("timestamp")),
+        "observed_at_utc": (
+            observed_at_utc
+            or datetime.now(timezone.utc).isoformat()
+        ),
         "quote_source": "polymarket_clob",
         "assumptions": {
             "fee_rate_assumed": fee_source.endswith("assumption"),
@@ -111,20 +116,40 @@ def validate_executable_quote(
     if not timestamp:
         raise ValueError("executable quote timestamp is required")
 
+    observed_timestamp = str(
+        quote.get("observed_at_utc")
+        or timestamp
+    ).strip()
+
     try:
         quote_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError("invalid executable quote timestamp") from exc
 
+    try:
+        observed_time = datetime.fromisoformat(
+            observed_timestamp.replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError("invalid executable observation timestamp") from exc
+
     if quote_time.tzinfo is None:
         quote_time = quote_time.replace(tzinfo=timezone.utc)
     quote_time = quote_time.astimezone(timezone.utc)
 
+    if observed_time.tzinfo is None:
+        observed_time = observed_time.replace(tzinfo=timezone.utc)
+    observed_time = observed_time.astimezone(timezone.utc)
+
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    age_seconds = (current - quote_time).total_seconds()
+
+    age_seconds = (current - observed_time).total_seconds()
+    book_state_age_seconds = (current - quote_time).total_seconds()
 
     if age_seconds < 0 or age_seconds > float(max_quote_age_seconds):
-        raise ValueError("executable quote is stale or future-dated")
+        raise ValueError(
+            "executable quote observation is stale or future-dated"
+        )
 
     depth_key = "ask_depth_usd" if side == "YES" else "bid_depth_usd"
 
@@ -142,6 +167,7 @@ def validate_executable_quote(
         "entry_price": entry_price,
         "depth_usd": depth_usd,
         "quote_age_seconds": age_seconds,
+        "book_state_age_seconds": book_state_age_seconds,
     }
 
 
