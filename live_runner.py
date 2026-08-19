@@ -173,36 +173,7 @@ def _new_pipeline_report(watchlist: List[str], venue: str) -> Dict[str, Any]:
         "source": venue,
         "summary": summary,
         "markets": [
-            {
-                "market_id": slug,
-                "final_stage": "watchlist_loaded",
-                "decision": "SKIP",
-                "reason": "unclassified",
-                "details": {},
-                "brain": {
-                    "market_id": slug,
-                    "question": slug,
-                    "category": "novelty/other",
-                    "opportunity_score": None,
-                    "opportunity_grade": None,
-                    "p_yes_market": None,
-                    "p_yes_model": None,
-                    "edge": None,
-                    "llm_used": False,
-                    "skeptic_used": False,
-                    "temporal_status": "not_evaluated",
-                    "budget_status": "not_applicable",
-                    "scoring_components": {},
-                    "short_rationale_summary": None,
-                    "policy_allowed": None,
-                    "policy_reason": "not_evaluated",
-                    "policy_classification": "UNKNOWN_REQUIRES_REVIEW",
-                    "policy_tier": "NOT_EVALUATED",
-                    "institutional_category": "novelty/other",
-                    "institutional_quality_score": None,
-                    "banned_class": None,
-                },
-            }
+            _pipeline_market_record(slug)
             for slug in watchlist
         ],
     }
@@ -649,6 +620,92 @@ def _infer_pick_slugs_batch(conn: sqlite3.Connection, watchlist: list[str], batc
     return (slugs, next_cursor)
 
 
+def _merge_inference_slugs(
+    fixed_slugs: list[str],
+    dynamic_slugs: list[str],
+    batch: int,
+) -> list[str]:
+    """Build a deterministic bounded inference pool.
+
+    Ranked dynamic discovery receives priority while retaining one fixed
+    watchlist slot for coverage when both sources are available.
+    """
+    limit = max(1, int(batch))
+
+    fixed = list(dict.fromkeys(
+        str(slug).strip() for slug in fixed_slugs if str(slug).strip()
+    ))
+    dynamic = list(dict.fromkeys(
+        str(slug).strip() for slug in dynamic_slugs if str(slug).strip()
+    ))
+
+    if not dynamic:
+        return fixed[:limit]
+    if not fixed:
+        return dynamic[:limit]
+
+    result: list[str] = []
+
+    # Preserve one fixed-watchlist coverage slot while allowing discovery
+    # to consume the rest of the existing bounded inference capacity.
+    dynamic_limit = max(0, limit - 1)
+
+    for slug in dynamic[:dynamic_limit]:
+        if slug not in result:
+            result.append(slug)
+
+    for slug in fixed:
+        if len(result) >= limit:
+            break
+        if slug not in result:
+            result.append(slug)
+            break
+
+    # Fill any unused slots deterministically, dynamic first.
+    for pool in (dynamic, fixed):
+        for slug in pool:
+            if len(result) >= limit:
+                break
+            if slug not in result:
+                result.append(slug)
+
+    return result[:limit]
+
+
+def _pipeline_market_record(slug: str) -> Dict[str, Any]:
+    """Create the canonical pipeline record for any inference candidate."""
+    return {
+        "market_id": slug,
+        "final_stage": "watchlist_loaded",
+        "decision": "SKIP",
+        "reason": "unclassified",
+        "details": {},
+        "brain": {
+            "market_id": slug,
+            "question": slug,
+            "category": "novelty/other",
+            "opportunity_score": None,
+            "opportunity_grade": None,
+            "p_yes_market": None,
+            "p_yes_model": None,
+            "edge": None,
+            "llm_used": False,
+            "skeptic_used": False,
+            "temporal_status": "not_evaluated",
+            "budget_status": "not_applicable",
+            "scoring_components": {},
+            "short_rationale_summary": None,
+            "policy_allowed": None,
+            "policy_reason": "not_evaluated",
+            "policy_classification": "UNKNOWN_REQUIRES_REVIEW",
+            "policy_tier": "NOT_EVALUATED",
+            "institutional_category": "novelty/other",
+            "institutional_quality_score": None,
+            "banned_class": None,
+        },
+    }
+
+
 def _topic_label(question: str) -> str:
     """Classify market question for ranking, prompts, and concentration tracking."""
     return classify_market(question)
@@ -979,6 +1036,29 @@ def _infer_one(
                 "error": str(discovery_error)[:300],
             }
 
+    dynamic_slugs = [
+        str(row.get("market_id") or "").strip()
+        for row in discovery_result.get("selected", [])
+        if isinstance(row, dict)
+        and str(row.get("market_id") or "").strip()
+    ]
+
+    slugs = _merge_inference_slugs(
+        slugs,
+        dynamic_slugs,
+        batch,
+    )
+
+    # Dynamically discovered markets did not exist when the fixed-watchlist
+    # pipeline report was constructed. Add canonical records only for those
+    # that actually entered the bounded inference batch.
+    for slug in slugs:
+        if slug not in records:
+            record = _pipeline_market_record(slug)
+            record["details"]["candidate_source"] = "dynamic_discovery"
+            report["markets"].append(record)
+            records[slug] = record
+
     selected = set(slugs)
     for slug in watchlist:
         record = records[slug]
@@ -1015,6 +1095,28 @@ def _infer_one(
     for slug in slugs:
         record = records[slug]
         if slug in existing:
+            # Fixed-watchlist duplicates were finalized above. Dynamic-only
+            # candidates must receive the same existing-position treatment.
+            if slug not in watchlist:
+                summary["blocked_existing_position"] += 1
+                _update_brain(
+                    record,
+                    opportunity_score=0.0,
+                    opportunity_grade="F",
+                    budget_status="not_eligible",
+                    scoring_components={
+                        "raw": {
+                            "duplicate_position": True,
+                            "existing_exposure": True,
+                        }
+                    },
+                )
+                _finalize_pipeline_market(
+                    record,
+                    final_stage="existing_position_filter",
+                    decision="SKIP",
+                    reason="existing_open_or_pending_position",
+                )
             continue
         if cooldown_n > 0 and slug in recent:
             _update_brain(
