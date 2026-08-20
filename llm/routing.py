@@ -18,11 +18,25 @@ def route_model(
     opportunity_score: float,
     materially_changed: bool = False,
     skeptic: bool = False,
+    edge_abs: float | None = None,
     config: LoopEngineConfig | None = None,
 ) -> ModelRoute:
     config = config or LoopEngineConfig.from_env()
     if skeptic:
-        return ModelRoute(config.skeptic_model, "skeptic", config.skeptic_cost_usd)
+        if (
+            edge_abs is not None
+            and float(edge_abs) >= config.skeptic_finalist_edge_threshold
+        ):
+            return ModelRoute(
+                config.finalist_model,
+                "skeptic_finalist",
+                config.finalist_cost_usd,
+            )
+        return ModelRoute(
+            config.skeptic_model,
+            "skeptic",
+            config.skeptic_cost_usd,
+        )
     # Stronger reasoning is reserved for high-quality finalists or markets whose
     # state changed materially since the last evaluation.
     if opportunity_score >= 85.0 or (materially_changed and opportunity_score >= 75.0):

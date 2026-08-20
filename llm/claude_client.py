@@ -100,9 +100,31 @@ def _model_name(requested: str | None = None) -> str:
 
 
 def _parse_json_response(raw: str) -> dict[str, Any]:
-    cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", raw.strip())
-    cleaned = cleaned.rstrip("` \n")
-    parsed = json.loads(cleaned)
+    """Parse a JSON object from an LLM response without changing semantics."""
+    cleaned = re.sub(r"^```[a-zA-Z]*\\s*", "", raw.strip())
+    cleaned = cleaned.rstrip("` \\n").strip()
+
+    # Prefer the exact response. If the model wrapped the object in prose,
+    # extract only the outer JSON object. Do not attempt semantic repair.
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as first_error:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError(
+                f"Claude response contained no JSON object: {first_error}"
+            ) from first_error
+
+        candidate = cleaned[start:end + 1]
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as second_error:
+            raise ValueError(
+                "Claude returned malformed JSON: "
+                f"{second_error}; raw={raw[:1200]!r}"
+            ) from second_error
+
     if not isinstance(parsed, dict):
         raise ValueError("Claude response must be a JSON object")
     return parsed
@@ -219,7 +241,14 @@ def review_forecast(
     system_prompt = (
         "You are a skeptical prediction-market risk reviewer. Test temporal validity, "
         "stale facts, malformed or novelty-driven wording, and whether apparent edge is "
-        "supported rather than explanation-driven. Return JSON only."
+        "supported rather than explanation-driven. "
+        "The supplied Temporal context is authoritative. Never infer that an event has "
+        "already occurred when current_utc is earlier than the supplied future event or "
+        "market resolution date. Before making any temporal REJECT, explicitly compare "
+        "current_utc with the supplied dates and ensure the chronology is mathematically "
+        "possible. Historical dates may be used as evidence and are not themselves stale. "
+        "If the supplied temporal context is internally consistent, do not invent a "
+        "contradiction. Return JSON only."
     )
     user_prompt = "\n".join(
         [
@@ -230,6 +259,9 @@ def review_forecast(
             f"Forecast confidence: {confidence:.3f}",
             f"Forecast rationale: {rationale or 'none'}",
             format_temporal_context_block(temporal_context),
+            "Temporal review rule: current_utc is the evaluation time. If current_utc is "
+            "before market_end_date/resolution_date, do not claim the event is already past "
+            "unless another VERIFIED supplied fact explicitly establishes an earlier event date.",
             "Choose ALLOW, DOWNGRADE, or REJECT. DOWNGRADE means shrink the forecast halfway toward the market.",
             'Return: {"action":"ALLOW|DOWNGRADE|REJECT","reason":"short code","rationale":"short","temporal_valid":true,"stale_facts":false,"malformed_or_novelty":false,"edge_real":true}',
         ]

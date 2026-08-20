@@ -672,6 +672,64 @@ def _merge_inference_slugs(
     return result[:limit]
 
 
+def _llm_allocation_priority(
+    *,
+    opportunity_score: float,
+    baseline_probability: float,
+    market_probability: float,
+    liquidity: float,
+    spread: float,
+    time_to_resolution_days: float | None,
+) -> dict[str, float]:
+    """Rank scarce LLM forecast slots using pre-LLM revenue signals only."""
+
+    quality = min(1.0, max(0.0, float(opportunity_score) / 100.0))
+
+    baseline_edge_abs = abs(
+        float(baseline_probability) - float(market_probability)
+    )
+
+    # Baseline disagreement is useful for screening but is not ground truth.
+    # Keep a floor so near-zero baseline edge does not make priority zero.
+    edge_signal = 0.25 + 0.75 * min(
+        1.0,
+        baseline_edge_abs / 0.04,
+    )
+
+    liquidity_signal = min(
+        1.0,
+        max(0.0, float(liquidity)) / 250000.0,
+    )
+
+    spread_value = max(0.0, float(spread))
+    spread_signal = 1.0 / (1.0 + 50.0 * spread_value)
+
+    days = (
+        max(0.0, float(time_to_resolution_days))
+        if time_to_resolution_days is not None
+        else 90.0
+    )
+    velocity_signal = 1.0 / (1.0 + days / 30.0)
+
+    priority = (
+        0.40 * quality
+        + 0.30 * edge_signal
+        + 0.15 * liquidity_signal
+        + 0.10 * spread_signal
+        + 0.05 * velocity_signal
+    )
+
+    return {
+        "priority": min(1.0, max(0.0, priority)),
+        "opportunity_quality": quality,
+        "baseline_edge_abs": baseline_edge_abs,
+        "edge_signal": edge_signal,
+        "liquidity_signal": liquidity_signal,
+        "spread_signal": spread_signal,
+        "velocity_signal": velocity_signal,
+    }
+
+
 def _pipeline_market_record(slug: str) -> Dict[str, Any]:
     """Create the canonical pipeline record for any inference candidate."""
     return {
@@ -848,7 +906,7 @@ def _infer_one(
                 ),
                 "llm_used": llm_used,
                 "model_name": (
-                    os.environ.get("BGL_LLM_MODEL", "")
+                    str(item.get("llm_model") or os.environ.get("BGL_LLM_MODEL", ""))
                     if llm_used
                     else "baseline"
                 ),
@@ -868,6 +926,17 @@ def _infer_one(
                     "temporal_context": item["temporal_context"],
                     "scoring_components": opportunity.scoring_components,
                     "anthropic_usage": item.get("anthropic_usage_events") or None,
+                    "llm_rationale": item.get("llm_rationale"),
+                    "llm_confidence": item.get("llm_confidence"),
+                    "llm_model": item.get("llm_model"),
+                    "llm_routing_tier": item.get("llm_routing_tier"),
+                    "llm_allocation": item.get("llm_allocation"),
+                    "temporal_validation_reason": item.get(
+                        "temporal_validation_reason"
+                    ),
+                    "temporal_validation_details": item.get(
+                        "temporal_validation_details"
+                    ),
                 },
             },
             thresholds=config.threshold_buckets,
@@ -1463,9 +1532,28 @@ def _infer_one(
             }
         )
 
+    for item in ranked:
+        market = item["market"]
+        temporal_context = item["temporal_context"]
+        allocation = _llm_allocation_priority(
+            opportunity_score=item["opportunity"].opportunity_score,
+            baseline_probability=item["baseline"].p_yes_model,
+            market_probability=item["p_yes_market"],
+            liquidity=float(market.get("liquidity") or 0.0),
+            spread=item["spread"],
+            time_to_resolution_days=temporal_context.get(
+                "time_to_resolution_days"
+            ),
+        )
+        item["llm_allocation"] = allocation
+        item["record"]["details"]["llm_allocation"] = allocation
+
     ranked.sort(
-        key=lambda item: item["opportunity"].opportunity_score,
-        reverse=True,
+        key=lambda item: (
+            -float(item["llm_allocation"]["priority"]),
+            -float(item["opportunity"].opportunity_score),
+            str(item["slug"]),
+        ),
     )
     for item in ranked[config.evaluations_per_cycle :]:
         _finalize_pipeline_market(
@@ -1537,12 +1625,15 @@ def _infer_one(
                 materially_changed=bool(m.get("updatedAt") or m.get("updated_at")),
                 config=config,
             )
-            priority = min(1.0, max(0.0, opportunity.opportunity_score / 100.0))
+            allocation = item["llm_allocation"]
+            priority = float(allocation["priority"])
             if not budget.reserve_primary(
                 model=route.model,
                 estimated_cost_usd=route.estimated_cost_usd,
                 priority=priority,
-                modeled_ev_usd=float(baseline.p_yes_model - p_yes_market),
+                # No executable dollar EV exists at this pre-LLM stage.
+                # Do not mislabel probability disagreement as USD EV.
+                modeled_ev_usd=0.0,
             ):
                 summary["budget_skipped"] += 1
                 summary["budget_skipped_by_cost"] += int(
@@ -1551,9 +1642,8 @@ def _infer_one(
                 summary["budget_skipped_by_emergency"] += int(
                     budget.emergency_ceiling_reached
                 )
-                summary["modeled_ev_skipped_budget"] += max(
-                    0.0, float(baseline.p_yes_model - p_yes_market)
-                )
+                # No executable dollar EV exists at this stage.
+                summary["modeled_ev_skipped_budget"] += 0.0
                 infer_diag_counts["evaluated"] += 1
                 count_rejection("budget_skipped")
                 budget_status = budget.primary_status()
@@ -1666,11 +1756,19 @@ def _infer_one(
                     use_llm = False
 
         if llm_used:
+            item["llm_rationale"] = llm_rationale
+            item["llm_confidence"] = float(llm_conf)
+            item["llm_model"] = route.model
+            item["llm_routing_tier"] = route.tier
+
             valid_temporal, temporal_reason, temporal_details = validate_temporal_rationale(
                 llm_rationale,
                 temporal_context,
                 question=question,
             )
+
+            item["temporal_validation_reason"] = temporal_reason
+            item["temporal_validation_details"] = temporal_details
             if not valid_temporal:
                 summary["temporal_inconsistency"] += 1
                 infer_diag_counts["evaluated"] += 1
@@ -1745,6 +1843,7 @@ def _infer_one(
                 opportunity_score=opportunity.opportunity_score,
                 materially_changed=False,
                 skeptic=True,
+                edge_abs=edge_abs,
                 config=config,
             )
             if review_forecast is None or not budget.reserve_skeptic(
@@ -1850,47 +1949,52 @@ def _infer_one(
                     usage["routing_tier"] = skeptic_route.tier
                     item["anthropic_usage_events"].append(usage)
                     budget.record_usage(usage)
+
                 summary["skeptic_failed"] += 1
-                summary["skeptic_reject"] += 1
                 infer_diag_counts["evaluated"] += 1
-                count_rejection("skeptic_reject")
+                count_rejection("skeptic_unavailable")
+
                 skeptic_payload = {
-                    "action": "REJECT",
+                    "action": "UNAVAILABLE",
                     "reason": "critic_call_failed",
                     "rationale": str(skeptic_err)[:300],
                     "trigger": skeptic_trigger_reason,
                 }
+
                 _update_brain(
                     record,
                     p_yes_model=p_yes_model,
                     edge=edge_abs,
                     budget_status="skeptic_failed",
                 )
+
                 record_shadow(
                     item=item,
                     model_probability=p_yes_model,
                     edge_abs=edge_abs,
                     side="YES" if edge_vs_market > 0 else "NO",
-                    production_decision="rejected",
-                    rejection_reason="skeptic_reject",
+                    production_decision="not_evaluated_for_production",
+                    rejection_reason="skeptic_unavailable",
                     temporal_validation="valid",
                     llm_used=llm_used,
                     skeptic_result=skeptic_payload,
                 )
+
                 infer_diag_rows.append(
                     {
                         "slug": slug,
                         "question": question,
-                        "decision": "REJECT",
-                        "reason": "skeptic_reject",
+                        "decision": "SKIP",
+                        "reason": "skeptic_unavailable",
                         "skeptic": skeptic_payload,
                     }
                 )
+
                 _finalize_pipeline_market(
                     record,
                     final_stage="skeptic_review",
-                    decision="REJECT",
-                    reason="skeptic_reject",
+                    decision="SKIP",
+                    reason="skeptic_unavailable",
                     details={"skeptic": skeptic_payload},
                 )
                 continue
