@@ -135,6 +135,30 @@ class RevenuePOCTests(unittest.TestCase):
         self.assertGreaterEqual(conn.execute("SELECT SUM(calls_avoided) FROM revenue_poc_api_daily").fetchone()[0], 2)
         conn.close()
 
+    def test_admission_rejects_duplicate_contract(self) -> None:
+        conn = _database()
+        _forecast(conn, 1, market="same")
+        service = RevenuePOCService(conn, RevenueConfig())
+        self.assertEqual(service.ingest_shadow_forecasts()["admitted"], 1)
+
+        _forecast(
+            conn,
+            2,
+            market="same",
+            model=0.61,
+            market_p=0.49,
+            timestamp="2026-08-04T01:00:00+00:00",
+        )
+        result = service.ingest_shadow_forecasts()
+        self.assertEqual(result["admitted"], 0)
+        reasons = dict(
+            conn.execute(
+                "SELECT reason,COUNT(*) FROM revenue_poc_decisions GROUP BY reason"
+            )
+        )
+        self.assertEqual(reasons["one_position_per_contract"], 1)
+        conn.close()
+
     def test_api_budget_guard(self) -> None:
         conn = _database()
         service = RevenuePOCService(conn, RevenueConfig(daily_api_budget_usd=2.0))

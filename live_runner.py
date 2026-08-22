@@ -54,8 +54,6 @@ UNIVERSE_REPORT_PATH = RUNTIME_PATHS.report_dir / "phase3_2_universe_expansion.j
 
 PIPELINE_SUMMARY_FIELDS = (
     "watchlist_total",
-    "blocked_existing_position",
-    "skipped_category_cap",
     "fetch_attempted",
     "fetch_failed",
     "inactive_or_closed",
@@ -364,7 +362,6 @@ def _print_pipeline_funnel(report: Dict[str, Any]) -> None:
     )
     print(
         "SKIPS "
-        f"existing={s['blocked_existing_position']} category={s['skipped_category_cap']} "
         f"fetch_failed={s['fetch_failed']} inactive={s['inactive_or_closed']} "
         f"quality={s.get('weak_market_quality', 0)} opportunity={s.get('low_opportunity_score', 0)} "
         f"policy={s.get('banned_market_class', 0) + s.get('malformed_market', 0) + s.get('weak_resolution_quality', 0) + s.get('low_institutional_quality', 0)} "
@@ -784,12 +781,6 @@ def _category_exposure_count(conn: sqlite3.Connection, category: str) -> int:
     return count
 
 
-def _category_cap_ok(conn: sqlite3.Connection, category: str) -> bool:
-    """Return True if opening another position in this category is within the cap."""
-    max_per = int(os.environ.get("BGL_MAX_PER_CATEGORY", "3") or "3")
-    return _category_exposure_count(conn, category) < max_per
-
-
 def _infer_one(
     *,
     conn: sqlite3.Connection,
@@ -832,7 +823,6 @@ def _infer_one(
             "time_rejected": 0,
             "invalid_price": 0,
             "extreme_tail": 0,
-            "category_cap": 0,
             "max_disagree": 0,
             "min_edge_abs": 0,
             "min_edge_vs_market": 0,
@@ -1131,27 +1121,7 @@ def _infer_one(
     selected = set(slugs)
     for slug in watchlist:
         record = records[slug]
-        if slug in existing:
-            summary["blocked_existing_position"] += 1
-            _update_brain(
-                record,
-                opportunity_score=0.0,
-                opportunity_grade="F",
-                budget_status="not_eligible",
-                scoring_components={
-                    "raw": {
-                        "duplicate_position": True,
-                        "existing_exposure": True,
-                    }
-                },
-            )
-            _finalize_pipeline_market(
-                record,
-                final_stage="existing_position_filter",
-                decision="SKIP",
-                reason="existing_open_or_pending_position",
-            )
-        elif slug not in selected:
+        if slug not in selected:
             _finalize_pipeline_market(
                 record,
                 final_stage="batch_selection",
@@ -1163,30 +1133,6 @@ def _infer_one(
     ranked: List[Dict[str, Any]] = []
     for slug in slugs:
         record = records[slug]
-        if slug in existing:
-            # Fixed-watchlist duplicates were finalized above. Dynamic-only
-            # candidates must receive the same existing-position treatment.
-            if slug not in watchlist:
-                summary["blocked_existing_position"] += 1
-                _update_brain(
-                    record,
-                    opportunity_score=0.0,
-                    opportunity_grade="F",
-                    budget_status="not_eligible",
-                    scoring_components={
-                        "raw": {
-                            "duplicate_position": True,
-                            "existing_exposure": True,
-                        }
-                    },
-                )
-                _finalize_pipeline_market(
-                    record,
-                    final_stage="existing_position_filter",
-                    decision="SKIP",
-                    reason="existing_open_or_pending_position",
-                )
-            continue
         if cooldown_n > 0 and slug in recent:
             _update_brain(
                 record,
@@ -1261,6 +1207,14 @@ def _infer_one(
         question = str(m.get("question") or slug)
         category = _topic_label(question)
         _update_brain(record, question=question, category=category)
+        category_exposure = _category_exposure_count(conn, category)
+        _update_brain(
+            record,
+            existing_exposure=slug in existing,
+            category_exposure=category_exposure,
+            category_cap_reached=category_exposure
+            >= int(os.environ.get("BGL_MAX_PER_CATEGORY", "3") or "3"),
+        )
 
         policy = evaluate_market_policy(
             m,
@@ -1400,7 +1354,6 @@ def _infer_one(
             continue
 
         baseline = score_market(m)
-        category_exposure = _category_exposure_count(conn, category)
         opportunity = score_opportunity(
             m,
             category=category,
@@ -1489,30 +1442,6 @@ def _infer_one(
                     "opportunity_score": opportunity.opportunity_score,
                     "minimum": config.min_opportunity_score_for_llm,
                 },
-            )
-            continue
-
-        if not _category_cap_ok(conn, category):
-            summary["skipped_category_cap"] += 1
-            infer_diag_counts["evaluated"] += 1
-            count_rejection("category_cap")
-            infer_diag_rows.append(
-                {
-                    "slug": slug,
-                    "question": question,
-                    "decision": "REJECT",
-                    "reason": "category_cap",
-                    "category": category,
-                    "opportunity_score": opportunity.opportunity_score,
-                }
-            )
-            print(f"  [infer] category cap reached for '{category}' - skipping {slug}", flush=True)
-            _finalize_pipeline_market(
-                record,
-                final_stage="category_cap",
-                decision="SKIP",
-                reason="category_cap_reached",
-                details={"category": category},
             )
             continue
 

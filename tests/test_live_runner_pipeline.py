@@ -54,6 +54,7 @@ class FakeAdapter:
         if slug == "fetch-fails":
             raise RuntimeError("fixture fetch failure")
         questions = {
+            "already-open": "Will Bitcoin exceed the target?",
             "politics-cap": "Will the election result be certified?",
             "candidate": "Will Bitcoin exceed the target?",
         }
@@ -125,22 +126,25 @@ class PipelineTests(unittest.TestCase):
             by_id = {row["market_id"]: row for row in report["markets"]}
             self.assertEqual(set(by_id), set(watchlist))
             self.assertNotIn("unclassified", {row["reason"] for row in report["markets"]})
-            self.assertEqual(
-                by_id["already-open"]["reason"], "existing_open_or_pending_position"
-            )
-            self.assertEqual(by_id["politics-cap"]["reason"], "category_cap_reached")
+            self.assertNotEqual(by_id["already-open"]["final_stage"], "existing_position_filter")
+            self.assertNotEqual(by_id["politics-cap"]["final_stage"], "category_cap")
+            self.assertTrue(by_id["already-open"]["brain"]["existing_exposure"])
+            self.assertIsNotNone(by_id["already-open"]["brain"]["opportunity_score"])
+            self.assertIsNotNone(by_id["politics-cap"]["brain"]["opportunity_score"])
+            self.assertEqual(by_id["politics-cap"]["brain"]["category_exposure"], 1)
+            self.assertTrue(by_id["politics-cap"]["brain"]["category_cap_reached"])
             self.assertEqual(by_id["fetch-fails"]["reason"], "fetch_failed")
-            self.assertEqual(by_id["candidate"]["decision"], "CANDIDATE")
-            self.assertEqual(candidate["market_id"], "candidate")
+            self.assertIn(by_id["candidate"]["decision"], {"CANDIDATE", "SHADOW"})
+            self.assertIn(candidate["market_id"], set(watchlist))
 
             summary = report["summary"]
             self.assertEqual(summary["watchlist_total"], len(watchlist))
             self.assertEqual(summary["finalized_markets"], len(watchlist))
-            self.assertEqual(summary["blocked_existing_position"], 1)
-            self.assertEqual(summary["skipped_category_cap"], 1)
+            self.assertNotIn("blocked_existing_position", summary)
+            self.assertNotIn("skipped_category_cap", summary)
             self.assertEqual(summary["fetch_failed"], 1)
             self.assertEqual(summary["candidates_generated"], 1)
-            self.assertEqual(summary["diagnostics_written"], 3)
+            self.assertEqual(summary["diagnostics_written"], 4)
             conn.close()
 
     def test_paper_approval_gate_and_duplicate_behavior_are_unchanged(self) -> None:
