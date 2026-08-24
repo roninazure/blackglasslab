@@ -1470,8 +1470,10 @@ def _infer_one(
             market_probability=item["p_yes_market"],
             liquidity=float(market.get("liquidity") or 0.0),
             spread=item["spread"],
-            time_to_resolution_days=temporal_context.get(
-                "time_to_resolution_days"
+            time_to_resolution_days=(
+                float(temporal_context["time_remaining_hours"]) / 24.0
+                if temporal_context.get("time_remaining_hours") is not None
+                else None
             ),
         )
         item["llm_allocation"] = allocation

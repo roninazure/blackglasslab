@@ -99,6 +99,13 @@ def test_llm_allocation_penalizes_wide_spread():
     assert _priority(spread=0.002) > _priority(spread=0.03)
 
 
+def test_live_runner_feeds_actual_temporal_days_to_llm_allocation():
+    source = Path("live_runner.py").read_text()
+
+    assert 'float(temporal_context["time_remaining_hours"]) / 24.0' in source
+    assert 'temporal_context.get("time_to_resolution_days")' not in source
+
+
 def test_llm_allocation_rewards_shorter_resolution():
     assert _priority(
         time_to_resolution_days=7.0
