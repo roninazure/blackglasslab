@@ -41,7 +41,7 @@ def _database() -> sqlite3.Connection:
     return conn
 
 
-def _forecast(conn: sqlite3.Connection, forecast_id: int, *, market: str, category: str = "crypto", model: float = 0.60, market_p: float = 0.50, timestamp: str = "2026-08-04T00:00:00+00:00") -> None:
+def _forecast(conn: sqlite3.Connection, forecast_id: int, *, market: str, category: str = "crypto", model: float = 0.60, market_p: float = 0.50, timestamp: str = "2026-08-04T00:00:00+00:00", question: str | None = None, holding_days: float = 30.0) -> None:
     metadata = json.dumps(
         {
             "spread": 0.01,
@@ -50,9 +50,30 @@ def _forecast(conn: sqlite3.Connection, forecast_id: int, *, market: str, catego
     )
     conn.execute(
         "INSERT INTO shadow_forecasts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (forecast_id, f"run-{forecast_id}", timestamp, "polymarket", market, f"Will {market}?", category, market_p, model, abs(model-market_p), "rejected", "min_edge_abs", 30.0, "2030-01-01T00:00:00Z", 1, metadata),
+        (forecast_id, f"run-{forecast_id}", timestamp, "polymarket", market, question or f"Will {market}?", category, market_p, model, abs(model-market_p), "rejected", "min_edge_abs", holding_days, "2030-01-01T00:00:00Z", 1, metadata),
     )
     conn.commit()
+
+
+def _existing_crypto_exposure(conn: sqlite3.Connection) -> None:
+    """Replay the five live crypto positions present at the cap rejection."""
+    positions = (
+        ("eth-dip-1500-dec-31", "Will Ethereum dip to $1,500 by Dec 31, 2026?", 0.40),
+        ("btc-dip-50000-dec-31", "Will Bitcoin dip to $50,000 by Dec 31, 2026?", 0.60),
+        ("btc-dip-55000-dec-31", "Will Bitcoin dip to $55,000 by Dec 31, 2026?", 0.60),
+        ("eth-reach-2700-august", "Will Ethereum reach $2,700 in August 2026?", 0.60),
+        ("eth-reach-2600-august", "Will Ethereum reach $2,600 in August 2026?", 0.40),
+    )
+    for index, (market, question, model) in enumerate(positions, start=1):
+        _forecast(
+            conn,
+            index,
+            market=market,
+            question=question,
+            model=model,
+            timestamp=f"2026-08-03T0{index}:00:00+00:00",
+            holding_days=120,
+        )
 
 
 class RevenuePOCTests(unittest.TestCase):
@@ -177,7 +198,107 @@ class RevenuePOCTests(unittest.TestCase):
         result = RevenuePOCService(conn, config).ingest_shadow_forecasts()
         self.assertEqual(result["admitted"], 5)
         reasons = dict(conn.execute("SELECT reason,COUNT(*) FROM revenue_poc_decisions GROUP BY reason"))
-        self.assertEqual(reasons["max_category_exposure"], 3)
+        self.assertEqual(reasons["max_category_exposure_short_horizon_required"], 3)
+        conn.close()
+
+    def test_category_cap_admits_one_short_dated_independent_threshold_theme(self) -> None:
+        """Faithful category-cap replay: one BTC-August slot, never a threshold stack."""
+        conn = _database()
+        _existing_crypto_exposure(conn)
+        service = RevenuePOCService(conn, RevenueConfig())
+        self.assertEqual(service.ingest_shadow_forecasts()["admitted"], 5)
+        self.assertEqual(
+            dict(conn.execute("SELECT market_id,side FROM revenue_poc_positions")),
+            {
+                "eth-dip-1500-dec-31": "NO",
+                "btc-dip-50000-dec-31": "YES",
+                "btc-dip-55000-dec-31": "YES",
+                "eth-reach-2700-august": "YES",
+                "eth-reach-2600-august": "NO",
+            },
+        )
+
+        # Insert and process each observation in historical order.  The first
+        # qualifying BTC-August opportunity gets the one independent-theme
+        # exception; later threshold variants cannot displace it on edge.
+        opportunities = (
+            ("btc-reach-80000-august", "Will BTC reach $80K in August 2026?", 0.540605, 0.0351, 7.6),
+            ("btc-reach-85000-august", "Will BTC reach $85K in August 2026?", 0.545605, 0.0401, 7.5),
+            ("btc-reach-82500-august", "Will BTC reach $82.5K in August 2026?", 0.548605, 0.0431, 7.5),
+            ("btc-dip-75000-august", "Will BTC dip to $75K in August 2026?", 0.528205, 0.0227, 7.6),
+        )
+        admissions = []
+        for index, (market, question, model, edge, holding_days) in enumerate(opportunities, start=6):
+            _forecast(
+                conn,
+                index,
+                market=market,
+                question=question,
+                model=model,
+                timestamp=f"2026-08-04T{index}:00:00+00:00",
+                holding_days=holding_days,
+            )
+            admissions.append(service.ingest_shadow_forecasts()["admitted"])
+
+        # OLD (strict category cap): 0 of 4.  NEW: only the chronological first,
+        # independently themed BTC-August opportunity is admitted.
+        self.assertEqual(admissions, [1, 0, 0, 0])
+        added = conn.execute(
+            "SELECT p.market_id,e.executable_edge,e.expected_holding_days FROM revenue_poc_positions p "
+            "JOIN revenue_poc_evaluations e ON e.id=p.evaluation_id "
+            "WHERE p.market_id LIKE 'btc-%-august' ORDER BY p.id"
+        ).fetchone()
+        self.assertEqual(added[0], "btc-reach-80000-august")
+        self.assertAlmostEqual(added[1], 0.0351, places=4)
+        self.assertEqual(added[2], 7.6)
+        observed = dict(
+            conn.execute(
+                "SELECT market_id,executable_edge FROM revenue_poc_evaluations "
+                "WHERE market_id LIKE 'btc-%-august'"
+            )
+        )
+        self.assertAlmostEqual(observed["btc-reach-85000-august"], 0.0401, places=4)
+        self.assertAlmostEqual(observed["btc-reach-82500-august"], 0.0431, places=4)
+        self.assertAlmostEqual(observed["btc-dip-75000-august"], 0.0227, places=4)
+        reasons = dict(conn.execute("SELECT reason,COUNT(*) FROM revenue_poc_decisions GROUP BY reason"))
+        self.assertEqual(reasons["max_category_exposure_correlated_theme"], 2)
+        self.assertEqual(reasons["max_category_exposure_velocity_edge_required"], 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM revenue_poc_positions WHERE status='OPEN'").fetchone()[0], 6)
+        self.assertEqual(conn.execute("SELECT SUM(size_usd) FROM revenue_poc_positions WHERE status='OPEN'").fetchone()[0], 150.0)
+        conn.close()
+
+    def test_category_velocity_exception_keeps_duplicate_and_global_limits(self) -> None:
+        for config, expected_reason in (
+            (RevenueConfig(max_open_positions=5), "max_open_positions"),
+            (RevenueConfig(max_capital_deployed_usd=125.0), "max_capital_deployed"),
+        ):
+            conn = _database()
+            _existing_crypto_exposure(conn)
+            service = RevenuePOCService(conn, config)
+            self.assertEqual(service.ingest_shadow_forecasts()["admitted"], 5)
+            _forecast(
+                conn, 6, market="btc-reach-80000-august",
+                question="Will BTC reach $80K in August 2026?", model=0.540605,
+                timestamp="2026-08-04T06:00:00+00:00", holding_days=7.6,
+            )
+            self.assertEqual(service.ingest_shadow_forecasts()["admitted"], 0)
+            self.assertIn(expected_reason, {row[0] for row in conn.execute("SELECT reason FROM revenue_poc_decisions")})
+            conn.close()
+
+    def test_category_velocity_exception_checks_duplicate_before_category(self) -> None:
+        conn = _database()
+        _existing_crypto_exposure(conn)
+        service = RevenuePOCService(conn, RevenueConfig())
+        self.assertEqual(service.ingest_shadow_forecasts()["admitted"], 5)
+        _forecast(
+            conn, 6, market="eth-reach-2700-august", timestamp="2026-08-04T01:00:00+00:00",
+            question="Will BTC reach $80K in August 2026?", model=0.540605, holding_days=7.6,
+        )
+        self.assertEqual(service.ingest_shadow_forecasts()["admitted"], 0)
+        self.assertIn(
+            "one_position_per_contract",
+            {row[0] for row in conn.execute("SELECT reason FROM revenue_poc_decisions")},
+        )
         conn.close()
 
     def test_expired_and_skeptic_rejected_markets_never_deploy_capital(self) -> None:

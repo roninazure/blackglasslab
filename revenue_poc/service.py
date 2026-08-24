@@ -2,9 +2,46 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
+
+
+# A category cap is a useful concentration backstop, but a short-lived,
+# independently themed contract should not be rejected merely because longer
+# dated positions occupy every category slot.  These are deliberately fixed
+# policy constants rather than tuning knobs: this exception is narrow and
+# auditable, and the portfolio-level limits remain the binding risk controls.
+_CATEGORY_VELOCITY_MAX_HOLDING_DAYS = 14.0
+_CATEGORY_VELOCITY_MIN_EXECUTABLE_EDGE = 0.03
+_THRESHOLD_ASSET_RE = re.compile(r"\b(bitcoin|btc|ethereum|ether|eth)\b", re.IGNORECASE)
+_THRESHOLD_MONTH_RE = re.compile(
+    r"\b(january|february|march|april|may|june|july|august|september|"
+    r"october|november|december)\b(?:\s+(20\d{2}))?",
+    re.IGNORECASE,
+)
+_THRESHOLD_MARKET_RE = re.compile(
+    r"\b(reach|hit|above|below|dip|price|trade|close|at least|at most)\b",
+    re.IGNORECASE,
+)
+
+
+def _threshold_market_theme(question: str) -> tuple[str, str] | None:
+    """Return an intentionally conservative correlation key for dated crypto thresholds.
+
+    A key is emitted only when both an underlying asset and an explicit month are
+    present in threshold-like wording.  Unknown relationships fail closed at the
+    category cap instead of being guessed.
+    """
+    if not _THRESHOLD_MARKET_RE.search(question):
+        return None
+    asset = _THRESHOLD_ASSET_RE.search(question)
+    month = _THRESHOLD_MONTH_RE.search(question)
+    if asset is None or month is None:
+        return None
+    aliases = {"bitcoin": "btc", "btc": "btc", "ethereum": "eth", "ether": "eth", "eth": "eth"}
+    return aliases[asset.group(1).lower()], f"{month.group(1).lower()}-{month.group(2) or 'unknown'}"
 
 from .config import RevenueConfig
 from .economics import adaptive_threshold, evaluate_execution
@@ -705,7 +742,7 @@ class RevenuePOCService:
 
     def _admit(self, evaluation_id: int) -> tuple[bool, str]:
         row = self.conn.execute(
-            "SELECT timestamp_utc,venue,market_id,question,category,side,entry_price,model_probability,fee_usd,slippage_usd,spread_cost_usd,expected_value_usd,expected_holding_days FROM revenue_poc_evaluations WHERE id=?",
+            "SELECT timestamp_utc,venue,market_id,question,category,side,entry_price,model_probability,fee_usd,slippage_usd,spread_cost_usd,expected_value_usd,executable_edge,expected_holding_days FROM revenue_poc_evaluations WHERE id=?",
             (evaluation_id,),
         ).fetchone()
         open_count, deployed = self.conn.execute(
@@ -715,13 +752,29 @@ class RevenuePOCService:
             return False, "max_open_positions"
         if float(deployed) + self.config.position_size_usd > self.config.max_capital_deployed_usd:
             return False, "max_capital_deployed"
+        # Check the immutable contract identity before any category exception.
+        # The database uniqueness constraint remains the concurrent-writer guard.
+        if self.conn.execute("SELECT 1 FROM revenue_poc_positions WHERE venue=? AND market_id=?", (row[1], row[2])).fetchone():
+            return False, "one_position_per_contract"
         category_count = self.conn.execute(
             "SELECT COUNT(*) FROM revenue_poc_positions WHERE status='OPEN' AND category=?", (row[4],)
         ).fetchone()[0]
         if int(category_count) >= self.config.max_category_positions:
-            return False, "max_category_exposure"
-        if self.conn.execute("SELECT 1 FROM revenue_poc_positions WHERE venue=? AND market_id=?", (row[1], row[2])).fetchone():
-            return False, "one_position_per_contract"
+            category_positions = self.conn.execute(
+                "SELECT question FROM revenue_poc_positions WHERE status='OPEN' AND category=?", (row[4],)
+            ).fetchall()
+            theme = _threshold_market_theme(str(row[3]))
+            if row[13] is None or float(row[13]) > _CATEGORY_VELOCITY_MAX_HOLDING_DAYS:
+                return False, "max_category_exposure_short_horizon_required"
+            if float(row[12]) < _CATEGORY_VELOCITY_MIN_EXECUTABLE_EDGE:
+                return False, "max_category_exposure_velocity_edge_required"
+            if theme is None:
+                return False, "max_category_exposure_unclassified_theme"
+            if any(_threshold_market_theme(str(position[0])) == theme for position in category_positions):
+                return False, "max_category_exposure_correlated_theme"
+            category_exception = True
+        else:
+            category_exception = False
         try:
             with self.conn:
                 self.conn.execute(
@@ -733,13 +786,13 @@ class RevenuePOCService:
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (evaluation_id,row[0],row[1],row[2],row[3],row[4],row[5],row[6],row[7],
-                     self.config.position_size_usd,row[8],row[9],row[10],row[11],row[12]),
+                     self.config.position_size_usd,row[8],row[9],row[10],row[11],row[13]),
                 )
                 position_id = int(self.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
                 self._record_equity_point(str(row[0]), "OPEN", position_id)
         except sqlite3.IntegrityError:
             return False, "one_position_per_contract"
-        return True, "admitted_executable_edge"
+        return True, "admitted_category_velocity_exception" if category_exception else "admitted_executable_edge"
 
     def _portfolio_state(self) -> dict[str, float]:
         account = self.conn.execute(
