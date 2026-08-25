@@ -1,10 +1,14 @@
 from loop_engine.config import LoopEngineConfig
 from llm.routing import route_model
 from pathlib import Path
+from types import SimpleNamespace
 from live_runner import (
+    _build_selection_audit,
+    _evaluation_priority_key,
     _llm_allocation_priority,
     _merge_inference_slugs,
     _pipeline_market_record,
+    _select_evaluation_candidates,
 )
 
 
@@ -53,6 +57,143 @@ def test_duplicate_dynamic_and_fixed_market_is_not_repeated():
 
     assert selected == ["same", "dynamic-b", "fixed-b"]
     assert len(selected) == len(set(selected))
+
+
+def _candidate(slug, hours, priority=0.5, score=80.0):
+    return {
+        "slug": slug,
+        "temporal_context": {"time_remaining_hours": hours},
+        "llm_allocation": {"priority": priority},
+        "opportunity": SimpleNamespace(opportunity_score=score),
+    }
+
+
+def test_short_horizon_candidate_outranks_comparable_long_horizon_candidate():
+    selected = _select_evaluation_candidates(
+        [_candidate("long", 31 * 24), _candidate("short", 30 * 24)],
+        limit=2,
+    )
+
+    assert [item["slug"] for item in selected] == ["short", "long"]
+
+
+def test_long_horizon_candidate_enters_reserved_exploration_allocation():
+    candidates = [
+        _candidate(f"short-{index}", 7 * 24, priority=0.9 - index / 100)
+        for index in range(4)
+    ] + [_candidate("long", 90 * 24, priority=0.99)]
+
+    selected = _select_evaluation_candidates(candidates, limit=5)
+
+    assert [item["slug"] for item in selected] == [
+        "short-0", "short-1", "short-2", "short-3", "long"
+    ]
+
+
+def test_evaluation_selection_is_bounded_deterministic_and_unique():
+    candidates = [
+        _candidate("short", 10 * 24),
+        _candidate("long", 100 * 24),
+        _candidate("short", 10 * 24),
+        _candidate("unknown", None),
+    ]
+
+    first = _select_evaluation_candidates(candidates, limit=3)
+    second = _select_evaluation_candidates(candidates, limit=3)
+
+    assert first == second
+    assert len(first) == 3
+    assert len({item["slug"] for item in first}) == 3
+
+
+def test_missing_horizon_fails_safe_and_remains_eligible_as_fallback():
+    selected = _select_evaluation_candidates(
+        [_candidate("unknown", None)],
+        limit=1,
+    )
+
+    assert [item["slug"] for item in selected] == ["unknown"]
+
+
+def test_selection_does_not_depend_on_post_inference_outcomes():
+    first = _candidate("short", 10 * 24)
+    second = _candidate("long", 100 * 24)
+    first["eventual_outcome"] = "NO"
+    second["execution_invalid"] = True
+    selected_with_annotations = _select_evaluation_candidates([second, first], limit=2)
+
+    first.pop("eventual_outcome")
+    second.pop("execution_invalid")
+    selected_without_annotations = _select_evaluation_candidates([second, first], limit=2)
+
+    assert [item["slug"] for item in selected_with_annotations] == [
+        item["slug"] for item in selected_without_annotations
+    ]
+
+
+def test_shadow_selection_is_separate_from_unchanged_production_order():
+    long = _candidate("long", 90 * 24, priority=0.99)
+    short = _candidate("short", 7 * 24, priority=0.80)
+    ranked = [long, short]
+
+    production_ranked = sorted(ranked, key=_evaluation_priority_key)
+    shadow_selected = _select_evaluation_candidates(ranked, limit=1)
+
+    assert [item["slug"] for item in production_ranked[:1]] == ["long"]
+    assert [item["slug"] for item in shadow_selected] == ["short"]
+
+
+def test_selection_audit_records_pre_inference_comparison_evidence():
+    candidate = _candidate("short", 7 * 24, priority=0.8, score=82.0)
+    candidate.update(
+        {
+            "baseline": SimpleNamespace(p_yes_model=0.62),
+            "p_yes_market": 0.55,
+            "spread": 0.01,
+            "market": {"liquidity": 1234.5},
+        }
+    )
+
+    audit = _build_selection_audit(
+        cycle_id="infer-test",
+        ranked=[candidate],
+        production_ranked=[candidate],
+        shadow_selected=[candidate],
+        capacity=1,
+    )
+
+    assert audit == [
+        {
+            "cycle_id": "infer-test",
+            "market_id": "short",
+            "slug": "short",
+            "horizon": {
+                "time_remaining_hours": 168,
+                "cohort": "short",
+            },
+            "baseline_priority_inputs": {
+                "opportunity_score": 82.0,
+                "baseline_probability": 0.62,
+                "market_probability": 0.55,
+                "liquidity": 1234.5,
+                "spread": 0.01,
+                "llm_allocation": {"priority": 0.8},
+            },
+            "production_selected": True,
+            "shadow_selected": True,
+            "production_rank": 1,
+            "shadow_rank": 1,
+            "evaluation_capacity": 1,
+        }
+    ]
+
+
+def test_shadow_policy_metadata_is_explicitly_shadow_only():
+    source = Path("live_runner.py").read_text()
+
+    assert '"policy": "short_horizon_priority_shadow_only"' in source
+    assert '"selection_shadow": {' in source
+    assert '"evaluation_capacity": config.evaluations_per_cycle' in source
 
 
 def test_dynamic_pipeline_record_is_complete():

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sqlite3
 import time
@@ -93,6 +94,9 @@ PIPELINE_SUMMARY_FIELDS = (
     "modeled_ev_skipped_budget",
     "unchanged_markets",
 )
+
+SHORT_HORIZON_PRIORITY_DAYS = 30.0
+EVALUATION_EXPLORATION_FRACTION = 0.20
 
 
 def _candidates_path(mode: str) -> Path:
@@ -727,6 +731,146 @@ def _llm_allocation_priority(
     }
 
 
+def _select_evaluation_candidates(
+    ranked: list[Dict[str, Any]],
+    *,
+    limit: int,
+    exploration_fraction: float = EVALUATION_EXPLORATION_FRACTION,
+) -> list[Dict[str, Any]]:
+    """Select a bounded forecast batch with short-horizon priority.
+
+    This is a priority policy, not a horizon gate.  Known <=30-day markets
+    occupy the majority of slots; a bounded exploration slice is reserved for
+    known longer-horizon markets.  Missing or malformed temporal values stay
+    eligible as a final safe fallback, but never receive short-horizon
+    priority.  All ordering uses already-computed pre-inference signals only.
+    """
+    capacity = max(0, int(limit))
+    if capacity == 0 or not ranked:
+        return []
+
+    short: list[Dict[str, Any]] = []
+    long: list[Dict[str, Any]] = []
+    unknown: list[Dict[str, Any]] = []
+    for item in ranked:
+        hours = (item.get("temporal_context") or {}).get("time_remaining_hours")
+        cohort = _evaluation_horizon_cohort(hours)
+        if cohort == "short":
+            short.append(item)
+        elif cohort == "long":
+            long.append(item)
+        else:
+            unknown.append(item)
+
+    for pool in (short, long, unknown):
+        pool.sort(key=_evaluation_priority_key)
+        unique_pool: list[Dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for item in pool:
+            slug = str(item["slug"])
+            if slug not in seen_ids:
+                unique_pool.append(item)
+                seen_ids.add(slug)
+        pool[:] = unique_pool
+
+    bounded_fraction = min(1.0, max(0.0, float(exploration_fraction)))
+    exploration_slots = min(
+        max(0, capacity - 1),
+        max(1, int(capacity * bounded_fraction)),
+    )
+    priority_slots = capacity - exploration_slots
+
+    selected = short[:priority_slots]
+    selected_ids = {str(item["slug"]) for item in selected}
+    for item in long[:exploration_slots]:
+        if len(selected) >= capacity:
+            break
+        if str(item["slug"]) not in selected_ids:
+            selected.append(item)
+            selected_ids.add(str(item["slug"]))
+
+    # Fill unused capacity when a cohort is smaller than its allocation.  This
+    # preserves eligibility without turning the priority into an exclusive
+    # filter, and de-duplicates defensively by market slug.
+    for pool in (short, long, unknown):
+        for item in pool:
+            if len(selected) >= capacity:
+                break
+            if str(item["slug"]) not in selected_ids:
+                selected.append(item)
+                selected_ids.add(str(item["slug"]))
+
+    return selected
+
+
+def _evaluation_horizon_cohort(time_remaining_hours: Any) -> str:
+    """Classify a candidate using only its pre-inference horizon."""
+    try:
+        hours = float(time_remaining_hours)
+    except (TypeError, ValueError):
+        hours = math.nan
+    if math.isfinite(hours) and 0.0 <= hours <= SHORT_HORIZON_PRIORITY_DAYS * 24.0:
+        return "short"
+    if math.isfinite(hours) and hours > SHORT_HORIZON_PRIORITY_DAYS * 24.0:
+        return "long"
+    return "unknown"
+
+
+def _evaluation_priority_key(item: Dict[str, Any]) -> tuple[float, float, str]:
+    """The existing production ordering, retained unchanged for production."""
+    return (
+        -float(item["llm_allocation"]["priority"]),
+        -float(item["opportunity"].opportunity_score),
+        str(item["slug"]),
+    )
+
+
+def _build_selection_audit(
+    *,
+    cycle_id: str,
+    ranked: list[Dict[str, Any]],
+    production_ranked: list[Dict[str, Any]],
+    shadow_selected: list[Dict[str, Any]],
+    capacity: int,
+) -> list[Dict[str, Any]]:
+    """Build deterministic, pre-inference-only production/shadow evidence."""
+    production_ids = {id(item) for item in production_ranked[:max(0, int(capacity))]}
+    shadow_ids = {id(item) for item in shadow_selected}
+    production_ranks = {id(item): rank for rank, item in enumerate(production_ranked, 1)}
+    shadow_ranks = {id(item): rank for rank, item in enumerate(shadow_selected, 1)}
+    evidence: list[Dict[str, Any]] = []
+    for item in ranked:
+        temporal = item.get("temporal_context") or {}
+        baseline = item["baseline"]
+        market = item.get("market") or {}
+        hours = temporal.get("time_remaining_hours")
+        evidence.append(
+            {
+                "cycle_id": cycle_id,
+                "market_id": str(item["slug"]),
+                "slug": str(item["slug"]),
+                "horizon": {
+                    "time_remaining_hours": hours,
+                    "cohort": _evaluation_horizon_cohort(hours),
+                },
+                "baseline_priority_inputs": {
+                    "opportunity_score": float(item["opportunity"].opportunity_score),
+                    "baseline_probability": float(baseline.p_yes_model),
+                    "market_probability": float(item["p_yes_market"]),
+                    "liquidity": float(market.get("liquidity") or 0.0),
+                    "spread": float(item["spread"]),
+                    "llm_allocation": dict(item["llm_allocation"]),
+                },
+                "production_selected": id(item) in production_ids,
+                "shadow_selected": id(item) in shadow_ids,
+                "production_rank": production_ranks[id(item)],
+                "shadow_rank": shadow_ranks.get(id(item)),
+                "evaluation_capacity": int(capacity),
+            }
+        )
+    return evidence
+
+
 def _pipeline_market_record(slug: str) -> Dict[str, Any]:
     """Create the canonical pipeline record for any inference candidate."""
     return {
@@ -810,6 +954,7 @@ def _infer_one(
         )
         shadow_backup_path = str(backup_path) if backup_path else None
     infer_diag_rows: List[Dict[str, Any]] = []
+    selection_audit: list[Dict[str, Any]] = []
     infer_diag_counts: Dict[str, Any] = {
         "evaluated": 0,
         "passed": 0,
@@ -962,6 +1107,15 @@ def _infer_one(
                 },
                 "summary": infer_diag_counts,
                 "rows": infer_diag_rows,
+                "selection_shadow": {
+                    "enabled": True,
+                    "cycle_id": report["run_id"],
+                    "policy": "short_horizon_priority_shadow_only",
+                    "short_horizon_priority_days": SHORT_HORIZON_PRIORITY_DAYS,
+                    "exploration_fraction": EVALUATION_EXPLORATION_FRACTION,
+                    "evaluation_capacity": config.evaluations_per_cycle,
+                },
+                "selection_audit": selection_audit,
             }
         )
         summary["diagnostics_written"] = len(infer_diag_rows)
@@ -1479,12 +1633,18 @@ def _infer_one(
         item["llm_allocation"] = allocation
         item["record"]["details"]["llm_allocation"] = allocation
 
-    ranked.sort(
-        key=lambda item: (
-            -float(item["llm_allocation"]["priority"]),
-            -float(item["opportunity"].opportunity_score),
-            str(item["slug"]),
-        ),
+    ranked.sort(key=_evaluation_priority_key)
+    production_ranked = list(ranked)
+    shadow_selected = _select_evaluation_candidates(
+        ranked,
+        limit=config.evaluations_per_cycle,
+    )
+    selection_audit = _build_selection_audit(
+        cycle_id=report["run_id"],
+        ranked=ranked,
+        production_ranked=production_ranked,
+        shadow_selected=shadow_selected,
+        capacity=config.evaluations_per_cycle,
     )
     for item in ranked[config.evaluations_per_cycle :]:
         _finalize_pipeline_market(
@@ -1494,7 +1654,7 @@ def _infer_one(
             reason="evaluation_limit_reached",
             details={"evaluations_per_cycle": config.evaluations_per_cycle},
         )
-    ranked = ranked[: config.evaluations_per_cycle]
+    ranked = production_ranked[: config.evaluations_per_cycle]
     use_llm = (
         _env_bool("BGL_INFER_USE_LLM", False)
         and openai_enabled()
