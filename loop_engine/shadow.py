@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
+from outcome_linkage import record_market_resolution
 from swarm_edge_runtime import RUNTIME_PATHS
 
 
@@ -246,6 +247,9 @@ def resolve_shadow_forecast(
     outcome: str,
     *,
     resolved_at_utc: Optional[str] = None,
+    resolution_source: str = "legacy_manual",
+    source_reference: str | None = None,
+    provenance_metadata: Mapping[str, Any] | None = None,
     commit: bool = True,
 ) -> bool:
     outcome = str(outcome).upper()
@@ -253,35 +257,47 @@ def resolve_shadow_forecast(
         raise ValueError("outcome must be YES or NO")
     row = conn.execute(
         """
-        SELECT timestamp_utc, market_probability, model_probability, side, status
+        SELECT venue, market_id, timestamp_utc, market_probability,
+               model_probability, side, status
         FROM shadow_forecasts WHERE id=?
         """,
         (int(forecast_id),),
     ).fetchone()
     if row is None:
         return False
-    if row[4] == "RESOLVED":
+    if row[6] == "RESOLVED":
         return False
     resolved_at = resolved_at_utc or _utc().isoformat()
-    start = _parse_datetime(row[0])
+    record_market_resolution(
+        conn,
+        venue=str(row[0]),
+        market_id=str(row[1]),
+        outcome=outcome,
+        resolved_at_utc=resolved_at,
+        resolution_source=resolution_source,
+        source_reference=source_reference,
+        provenance_metadata=provenance_metadata,
+        commit=commit,
+    )
+    start = _parse_datetime(row[2])
     end = _parse_datetime(resolved_at)
     holding_days = (
         round(max(0.0, (end - start).total_seconds() / 86400.0), 6)
         if start is not None and end is not None
         else None
     )
-    won = 1 if str(row[3]).upper() == outcome else 0
-    score = brier_score(float(row[2]), outcome)
+    won = 1 if str(row[5]).upper() == outcome else 0
+    score = brier_score(float(row[4]), outcome)
     stake_row = conn.execute(
         "SELECT COALESCE(MAX(hypothetical_stake_usd), 100.0) FROM shadow_threshold_results WHERE shadow_forecast_id=?",
         (int(forecast_id),),
     ).fetchone()
     stake = float(stake_row[0] if stake_row else 100.0)
     pnl = hypothetical_profit(
-        side=str(row[3]),
+        side=str(row[5]),
         stake_usd=stake,
         outcome=outcome,
-        market_probability=float(row[1]),
+        market_probability=float(row[3]),
     )
     conn.execute(
         """
@@ -302,10 +318,10 @@ def resolve_shadow_forecast(
     ).fetchall()
     for bucket_id, bucket_stake in buckets:
         bucket_pnl = hypothetical_profit(
-            side=str(row[3]),
+            side=str(row[5]),
             stake_usd=float(bucket_stake),
             outcome=outcome,
-            market_probability=float(row[1]),
+            market_probability=float(row[3]),
         )
         conn.execute(
             """

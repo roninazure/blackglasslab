@@ -26,6 +26,7 @@ from loop_engine.shadow import (
     hypothetical_profit,
     resolve_shadow_forecast,
 )
+from outcome_linkage import ResolutionConflictError, ensure_resolution_schema, record_market_resolution
 from swarm_edge_runtime import RUNTIME_PATHS
 
 
@@ -199,6 +200,15 @@ def resolved_outcome_from_snapshot(market: Dict[str, Any]) -> Tuple[bool, Option
     return (False, None, "not_resolved")
 
 
+def resolution_timestamp_from_snapshot(market: Dict[str, Any], fallback: str) -> tuple[str, str]:
+    """Prefer a venue resolution timestamp and make fallback provenance explicit."""
+    for field in ("resolvedAt", "resolutionDate", "closedTime"):
+        value = str(market.get(field) or "").strip()
+        if value:
+            return value, field
+    return fallback, "recorded_at_fallback"
+
+
 def brier(p_yes_model: float, resolved_outcome: str) -> float:
     y = 1.0 if resolved_outcome.upper() == "YES" else 0.0
     return (float(p_yes_model) - y) ** 2
@@ -265,6 +275,7 @@ class ShadowResolutionMetrics:
     resolved_contracts: int = 0
     snapshot_rows_resolved: int = 0
     api_lookups: int = 0
+    resolution_conflicts: int = 0
 
 
 def _fetch_shadow_contract(row: sqlite3.Row, timeout_s: int) -> tuple[Dict[str, Any], str, int]:
@@ -300,6 +311,8 @@ def resolve_shadow_forecasts(
 ) -> ShadowResolutionMetrics:
     if not _shadow_table_exists(conn):
         return ShadowResolutionMetrics()
+    if not dry_run:
+        ensure_resolution_schema(conn)
     rows = conn.execute(
         """
         SELECT id, market_id, slug, market_probability, model_probability, side, metadata
@@ -332,10 +345,48 @@ def resolve_shadow_forecasts(
             print(f"SHADOW RESOLVER {mode_label}: contract={identity} OPEN (reason={why})")
             time.sleep(sleep_s)
             continue
+        try:
+            recorded_at = utc_now_iso()
+            resolved_at, resolved_at_source = resolution_timestamp_from_snapshot(
+                snap, recorded_at
+            )
+            if not dry_run:
+                record_market_resolution(
+                    conn,
+                    venue="polymarket",
+                    market_id=str(representative[1]),
+                    outcome=outcome,
+                    resolved_at_utc=resolved_at,
+                    resolution_source=f"polymarket_gamma_{lookup_source}",
+                    source_reference=str(snap.get("id") or representative[2]),
+                    provenance_metadata={
+                        "resolver": "resolve_shadow_forecasts",
+                        "lookup_source": lookup_source,
+                        "market_closed": bool(snap.get("closed")),
+                        "market_active": snap.get("active"),
+                        "resolution_reason": why,
+                        "resolved_at_source": resolved_at_source,
+                    },
+                    commit=False,
+                )
+        except ResolutionConflictError as error:
+            metrics.resolution_conflicts += 1
+            print(f"SHADOW RESOLVER {mode_label}: contract={identity} CONFLICT {error}")
+            time.sleep(sleep_s)
+            continue
         metrics.resolved_contracts += 1
         resolved_rows = 0
         for row in contract_rows:
-            if dry_run or resolve_shadow_forecast(conn, int(row[0]), outcome, commit=False):
+            if dry_run or resolve_shadow_forecast(
+                conn,
+                int(row[0]),
+                outcome,
+                resolved_at_utc=resolved_at,
+                resolution_source=f"polymarket_gamma_{lookup_source}",
+                source_reference=str(snap.get("id") or representative[2]),
+                provenance_metadata={"resolver": "resolve_shadow_forecasts"},
+                commit=False,
+            ):
                 resolved_rows += 1
         if not dry_run and resolved_rows:
             conn.commit()
