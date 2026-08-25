@@ -43,6 +43,11 @@ from market_universe.policy import (
 from market_universe.discovery import discover_markets
 from revenue_poc.market_health import is_quarantined, record_market_fetch
 from revenue_poc.repository import persist_discovery_snapshots
+from microstructure_snapshots import (
+    ensure_microstructure_schema,
+    persist_snapshots,
+    snapshot_from_market,
+)
 from models.baseline import score_market, market_yes_price
 from loop_engine.config import DEFAULT_LLM_USAGE_PATH
 from swarm_edge_runtime import RUNTIME_PATHS
@@ -953,6 +958,14 @@ def _infer_one(
             backup_dir=backup_dir,
         )
         shadow_backup_path = str(backup_path) if backup_path else None
+    microstructure_schema_error: Optional[str] = None
+    if paper_mode:
+        try:
+            ensure_microstructure_schema(conn)
+        except Exception as exc:
+            # Telemetry setup must never alter the inference path.
+            microstructure_schema_error = f"{type(exc).__name__}: {str(exc)[:240]}"
+    microstructure_rows: list[Dict[str, Any]] = []
     infer_diag_rows: List[Dict[str, Any]] = []
     selection_audit: list[Dict[str, Any]] = []
     infer_diag_counts: Dict[str, Any] = {
@@ -1170,6 +1183,12 @@ def _infer_one(
                 timestamp_utc=report["ts_utc"],
                 venue=report["source"],
             )
+        if paper_mode:
+            telemetry = persist_snapshots(conn, microstructure_rows)
+            if microstructure_schema_error is not None:
+                telemetry["error"] = microstructure_schema_error
+                telemetry["failed"] = telemetry["prepared"]
+            report["microstructure_persistence"] = telemetry
         report["optimization"] = {
             "budget": budget.as_dict(),
             "discovery": {
@@ -1357,6 +1376,17 @@ def _infer_one(
 
         if "revenue_poc_market_health" in health_tables:
             record_market_fetch(conn, venue=venue, market_id=slug, ok=True)
+
+        if paper_mode:
+            microstructure_rows.append(
+                snapshot_from_market(
+                    m,
+                    timestamp_utc=report["ts_utc"],
+                    cycle_id=report["run_id"],
+                    venue=venue,
+                    slug=slug,
+                )
+            )
 
         question = str(m.get("question") or slug)
         category = _topic_label(question)
