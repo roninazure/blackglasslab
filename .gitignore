@@ -26,6 +26,7 @@ memory/*.sqlite-*
 *.log
 
 # local backups
+backups/
 *.bak.*
 *.backup.*
 *.bak
@@ -43,6 +44,7 @@ markets/_pm_search2/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
 coverage.xml
 htmlcov/
 /KILL
@@ -50,6 +52,8 @@ htmlcov/
 # runtime artifacts
 signals/infer_diagnostics.json
 signals/trade_candidates_*.json
+trials/
+census/*.sqlite
 
 # local scratch / patch fallout
 live_runner.py.BROKEN.*
