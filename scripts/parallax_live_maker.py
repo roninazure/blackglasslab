@@ -690,6 +690,8 @@ def _sync_confirmed_income(
 ) -> None:
     order_markets = store.attributable_markets(date, require_fill=False)
     fill_markets = store.attributable_markets(date, require_fill=True)
+    if not order_markets and not fill_markets:
+        return
     for row in venue.confirmed_rewards(date):
         if not isinstance(row, dict):
             continue
@@ -835,6 +837,17 @@ def main(argv: list[str] | None = None) -> int:
         auth_snapshot: dict[str, Any] | None = None
         if venue is not None:
             auth_snapshot = venue.authenticate(allow_closed_only=args.cancel_all)
+            if isinstance(venue, PolymarketUSVenue):
+                venue.start_private_state()
+                private_deadline = time.monotonic() + limits.stale_websocket_seconds
+                while not venue.private_ready():
+                    if time.monotonic() >= private_deadline:
+                        raise SafetyStop(
+                            "Polymarket US private websocket startup failed: "
+                            f"{venue.private_error() or 'snapshot timeout'}"
+                        )
+                    time.sleep(0.05)
+                auth_snapshot = venue.initial_snapshot()
             if args.auth_read_only:
                 assert isinstance(auth_snapshot, dict)
                 print(
@@ -849,6 +862,12 @@ def main(argv: list[str] | None = None) -> int:
                                 "cancel_all_supported"
                             ],
                             "live_orders_placed": 0,
+                            **venue.diagnostics(),
+                            **(
+                                public.diagnostics()
+                                if isinstance(public, PolymarketUSPublicClient)
+                                else {"public_rest_requests_per_minute": 0}
+                            ),
                         },
                         sort_keys=True,
                     ),
@@ -1032,6 +1051,7 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(0.05)
 
             next_reconcile = next_heartbeat = time.monotonic()
+            next_rest_reconcile = time.monotonic() + limits.rest_reconciliation_seconds
             next_discovery = time.monotonic() + limits.discovery_seconds
             while not stop_requested:
                 now = time.monotonic()
@@ -1040,6 +1060,8 @@ def main(argv: list[str] | None = None) -> int:
                     break
                 if monitor.failed:
                     raise SafetyStop(f"market websocket failed: {monitor.error}")
+                if isinstance(venue, PolymarketUSVenue) and not venue.private_ready():
+                    raise SafetyStop("Polymarket US private websocket is stale or disconnected")
                 current: dict[str, Candidate] = {}
                 current_ranked: list[RankedCandidate] = []
                 for prior in selected:
@@ -1072,6 +1094,11 @@ def main(argv: list[str] | None = None) -> int:
                     if fills:
                         store.event("FILLS_RECONCILED", {"count": fills})
                     next_reconcile = now + limits.reconciliation_seconds
+                if now >= next_rest_reconcile:
+                    fills = engine.reconcile(rest=True)
+                    if fills:
+                        store.event("REST_FILLS_RECONCILED", {"count": fills})
+                    next_rest_reconcile = now + limits.rest_reconciliation_seconds
                 if now >= next_heartbeat:
                     engine.send_heartbeat()
                     next_heartbeat = now + limits.heartbeat_seconds
@@ -1195,7 +1222,30 @@ def main(argv: list[str] | None = None) -> int:
                     capital=limits.total_bankroll_usd,
                 )
                 print(
-                    json.dumps({"status": "RUNNING", **summary}, sort_keys=True),
+                    json.dumps(
+                        {
+                            "status": "RUNNING",
+                            **summary,
+                            **(
+                                public.diagnostics()
+                                if isinstance(public, PolymarketUSPublicClient)
+                                else {"public_rest_requests_per_minute": 0}
+                            ),
+                            **(
+                                venue.diagnostics()
+                                if isinstance(venue, PolymarketUSVenue)
+                                else {
+                                    "authenticated_rest_requests_per_minute": 0,
+                                    "private_ws_connected": False,
+                                    "rate_limit_events": 0,
+                                    "backoff_state": 0.0,
+                                }
+                            ),
+                            "market_ws_connected": not monitor.failed,
+                            "rest_reconciliation_interval": limits.rest_reconciliation_seconds,
+                        },
+                        sort_keys=True,
+                    ),
                     flush=True,
                 )
                 time.sleep(1.0)

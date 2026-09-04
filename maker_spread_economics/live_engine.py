@@ -69,6 +69,7 @@ class LiveLimits:
     max_quote_age_seconds: float = 20.0
     material_book_move_ticks: int = 1
     reconciliation_seconds: float = 3.0
+    rest_reconciliation_seconds: float = 60.0
     heartbeat_seconds: float = 5.0
     discovery_seconds: float = 60.0
     adverse_selection_bps: float = 25.0
@@ -89,6 +90,7 @@ class LiveLimits:
             "stale_book_seconds": self.stale_book_seconds,
             "max_quote_age_seconds": self.max_quote_age_seconds,
             "reconciliation_seconds": self.reconciliation_seconds,
+            "rest_reconciliation_seconds": self.rest_reconciliation_seconds,
             "heartbeat_seconds": self.heartbeat_seconds,
             "discovery_seconds": self.discovery_seconds,
         }
@@ -113,6 +115,8 @@ class LiveLimits:
             raise ValueError("invalid market scan or material-move limit")
         if self.adverse_selection_bps < 0 or self.capital_lock_bps_per_hour < 0:
             raise ValueError("economic risk deductions cannot be negative")
+        if self.rest_reconciliation_seconds < 60.0:
+            raise ValueError("REST reconciliation interval cannot be below 60 seconds")
 
     @classmethod
     def from_env(cls) -> LiveLimits:
@@ -130,6 +134,10 @@ class LiveLimits:
             "max_quote_age_seconds": ("PARALLAX_MAX_QUOTE_AGE_SECONDS", float),
             "material_book_move_ticks": ("PARALLAX_MATERIAL_BOOK_MOVE_TICKS", int),
             "reconciliation_seconds": ("PARALLAX_RECONCILIATION_SECONDS", float),
+            "rest_reconciliation_seconds": (
+                "PARALLAX_REST_RECONCILIATION_SECONDS",
+                float,
+            ),
             "heartbeat_seconds": ("PARALLAX_HEARTBEAT_SECONDS", float),
             "discovery_seconds": ("PARALLAX_DISCOVERY_SECONDS", float),
             "adverse_selection_bps": ("PARALLAX_ADVERSE_SELECTION_BPS", float),
@@ -853,6 +861,7 @@ class ExecutionEngine:
         self.limits = limits
         self.mode = mode
         self.heartbeat_id = ""
+        self._emergency_stopping = False
 
     def _open_exposure(self, *, market_id: str | None = None) -> float:
         total = 0.0
@@ -1181,13 +1190,21 @@ class ExecutionEngine:
             )
         )
 
-    def reconcile(self) -> int:
+    def reconcile(self, *, rest: bool = False) -> int:
         if self.mode == "DRY_RUN":
             return 0
         assert self.venue is not None
         try:
-            venue_open = self.venue.get_open_orders()
-            trades = self.venue.get_trades()
+            if rest:
+                get_open = getattr(self.venue, "get_open_orders_rest", None)
+                get_trades = getattr(self.venue, "get_trades_rest", None)
+                venue_open = (
+                    get_open() if callable(get_open) else self.venue.get_open_orders()
+                )
+                trades = get_trades() if callable(get_trades) else self.venue.get_trades()
+            else:
+                venue_open = self.venue.get_open_orders()
+                trades = self.venue.get_trades()
         except Exception as exc:
             self.emergency_stop("cannot retrieve authoritative order/fill state")
             raise ReconciliationError(
@@ -1385,25 +1402,38 @@ class ExecutionEngine:
 
     def emergency_stop(self, reason: str) -> None:
         self.store.event("EMERGENCY_STOP", {"reason": reason})
+        if self._emergency_stopping:
+            return
+        self._emergency_stopping = True
         if self.mode == "LIVE" and self.venue is not None:
-            try:
-                response = self.venue.cancel_all()
-                not_cancelled = response.get("not_canceled") or response.get(
-                    "notCanceled"
-                )
-                remaining = self.venue.get_open_orders()
-                if not_cancelled or remaining:
-                    raise ReconciliationError(
-                        f"cancel-all left venue orders open: {not_cancelled or remaining}"
-                    )
-            except Exception as exc:
+            known_live = [
+                row for row in self.store.open_orders() if row["venue_order_id"]
+            ]
+            rate_limited = "rate limit" in reason.lower() or "1015" in reason
+            if not known_live and rate_limited:
                 self.store.event(
-                    "CANCEL_ALL_FAILED",
-                    {"reason": reason, "error": f"{type(exc).__name__}: {exc}"},
+                    "CANCEL_ALL_SKIPPED",
+                    {"reason": reason, "detail": "no acknowledged/resting live orders"},
                 )
-                raise SafetyStop(
-                    f"CRITICAL: global cancel-all failed after {reason}: {exc}"
-                ) from exc
+            else:
+                try:
+                    response = self.venue.cancel_all()
+                    not_cancelled = response.get("not_canceled") or response.get(
+                        "notCanceled"
+                    )
+                    remaining = self.venue.get_open_orders()
+                    if not_cancelled or remaining:
+                        raise ReconciliationError(
+                            f"cancel-all left venue orders open: {not_cancelled or remaining}"
+                        )
+                except Exception as exc:
+                    self.store.event(
+                        "CANCEL_ALL_FAILED",
+                        {"reason": reason, "error": f"{type(exc).__name__}: {exc}"},
+                    )
+                    raise SafetyStop(
+                        f"CRITICAL: global cancel-all failed after {reason}: {exc}"
+                    ) from exc
         for row in self.store.open_orders():
             if row["venue_order_id"]:
                 self.store.set_order_state(

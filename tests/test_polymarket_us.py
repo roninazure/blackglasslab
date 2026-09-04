@@ -21,7 +21,9 @@ from maker_spread_economics.live_engine import (
 from maker_spread_economics.polymarket_us import (
     PMUS_KEY_ID_ENV,
     PMUS_SECRET_KEY_ENV,
+    AuthenticatedRESTGate,
     PolymarketUSPublicClient,
+    PolymarketUSRateLimit,
     PolymarketUSVenue,
     normalize_book,
     normalize_market_page,
@@ -122,6 +124,7 @@ class FakeOrders:
         self.cancelled: list[tuple[str, dict]] = []
         self.cancel_all_calls = 0
         self.rows: dict[str, dict] = {"order-1": raw_order()}
+        self.list_calls = 0
 
     def create(self, params: dict) -> dict:
         self.created.append(params)
@@ -141,6 +144,7 @@ class FakeOrders:
         return {"order": self.rows[order_id]}
 
     def list(self, _params: dict | None = None) -> dict:
+        self.list_calls += 1
         return {
             "orders": [
                 row
@@ -189,6 +193,53 @@ class FakeClient:
 
 
 class PolymarketUSPortTests(unittest.TestCase):
+    def test_shared_authenticated_rest_gate_serializes_calls(self) -> None:
+        gate = AuthenticatedRESTGate(minimum_interval_seconds=0.001)
+        self.assertEqual(gate.call("one", lambda: 1), 1)
+        self.assertEqual(gate.call("two", lambda: 2), 2)
+        self.assertEqual(gate.diagnostics()["authenticated_rest_requests_per_minute"], 2)
+
+    def test_rate_limit_honors_retry_after_and_locks_out(self) -> None:
+        class Response:
+            headers = {"Retry-After": "7"}
+
+        class Error(Exception):
+            status_code = 429
+            response = Response()
+            body = "Cloudflare Error 1015: You are being rate limited"
+
+        gate = AuthenticatedRESTGate(minimum_interval_seconds=0)
+        with self.assertRaises(PolymarketUSRateLimit):
+            gate.call("orders", lambda: (_ for _ in ()).throw(Error("1015")))
+        metrics = gate.diagnostics()
+        self.assertEqual(metrics["rate_limit_events"], 1)
+        self.assertGreaterEqual(metrics["backoff_state"], 6.5)
+        with self.assertRaises(PolymarketUSRateLimit):
+            gate.call("orders", lambda: {})
+
+    def test_private_websocket_state_prevents_order_rest_poll(self) -> None:
+        class Private:
+            def ready(self) -> bool:
+                return True
+
+            def snapshot(self) -> dict:
+                return {
+                    "open_orders": [normalize_order(raw_order())],
+                    "executions": [],
+                    "positions": [],
+                    "balances": [],
+                }
+
+            def stop(self) -> None:
+                pass
+
+        fake = FakeClient()
+        venue = PolymarketUSVenue(live_enabled=False, read_only=True, client=fake)
+        venue.private_state = Private()  # type: ignore[assignment]
+        self.assertEqual(venue.get_open_orders()[0]["id"], "order-1")
+        self.assertEqual(fake.orders.list_calls, 0)
+        self.assertEqual(venue.get_open_orders_rest()[0]["id"], "order-1")
+        self.assertEqual(fake.orders.list_calls, 1)
     def test_official_sdk_client_and_ed25519_signing(self) -> None:
         key_id = "00000000-0000-0000-0000-000000000001"
         secret = base64.b64encode(SigningKey.generate().encode()).decode()
@@ -341,7 +392,7 @@ class PolymarketUSPortTests(unittest.TestCase):
         fake = FakeClient()
         venue = PolymarketUSVenue(live_enabled=False, read_only=True, client=fake)
         snapshot = venue.authenticate()
-        self.assertEqual(len(snapshot["balances"]), 1)
+        self.assertEqual(snapshot["balances"], [])
         self.assertTrue(snapshot["cancel_all_supported"])
         self.assertEqual(fake.orders.created, [])
         self.assertEqual(fake.orders.cancel_all_calls, 0)

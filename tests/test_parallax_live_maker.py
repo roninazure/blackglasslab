@@ -585,6 +585,30 @@ class ParallaxLiveMakerTests(unittest.TestCase):
         self.assertEqual(store.open_orders(), [])
         store.close("test")
 
+    def test_rate_limit_before_acknowledgement_skips_cancel_all(self) -> None:
+        store = self.store("LIVE")
+        venue = FakeVenue()
+        engine = ExecutionEngine(
+            store=store, venue=venue, limits=self.limits, mode="LIVE"
+        )
+        engine.emergency_stop("authenticated REST rate limit")
+        self.assertEqual(venue.cancel_all_calls, 0)
+        store.close("test")
+
+    def test_known_live_order_cancel_failure_is_not_recursive(self) -> None:
+        store = self.store("LIVE")
+        self.acknowledged_order(store, order_id="known")
+        venue = FakeVenue()
+        venue.reconcile_error = RuntimeError("Cloudflare Error 1015")
+        engine = ExecutionEngine(
+            store=store, venue=venue, limits=self.limits, mode="LIVE"
+        )
+        with self.assertRaisesRegex(SafetyStop, "global cancel-all failed"):
+            engine.emergency_stop("authenticated REST rate limit")
+        engine.emergency_stop("outer process boundary")
+        self.assertEqual(venue.cancel_all_calls, 1)
+        store.close("test")
+
     def test_environment_kill_switch_cancels_all(self) -> None:
         store = self.store("LIVE")
         venue = FakeVenue()

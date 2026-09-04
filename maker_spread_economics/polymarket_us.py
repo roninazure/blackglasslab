@@ -1,14 +1,124 @@
 from __future__ import annotations
 
+import asyncio
 import math
 import os
+import random
+import threading
 import time
+from collections import deque
 from typing import Any
 
 from .live_engine import OrderIntent, ReconciliationError, SafetyStop
 
 PMUS_KEY_ID_ENV = "PARALLAX_PMUS_KEY_ID"
 PMUS_SECRET_KEY_ENV = "PARALLAX_PMUS_SECRET_KEY"
+
+
+class PolymarketUSRateLimit(SafetyStop):
+    """Authenticated US REST traffic is temporarily unsafe to send."""
+
+
+class RequestMeter:
+    def __init__(self) -> None:
+        self._timestamps: deque[float] = deque()
+        self._lock = threading.Lock()
+
+    def record(self) -> None:
+        with self._lock:
+            self._timestamps.append(time.monotonic())
+            self._trim(time.monotonic())
+
+    def per_minute(self) -> int:
+        with self._lock:
+            self._trim(time.monotonic())
+            return len(self._timestamps)
+
+    def _trim(self, now: float) -> None:
+        while self._timestamps and self._timestamps[0] < now - 60.0:
+            self._timestamps.popleft()
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", {})
+    value = headers.get("Retry-After") if headers else None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None)
+    body = str(getattr(exc, "body", ""))
+    text = f"{exc} {body}".lower()
+    return status == 429 or "1015" in text or "rate limit" in text or "rate-limit" in text
+
+
+class AuthenticatedRESTGate:
+    """Single conservative budget and lockout for every authenticated REST call."""
+
+    def __init__(self, *, minimum_interval_seconds: float = 5.0) -> None:
+        self.minimum_interval_seconds = minimum_interval_seconds
+        self.meter = RequestMeter()
+        self._lock = threading.Lock()
+        self._next_request_at = 0.0
+        self._locked_until = 0.0
+        self._rate_limit_events = 0
+        self._backoff_seconds = 0.0
+
+    def call(
+        self, operation: str, request: Any, *, cancellation_retry: bool = False
+    ) -> Any:
+        attempts = 2 if cancellation_retry else 1
+        for attempt in range(attempts):
+            while True:
+                with self._lock:
+                    now = time.monotonic()
+                    if now < self._locked_until:
+                        raise PolymarketUSRateLimit(
+                            f"authenticated REST lockout during {operation}; "
+                            f"retry in {self._locked_until - now:.1f}s"
+                        )
+                    delay = self._next_request_at - now
+                    if delay <= 0:
+                        self._next_request_at = now + self.minimum_interval_seconds
+                        break
+                # Deliberately serialize, rather than burst, authenticated calls.
+                time.sleep(delay)
+            self.meter.record()
+            try:
+                return request()
+            except Exception as exc:
+                if not _is_rate_limit(exc):
+                    raise
+                retry_after = _retry_after_seconds(exc)
+                with self._lock:
+                    self._rate_limit_events += 1
+                    exponential = min(60.0, float(2 ** min(self._rate_limit_events, 5)))
+                    self._backoff_seconds = max(
+                        retry_after if retry_after is not None else 0.0,
+                        exponential + random.uniform(0.0, 0.5),
+                    )
+                    self._locked_until = time.monotonic() + self._backoff_seconds
+                if cancellation_retry and attempt == 0 and self._backoff_seconds <= 15.0:
+                    time.sleep(self._backoff_seconds)
+                    continue
+                raise PolymarketUSRateLimit(
+                    f"authenticated REST rate limit during {operation}; "
+                    f"backoff={self._backoff_seconds:.1f}s"
+                ) from exc
+        raise AssertionError("unreachable authenticated REST retry state")
+
+    def diagnostics(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "authenticated_rest_requests_per_minute": self.meter.per_minute(),
+                "rate_limit_events": self._rate_limit_events,
+                "backoff_state": max(0.0, self._locked_until - time.monotonic()),
+            }
 
 
 def _number(value: Any, *, name: str) -> float:
@@ -318,14 +428,19 @@ class PolymarketUSPublicClient:
                 raise SafetyStop("polymarket-us is required for Polymarket US") from exc
             client = PolymarketUS(timeout=timeout_seconds)
         self.client = client
+        self.meter = RequestMeter()
 
     def close(self) -> None:
         close = getattr(self.client, "close", None)
         if callable(close):
             close()
 
+    def diagnostics(self) -> dict[str, Any]:
+        return {"public_rest_requests_per_minute": self.meter.per_minute()}
+
     def markets_page(self, *, limit: int, offset: int) -> list[dict[str, Any]]:
         try:
+            self.meter.record()
             payload = self.client.markets.list(
                 {
                     "active": True,
@@ -346,6 +461,7 @@ class PolymarketUSPublicClient:
 
     def book(self, slug: str) -> dict[str, Any]:
         try:
+            self.meter.record()
             return normalize_book(self.client.markets.book(slug), expected_slug=slug)
         except Exception as exc:
             if isinstance(exc, (SafetyStop, ReconciliationError)):
@@ -353,6 +469,149 @@ class PolymarketUSPublicClient:
             raise SafetyStop(
                 f"Polymarket US book retrieval failed for {slug}: {redact_sensitive(exc)}"
             ) from exc
+
+
+class PolymarketUSPrivateState:
+    """Authenticated private WS snapshots are the primary live order/fill state."""
+
+    def __init__(self, client: Any) -> None:
+        self.client = client
+        self.orders: dict[str, dict[str, Any]] = {}
+        self.executions: list[dict[str, Any]] = []
+        self.positions: list[dict[str, Any]] = []
+        self.balance: dict[str, Any] = {}
+        self.error: str | None = None
+        self.connected = False
+        self._orders_ready = False
+        self._positions_ready = False
+        self._balance_ready = False
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stop: asyncio.Event | None = None
+
+    def start(self) -> None:
+        def run() -> None:
+            async def consume() -> None:
+                self._loop = asyncio.get_running_loop()
+                self._stop = asyncio.Event()
+                websocket = self.client.ws.private()
+
+                def fail(exc: Exception) -> None:
+                    with self._lock:
+                        self.error = f"{type(exc).__name__}: {redact_sensitive(exc)}"
+                    if self._stop is not None:
+                        self._stop.set()
+
+                def order_snapshot(message: dict[str, Any]) -> None:
+                    try:
+                        payload = message.get("orderSubscriptionSnapshot") or message.get("ordersSnapshot") or {}
+                        rows = payload.get("orders", [])
+                        if not isinstance(rows, list):
+                            raise ReconciliationError("private order snapshot malformed")
+                        normalized = {
+                            row["id"]: row
+                            for raw in rows
+                            for row in [normalize_order(raw)]
+                            if row["state"] in {"ORDER_STATE_NEW", "ORDER_STATE_PARTIALLY_FILLED"}
+                        }
+                        with self._lock:
+                            self.orders = normalized
+                            self._orders_ready = bool(payload.get("eof", False))
+                    except Exception as exc:
+                        fail(exc)
+
+                def order_update(message: dict[str, Any]) -> None:
+                    try:
+                        payload = message.get("orderSubscriptionUpdate") or message.get("orderUpdate") or {}
+                        raw = payload.get("execution", payload)
+                        execution = normalize_execution(raw)
+                        order = normalize_order(raw.get("order"))
+                        with self._lock:
+                            if order["state"] in {"ORDER_STATE_NEW", "ORDER_STATE_PARTIALLY_FILLED"}:
+                                self.orders[order["id"]] = order
+                            else:
+                                self.orders.pop(order["id"], None)
+                            self.executions.append(execution)
+                            self.executions = self.executions[-500:]
+                    except Exception as exc:
+                        fail(exc)
+
+                def position_snapshot(message: dict[str, Any]) -> None:
+                    try:
+                        payload = message.get("positionSubscriptionSnapshot") or message.get("positionsSnapshot") or {}
+                        self.positions = normalize_positions({"positions": payload.get("positions", {})})
+                        with self._lock:
+                            self._positions_ready = bool(payload.get("eof", False))
+                    except Exception as exc:
+                        fail(exc)
+
+                def balance_snapshot(message: dict[str, Any]) -> None:
+                    payload = message.get("accountBalanceSubscriptionSnapshot") or message.get("accountBalancesSnapshot") or {}
+                    with self._lock:
+                        self.balance = dict(payload) if isinstance(payload, dict) else {}
+                        self._balance_ready = True
+
+                websocket.on("order_snapshot", order_snapshot)
+                websocket.on("order_update", order_update)
+                websocket.on("position_snapshot", position_snapshot)
+                websocket.on("account_balance_snapshot", balance_snapshot)
+                websocket.on("error", fail)
+                websocket.on("close", lambda: fail(RuntimeError("private websocket closed")))
+                await websocket.connect()
+                with self._lock:
+                    self.connected = True
+                await websocket.subscribe_orders("parallax-orders")
+                await websocket.subscribe_positions("parallax-positions")
+                await websocket.subscribe_account_balance("parallax-balance")
+                await self._stop.wait()
+                await websocket.close()
+
+            try:
+                asyncio.run(consume())
+            except Exception as exc:  # noqa: BLE001 - thread boundary
+                with self._lock:
+                    self.error = f"{type(exc).__name__}: {redact_sensitive(exc)}"
+
+        self._thread = threading.Thread(target=run, name="parallax-pmus-private", daemon=True)
+        self._thread.start()
+
+    def ready(self) -> bool:
+        with self._lock:
+            return self.error is None and self.connected
+
+    def seed(self, snapshot: dict[str, Any]) -> None:
+        with self._lock:
+            self.orders = {
+                row["id"]: row
+                for raw in snapshot.get("open_orders", [])
+                for row in [
+                    raw
+                    if isinstance(raw, dict) and "market_id" in raw
+                    else normalize_order(raw)
+                ]
+            }
+            self.executions = list(snapshot.get("executions", []))[-500:]
+            self.positions = list(snapshot.get("positions", []))
+            balances = snapshot.get("balances", [])
+            self.balance = dict(balances[0]) if balances else {}
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            if self.error is not None or not self.connected:
+                raise ReconciliationError("private websocket state is not authoritative")
+            return {
+                "open_orders": list(self.orders.values()),
+                "positions": list(self.positions),
+                "executions": list(self.executions),
+                "balances": [dict(self.balance)],
+            }
+
+    def stop(self) -> None:
+        if self._stop is not None and self._loop is not None:
+            self._loop.call_soon_threadsafe(self._stop.set)
+        if self._thread is not None:
+            self._thread.join(timeout=5.0)
 
 
 class PolymarketUSVenue:
@@ -367,6 +626,7 @@ class PolymarketUSVenue:
     ) -> None:
         from .live_engine import LIVE_ENABLED_VALUE, LIVE_ENV
 
+        supplied_client = client is not None
         if live_enabled == read_only:
             raise ValueError("choose exactly one of live_enabled or read_only")
         if live_enabled and os.environ.get(LIVE_ENV) != LIVE_ENABLED_VALUE:
@@ -392,10 +652,16 @@ class PolymarketUSVenue:
             )
         self.client = client
         self.read_only = read_only
+        self.rest = AuthenticatedRESTGate(
+            minimum_interval_seconds=0.0 if supplied_client else 5.0
+        )
+        self.private_state: PolymarketUSPrivateState | None = None
         self._post_only_ids: set[str] = set()
         self._slug_by_order: dict[str, str] = {}
 
     def close(self) -> None:
+        if self.private_state is not None:
+            self.private_state.stop()
         close = getattr(self.client, "close", None)
         if callable(close):
             close()
@@ -403,29 +669,16 @@ class PolymarketUSVenue:
     def authenticate(self, *, allow_closed_only: bool = False) -> dict[str, Any]:
         del allow_closed_only
         try:
-            balances = self.client.account.balances()
-            orders = self.client.orders.list()
-            positions = self.client.portfolio.positions()
-            activities = self.client.portfolio.activities(
-                {"limit": 100, "types": ["ACTIVITY_TYPE_TRADE"]}
-            )
-            if not isinstance(balances, dict) or not isinstance(
-                balances.get("balances"), list
-            ):
-                raise ReconciliationError("Polymarket US balances response is malformed")
-            normalized_orders = self._normalize_order_list(orders)
-            normalized_positions = normalize_positions(positions)
-            executions = self._normalize_activities(activities)
             cancel_all_supported = callable(
                 getattr(self.client.orders, "cancel_all", None)
             )
             if not cancel_all_supported:
                 raise ReconciliationError("Polymarket US cancel-all capability is absent")
             return {
-                "balances": balances["balances"],
-                "open_orders": normalized_orders,
-                "positions": normalized_positions,
-                "executions": executions,
+                "balances": [],
+                "open_orders": [],
+                "positions": [],
+                "executions": [],
                 "cancel_all_supported": True,
             }
         except Exception as exc:
@@ -434,6 +687,54 @@ class PolymarketUSVenue:
             raise SafetyStop(
                 f"Polymarket US authentication/reconciliation failed: {redact_sensitive(exc)}"
             ) from exc
+
+    def start_private_state(self) -> None:
+        if self.private_state is None:
+            self.private_state = PolymarketUSPrivateState(self.client)
+            self.private_state.start()
+
+    def private_ready(self) -> bool:
+        return self.private_state is not None and self.private_state.ready()
+
+    def private_error(self) -> str | None:
+        return self.private_state.error if self.private_state is not None else None
+
+    def initial_snapshot(self) -> dict[str, Any]:
+        snapshot = {
+            "balances": self.rest.call("startup balance snapshot", self.client.account.balances).get("balances", []),
+            "open_orders": self._normalize_order_list(
+                self.rest.call("startup order snapshot", self.client.orders.list)
+            ),
+            "positions": normalize_positions(
+                self.rest.call("startup position snapshot", self.client.portfolio.positions)
+            ),
+            "executions": self._normalize_activities(
+                self.rest.call(
+                    "startup execution snapshot",
+                    lambda: self.client.portfolio.activities(
+                        {"limit": 100, "types": ["ACTIVITY_TYPE_TRADE"]}
+                    ),
+                )
+            ),
+            "cancel_all_supported": callable(
+                getattr(self.client.orders, "cancel_all", None)
+            ),
+        }
+        if self.private_state is None:
+            raise ReconciliationError("private websocket was not started")
+        self.private_state.seed(snapshot)
+        return snapshot
+
+    def private_snapshot(self) -> dict[str, Any]:
+        if self.private_state is None:
+            raise ReconciliationError("private websocket was not started")
+        return self.private_state.snapshot()
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            **self.rest.diagnostics(),
+            "private_ws_connected": self.private_ready(),
+        }
 
     @staticmethod
     def _normalize_activities(payload: Any) -> list[dict[str, Any]]:
@@ -505,7 +806,7 @@ class PolymarketUSVenue:
             "manualOrderIndicator": "MANUAL_ORDER_INDICATOR_AUTOMATIC",
             "synchronousExecution": False,
         }
-        response = self.client.orders.create(params)
+        response = self.rest.call("create order", lambda: self.client.orders.create(params))
         order_id = str(response.get("id") or "") if isinstance(response, dict) else ""
         if not order_id:
             raise ReconciliationError("Polymarket US order response omitted order ID")
@@ -514,9 +815,7 @@ class PolymarketUSVenue:
         deadline = time.monotonic() + 2.0
         normalized: dict[str, Any] | None = None
         while time.monotonic() < deadline:
-            normalized = normalize_order(
-                self.client.orders.retrieve(order_id), post_only=True
-            )
+            normalized = self.get_order_rest(order_id)
             if normalized["state"] not in {
                 "ORDER_STATE_PENDING_NEW",
                 "ORDER_STATE_PENDING_RISK",
@@ -545,16 +844,17 @@ class PolymarketUSVenue:
     def cancel_order(self, order_id: str) -> dict[str, Any]:
         slug = self._slug_by_order.get(order_id)
         if not slug:
-            current = normalize_order(self.client.orders.retrieve(order_id))
+            current = self.get_order_rest(order_id)
             slug = current["marketSlug"]
             self._slug_by_order[order_id] = slug
-        self.client.orders.cancel(order_id, {"marketSlug": slug})
+        self.rest.call(
+            "cancel order",
+            lambda: self.client.orders.cancel(order_id, {"marketSlug": slug}),
+            cancellation_retry=True,
+        )
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
-            state = normalize_order(
-                self.client.orders.retrieve(order_id),
-                post_only=order_id in self._post_only_ids,
-            )["state"]
+            state = self.get_order_rest(order_id)["state"]
             if state == "ORDER_STATE_CANCELED":
                 return {"canceled": [order_id], "not_canceled": []}
             if state in {"ORDER_STATE_FILLED", "ORDER_STATE_REJECTED", "ORDER_STATE_EXPIRED"}:
@@ -563,32 +863,51 @@ class PolymarketUSVenue:
         raise ReconciliationError(f"uncertain cancellation state for order {order_id}")
 
     def cancel_all(self) -> dict[str, Any]:
-        response = self.client.orders.cancel_all()
-        deadline = time.monotonic() + 3.0
-        remaining: list[dict[str, Any]] = []
-        while time.monotonic() < deadline:
-            remaining = self.get_open_orders()
-            if not remaining:
-                canceled = response.get("canceledOrderIds", []) if isinstance(response, dict) else []
-                return {"canceled": canceled, "not_canceled": []}
-            time.sleep(0.1)
+        response = self.rest.call(
+            "global cancel-all", self.client.orders.cancel_all, cancellation_retry=True
+        )
         return {
             "canceled": response.get("canceledOrderIds", []) if isinstance(response, dict) else [],
-            "not_canceled": [row["id"] for row in remaining],
+            "not_canceled": [],
         }
 
     def get_open_orders(self) -> list[dict[str, Any]]:
-        return self._normalize_order_list(self.client.orders.list())
+        if self.private_ready():
+            return self.private_snapshot()["open_orders"]
+        return self.get_open_orders_rest()
+
+    def get_open_orders_rest(self) -> list[dict[str, Any]]:
+        return self._normalize_order_list(
+            self.rest.call("open-order reconciliation", self.client.orders.list)
+        )
 
     def get_order(self, order_id: str) -> dict[str, Any]:
+        if self.private_ready():
+            row = next(
+                (row for row in self.private_snapshot()["open_orders"] if row["id"] == order_id),
+                None,
+            )
+            if row is not None:
+                return row
+        return self.get_order_rest(order_id)
+
+    def get_order_rest(self, order_id: str) -> dict[str, Any]:
         normalized = normalize_order(
-            self.client.orders.retrieve(order_id),
+            self.rest.call(
+                "order reconciliation",
+                lambda: self.client.orders.retrieve(order_id),
+            ),
             post_only=order_id in self._post_only_ids,
         )
         self._slug_by_order[order_id] = normalized["marketSlug"]
         return normalized
 
     def get_trades(self, *, after: int | None = None) -> list[dict[str, Any]]:
+        if self.private_ready():
+            return self.private_snapshot()["executions"]
+        return self.get_trades_rest(after=after)
+
+    def get_trades_rest(self, *, after: int | None = None) -> list[dict[str, Any]]:
         params: dict[str, Any] = {
             "limit": 100,
             "types": ["ACTIVITY_TYPE_TRADE"],
@@ -596,23 +915,36 @@ class PolymarketUSVenue:
         }
         if after is not None:
             params["cursor"] = str(after)
-        return self._normalize_activities(self.client.portfolio.activities(params))
+        return self._normalize_activities(
+            self.rest.call(
+                "execution reconciliation", lambda: self.client.portfolio.activities(params)
+            )
+        )
 
     def get_positions(self) -> list[dict[str, Any]]:
-        return normalize_positions(self.client.portfolio.positions())
+        if self.private_ready():
+            return self.private_snapshot()["positions"]
+        return normalize_positions(
+            self.rest.call("position reconciliation", self.client.portfolio.positions)
+        )
 
     def heartbeat(self, heartbeat_id: str) -> dict[str, Any]:
         del heartbeat_id
-        payload = self.client.account.balances()
+        if self.private_ready():
+            return {"heartbeat_id": str(time.time_ns())}
+        payload = self.rest.call("heartbeat", self.client.account.balances)
         if not isinstance(payload, dict) or not isinstance(payload.get("balances"), list):
             raise ReconciliationError("Polymarket US authentication heartbeat failed")
         return {"heartbeat_id": str(time.time_ns())}
 
     def confirmed_rewards(self, date: str) -> list[dict[str, Any]]:
-        payload = self.client.get(
-            "/v1/incentives/earnings",
-            query={"start_date": date, "end_date": date},
-            authenticated=True,
+        payload = self.rest.call(
+            "confirmed incentive earnings",
+            lambda: self.client.get(
+                "/v1/incentives/earnings",
+                query={"start_date": date, "end_date": date},
+                authenticated=True,
+            ),
         )
         if not isinstance(payload, dict) or not isinstance(payload.get("rewards"), list):
             raise ReconciliationError("Polymarket US incentive earnings response is malformed")
