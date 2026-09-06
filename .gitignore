@@ -48,6 +48,7 @@ markets/_pm_search2/
 coverage.xml
 htmlcov/
 /KILL
+/data/parallax-commercial/
 
 # runtime artifacts
 signals/infer_diagnostics.json
