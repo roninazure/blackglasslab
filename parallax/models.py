@@ -36,6 +36,17 @@ class PlayType(StrEnum):
     PARALLAX_AVOID = "PARALLAX_AVOID"
 
 
+class SignalType(StrEnum):
+    PRICE_MOVE = "PRICE_MOVE"
+    SPREAD_MOVE = "SPREAD_MOVE"
+    LIQUIDITY_MOVE = "LIQUIDITY_MOVE"
+
+
+class SignalSignificance(StrEnum):
+    MATERIAL = "MATERIAL"
+    HIGH = "HIGH"
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -195,6 +206,30 @@ class ParallaxPlay:
     status: str
     demo: bool
     evidence: Evidence | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ParallaxSignal:
+    id: str
+    detected_at: str
+    venue: Venue
+    market_id: str
+    market_title: str
+    signal_type: SignalType
+    side: Side
+    previous_value: float
+    current_value: float
+    absolute_change: float
+    percent_change: float | None
+    observation_window_seconds: float
+    significance: SignalSignificance
+    explanation: str
+    market_url: str | None
+    market_reference: str
+    resolution_time: str | None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

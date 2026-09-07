@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import math
 import sqlite3
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import asdict, replace
+from datetime import datetime
+from hashlib import sha256
 from threading import RLock
 from typing import Any
 
@@ -14,12 +16,36 @@ from .models import (
     Confidence,
     Evidence,
     NormalizedMarket,
+    ParallaxSignal,
     PlayType,
     Side,
+    SignalSignificance,
+    SignalType,
     Venue,
+    timestamp,
     utcnow,
 )
 from .track_record import TrackRecord
+
+PRICE_MOVE_THRESHOLD = 0.05
+PRICE_MOVE_HIGH_THRESHOLD = 0.10
+SPREAD_MOVE_THRESHOLD = 0.03
+SPREAD_MOVE_HIGH_THRESHOLD = 0.08
+LIQUIDITY_ABSOLUTE_THRESHOLD = 100.0
+LIQUIDITY_PERCENT_THRESHOLD = 50.0
+LIQUIDITY_HIGH_ABSOLUTE_THRESHOLD = 500.0
+LIQUIDITY_HIGH_PERCENT_THRESHOLD = 100.0
+OBSERVATION_HISTORY_LIMIT = 2
+SIGNAL_HISTORY_LIMIT = 200
+
+
+def _display_price(value: float) -> str:
+    cents = value * 100
+    return f"{cents:.0f}¢" if cents.is_integer() else f"{cents:.1f}¢"
+
+
+def _display_quantity(value: float) -> str:
+    return f"{value:,.0f}" if value.is_integer() else f"{value:,.2f}"
 
 
 class PlayService:
@@ -33,6 +59,15 @@ class PlayService:
         self.mode = "live"
         self.last_refresh = None
         self.first_seen: dict[str, str] = {}
+        self.observation_history: deque[
+            dict[tuple[Venue, str], NormalizedMarket]
+        ] = deque(maxlen=OBSERVATION_HISTORY_LIMIT)
+        self.observation_times: deque[datetime] = deque(
+            maxlen=OBSERVATION_HISTORY_LIMIT
+        )
+        self.signal_history: deque[ParallaxSignal] = deque(
+            maxlen=SIGNAL_HISTORY_LIMIT
+        )
 
     def replace_inputs(self, markets, evidence=None, collection=None, *, mode="live"):
         if mode not in {"live", "demo"} or any(
@@ -40,13 +75,200 @@ class PlayService:
         ):
             raise ValueError("Live and synthetic inputs must never be mixed")
         with self.lock:
-            self.markets = list(
-                {(m.venue, m.venue_market_id): m for m in markets}.values()
-            )
+            current = {(m.venue, m.venue_market_id): m for m in markets}
+            detected_at = utcnow()
+            if self.observation_history:
+                previous = self.observation_history[-1]
+                for key, market in current.items():
+                    if key in previous:
+                        self.signal_history.extend(
+                            self._detect_signals(
+                                previous[key],
+                                market,
+                                self.observation_times[-1],
+                                detected_at,
+                            )
+                        )
+            self.observation_history.append(current)
+            self.observation_times.append(detected_at)
+            self.markets = list(current.values())
             self.evidence = dict(evidence or {})
             self.collection = collection or {}
             self.mode = mode
-            self.last_refresh = utcnow().isoformat()
+            self.last_refresh = detected_at.isoformat()
+
+    @staticmethod
+    def _window_seconds(
+        previous: NormalizedMarket,
+        current: NormalizedMarket,
+        previous_detected_at: datetime,
+        detected_at: datetime,
+    ) -> float:
+        previous_at = timestamp(previous.data_timestamp)
+        current_at = timestamp(current.data_timestamp)
+        if previous_at and current_at and current_at > previous_at:
+            return (current_at - previous_at).total_seconds()
+        return max(0.0, (detected_at - previous_detected_at).total_seconds())
+
+    @staticmethod
+    def _signal_id(
+        market: NormalizedMarket,
+        signal_type: SignalType,
+        side: Side,
+        detected_at: datetime,
+    ) -> str:
+        raw = (
+            f"{market.venue}:{market.venue_market_id}:{signal_type}:{side}:"
+            f"{detected_at.isoformat()}"
+        )
+        return f"signal-{sha256(raw.encode()).hexdigest()[:20]}"
+
+    @classmethod
+    def _signal(
+        cls,
+        market: NormalizedMarket,
+        signal_type: SignalType,
+        side: Side,
+        previous_value: float,
+        current_value: float,
+        window_seconds: float,
+        significance: SignalSignificance,
+        explanation: str,
+        detected_at: datetime,
+        *,
+        percent_change: float | None = None,
+    ) -> ParallaxSignal:
+        return ParallaxSignal(
+            id=cls._signal_id(market, signal_type, side, detected_at),
+            detected_at=detected_at.isoformat(),
+            venue=market.venue,
+            market_id=market.venue_market_id,
+            market_title=market.title,
+            signal_type=signal_type,
+            side=side,
+            previous_value=previous_value,
+            current_value=current_value,
+            absolute_change=abs(current_value - previous_value),
+            percent_change=percent_change,
+            observation_window_seconds=window_seconds,
+            significance=significance,
+            explanation=explanation,
+            market_url=market.source_url,
+            market_reference=market.slug or market.venue_market_id,
+            resolution_time=market.resolution_time,
+        )
+
+    @classmethod
+    def _detect_signals(
+        cls,
+        previous: NormalizedMarket,
+        current: NormalizedMarket,
+        previous_detected_at: datetime,
+        detected_at: datetime,
+    ) -> list[ParallaxSignal]:
+        signals: list[ParallaxSignal] = []
+        window = cls._window_seconds(
+            previous, current, previous_detected_at, detected_at
+        )
+        window_text = f"{window:.0f} seconds"
+        for side in Side:
+            name = side.value.lower()
+            prior_ask = getattr(previous, f"{name}_ask")
+            current_ask = getattr(current, f"{name}_ask")
+            if prior_ask is not None and current_ask is not None:
+                change = abs(current_ask - prior_ask)
+                if change >= PRICE_MOVE_THRESHOLD:
+                    significance = (
+                        SignalSignificance.HIGH
+                        if change >= PRICE_MOVE_HIGH_THRESHOLD
+                        else SignalSignificance.MATERIAL
+                    )
+                    signals.append(
+                        cls._signal(
+                            current,
+                            SignalType.PRICE_MOVE,
+                            side,
+                            prior_ask,
+                            current_ask,
+                            window,
+                            significance,
+                            f"{side} moved from {_display_price(prior_ask)} to "
+                            f"{_display_price(current_ask)} over the last {window_text}.",
+                            detected_at,
+                        )
+                    )
+
+            prior_bid = getattr(previous, f"{name}_bid")
+            current_bid = getattr(current, f"{name}_bid")
+            if None not in (prior_bid, prior_ask, current_bid, current_ask):
+                prior_spread = max(0.0, prior_ask - prior_bid)
+                current_spread = max(0.0, current_ask - current_bid)
+                change = abs(current_spread - prior_spread)
+                if change >= SPREAD_MOVE_THRESHOLD:
+                    significance = (
+                        SignalSignificance.HIGH
+                        if change >= SPREAD_MOVE_HIGH_THRESHOLD
+                        else SignalSignificance.MATERIAL
+                    )
+                    direction = (
+                        "compressed" if current_spread < prior_spread else "widened"
+                    )
+                    signals.append(
+                        cls._signal(
+                            current,
+                            SignalType.SPREAD_MOVE,
+                            side,
+                            prior_spread,
+                            current_spread,
+                            window,
+                            significance,
+                            f"The {side} bid/ask spread {direction} from "
+                            f"{_display_price(prior_spread)} to "
+                            f"{_display_price(current_spread)}.",
+                            detected_at,
+                        )
+                    )
+
+            prior_levels = previous.executable_depth.get(side.value, ())
+            current_levels = current.executable_depth.get(side.value, ())
+            if prior_levels and current_levels:
+                prior_depth = float(prior_levels[0][1])
+                current_depth = float(current_levels[0][1])
+                absolute = abs(current_depth - prior_depth)
+                percent = (
+                    (current_depth - prior_depth) / prior_depth * 100
+                    if prior_depth > 0
+                    else None
+                )
+                if (
+                    percent is not None
+                    and absolute >= LIQUIDITY_ABSOLUTE_THRESHOLD
+                    and abs(percent) >= LIQUIDITY_PERCENT_THRESHOLD
+                ):
+                    significance = (
+                        SignalSignificance.HIGH
+                        if absolute >= LIQUIDITY_HIGH_ABSOLUTE_THRESHOLD
+                        and abs(percent) >= LIQUIDITY_HIGH_PERCENT_THRESHOLD
+                        else SignalSignificance.MATERIAL
+                    )
+                    direction = "increased" if current_depth > prior_depth else "decreased"
+                    signals.append(
+                        cls._signal(
+                            current,
+                            SignalType.LIQUIDITY_MOVE,
+                            side,
+                            prior_depth,
+                            current_depth,
+                            window,
+                            significance,
+                            f"Executable {side} depth {direction} from "
+                            f"{_display_quantity(prior_depth)} to "
+                            f"{_display_quantity(current_depth)} contracts.",
+                            detected_at,
+                            percent_change=percent,
+                        )
+                    )
+        return signals
 
     def _plays(self):
         now = utcnow()
@@ -192,6 +414,22 @@ class PlayService:
             }
             rows = [{k: v for k, v in row.items() if k in keys} for row in rows]
         return rows
+
+    def signals(self, plan: Plan = Plan.EXPLORER):
+        with self.lock:
+            rows = list(self.signal_history)
+        rank = {SignalSignificance.HIGH: 1, SignalSignificance.MATERIAL: 0}
+        rows.sort(key=lambda row: (rank[row.significance], row.detected_at), reverse=True)
+        limit = min(5, entitlement(plan).play_limit)
+        if entitlement(plan).permits(Feature.DETAILS):
+            limit = entitlement(plan).play_limit
+        return {
+            "mode": self.mode,
+            "total": len(rows),
+            "limit": limit,
+            "items": [row.as_dict() for row in rows[:limit]],
+            "as_of": utcnow().isoformat(),
+        }
 
     def health(self):
         plays = self._plays()

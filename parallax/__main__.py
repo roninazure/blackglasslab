@@ -65,6 +65,7 @@ def main():
     if args.command == "scan":
         payload = {"health": service.health()}
         payload["plays"] = service.plays(Plan.PRO)
+        payload["signals"] = service.signals(Plan.PRO)
         if args.summary:
             payload["plays"]["items"] = [
                 {
