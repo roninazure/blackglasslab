@@ -4,7 +4,7 @@ import math
 import sqlite3
 from collections import Counter, deque
 from dataclasses import asdict, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 from threading import RLock
 from typing import Any
@@ -38,10 +38,23 @@ LIQUIDITY_HIGH_PERCENT_THRESHOLD = 100.0
 OBSERVATION_HISTORY_LIMIT = 2
 SIGNAL_HISTORY_LIMIT = 200
 SIGNAL_DEDUPE_COOLDOWN_SECONDS = 15 * 60
+PUBLISHABLE_SIGNAL_MAX_AGE_SECONDS = 5 * 60
+PUBLISHABLE_SIGNAL_LIMIT = 10
+EXPLORER_PUBLISHABLE_SIGNAL_LIMIT = 3
 SIGNAL_PRIORITY = {
     SignalType.PRICE_MOVE: 0,
     SignalType.SPREAD_MOVE: 1,
     SignalType.LIQUIDITY_MOVE: 2,
+}
+SPORTS_CATEGORIES = {
+    "baseball",
+    "basketball",
+    "football",
+    "hockey",
+    "mma",
+    "soccer",
+    "sports",
+    "tennis",
 }
 
 
@@ -160,6 +173,51 @@ def _valid_side_books(
     ) and _valid_two_sided_book(
         getattr(current, f"{name}_bid"),
         getattr(current, f"{name}_ask"),
+    )
+
+
+def _venue_label(venue: Venue) -> str:
+    return "Polymarket" if venue == Venue.POLYMARKET else "Kalshi"
+
+
+def _is_sports_category(category: str | None) -> bool:
+    normalized = (category or "").casefold()
+    return any(label in normalized for label in SPORTS_CATEGORIES)
+
+
+def _has_publishable_context(signal: ParallaxSignal) -> bool:
+    required = (
+        signal.display_title,
+        signal.signal_label,
+        signal.direction,
+        signal.formatted_previous_value,
+        signal.formatted_current_value,
+        signal.formatted_change,
+        signal.formatted_window,
+        signal.signal_strength,
+    )
+    if not all(str(value).strip() for value in required):
+        return False
+    if _is_sports_category(signal.category):
+        return bool(signal.event_title and signal.event_title.strip())
+    return True
+
+
+def _social_preview(signal: ParallaxSignal) -> str:
+    return "\n".join(
+        (
+            "PARALLAX SIGNAL",
+            "",
+            _venue_label(signal.venue),
+            str(signal.display_title),
+            "",
+            str(signal.signal_label),
+            f"{signal.side}: {signal.formatted_previous_value} -> {signal.formatted_current_value}",
+            f"{signal.formatted_change} in {signal.formatted_window}",
+            f"Signal Strength: {signal.signal_strength}",
+            "",
+            "Observed market movement. Not a BUY recommendation.",
+        )
     )
 
 
@@ -738,6 +796,94 @@ class PlayService:
             "as_of": utcnow().isoformat(),
         }
 
+    def _publishable_rows(
+        self,
+        plan: Plan = Plan.EXPLORER,
+        *,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        now = now or utcnow()
+        cutoff = now - timedelta(seconds=PUBLISHABLE_SIGNAL_MAX_AGE_SECONDS)
+        with self.lock:
+            markets = {
+                (market.venue, market.venue_market_id): market for market in self.markets
+            }
+            rows = list(self.signal_history)
+        publishable: list[ParallaxSignal] = []
+        seen_markets: set[tuple[Venue, str]] = set()
+        rows.sort(
+            key=lambda row: (
+                SIGNAL_PRIORITY[row.signal_type],
+                -row.absolute_change,
+                row.detected_at,
+            )
+        )
+        for signal in rows:
+            if signal.significance != SignalSignificance.HIGH:
+                continue
+            detected_at = timestamp(signal.detected_at)
+            if detected_at is None or detected_at < cutoff:
+                continue
+            resolved_at = timestamp(signal.resolution_time)
+            if resolved_at is not None and resolved_at <= now:
+                continue
+            market = markets.get((signal.venue, signal.market_id))
+            if market is not None and market.status != "OPEN":
+                continue
+            if not _has_publishable_context(signal):
+                continue
+            market_key = (signal.venue, signal.market_id)
+            if market_key in seen_markets:
+                continue
+            seen_markets.add(market_key)
+            publishable.append(signal)
+        publishable.sort(
+            key=lambda row: (
+                SIGNAL_PRIORITY[row.signal_type],
+                -row.absolute_change,
+                row.detected_at,
+            )
+        )
+        limit = (
+            PUBLISHABLE_SIGNAL_LIMIT
+            if entitlement(plan).permits(Feature.DETAILS)
+            else EXPLORER_PUBLISHABLE_SIGNAL_LIMIT
+        )
+        items = []
+        for signal in publishable[:limit]:
+            detected_at = timestamp(signal.detected_at)
+            publishable_until = (
+                detected_at + timedelta(seconds=PUBLISHABLE_SIGNAL_MAX_AGE_SECONDS)
+                if detected_at
+                else None
+            )
+            items.append(
+                {
+                **signal.as_dict(),
+                "publishable": True,
+                "publishability_reason": "HIGH_VALIDATED_SIGNAL",
+                "publishable_until": publishable_until.isoformat()
+                if publishable_until
+                else None,
+                "social_preview": _social_preview(signal),
+                }
+            )
+        return items
+
+    def publishable_signals(self, plan: Plan = Plan.EXPLORER):
+        items = self._publishable_rows(plan)
+        return {
+            "mode": self.mode,
+            "total": len(items),
+            "limit": (
+                PUBLISHABLE_SIGNAL_LIMIT
+                if entitlement(plan).permits(Feature.DETAILS)
+                else EXPLORER_PUBLISHABLE_SIGNAL_LIMIT
+            ),
+            "items": items,
+            "as_of": utcnow().isoformat(),
+        }
+
     def health(self):
         plays = self._plays()
         metrics = Counter(
@@ -750,6 +896,7 @@ class PlayService:
                 "stale_data_rejections": 0,
                 "liquidity_rejections": 0,
                 "confidence_rejections": 0,
+                "publishable_signals": len(self._publishable_rows(Plan.PRO)),
             }
         )
         for play in plays:

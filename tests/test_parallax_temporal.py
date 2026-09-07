@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
+from plistlib import load as load_plist
 from threading import Thread
 from urllib.request import urlopen
 
@@ -11,10 +13,11 @@ import pytest
 from parallax.api import server
 from parallax.demo import demo_inputs
 from parallax.entitlements import Plan
-from parallax.models import SignalType, timestamp
+from parallax.models import Side, SignalSignificance, SignalType, timestamp, utcnow
 from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.service import (
     OBSERVATION_HISTORY_LIMIT,
+    PUBLISHABLE_SIGNAL_LIMIT,
     SIGNAL_HISTORY_LIMIT,
     PlayService,
 )
@@ -43,6 +46,19 @@ def items_of_type(service, signal_type):
 
 def all_signals(service):
     return service.signals(Plan.PRO)["items"]
+
+
+def tight_context_market(market, **changes):
+    defaults = {
+        "yes_bid": 0.30,
+        "yes_ask": 0.32,
+        "event_title": "Villarreal CF vs Real Betis",
+        "title": "Both Teams To Score",
+        "category": "Soccer",
+        "resolution_time": "2099-09-14T23:00:00+00:00",
+    }
+    defaults.update(changes)
+    return replace(market, **defaults)
 
 
 def test_source_event_metadata_and_url_survive_normalization():
@@ -537,6 +553,184 @@ def test_persistent_liquidity_change_can_become_high(temporal):
     assert [signal["significance"] for signal in signals] == ["HIGH", "MATERIAL"]
     assert signals[0]["previous_value"] == 85
     assert signals[0]["current_value"] == 700
+
+
+def test_high_valid_price_move_enters_publishable_queue(temporal):
+    service, market = temporal
+    baseline = tight_context_market(market)
+    service.replace_inputs([baseline])
+    service.replace_inputs([later(baseline, yes_bid=0.43, yes_ask=0.45)])
+    payload = service.publishable_signals(Plan.PRO)
+    assert payload["total"] == 1
+    signal = payload["items"][0]
+    assert signal["signal_type"] == "PRICE_MOVE"
+    assert signal["publishable"] is True
+    assert signal["publishability_reason"] == "HIGH_VALIDATED_SIGNAL"
+    assert signal["publishable_until"]
+    assert "Not a BUY recommendation" in signal["social_preview"]
+
+
+def test_material_signal_does_not_enter_publishable_queue(temporal):
+    service, market = temporal
+    baseline = tight_context_market(market)
+    service.replace_inputs([baseline])
+    service.replace_inputs([later(baseline, yes_bid=0.36, yes_ask=0.38)])
+    assert service.signals(Plan.PRO)["total"] == 1
+    assert service.publishable_signals(Plan.PRO)["items"] == []
+
+
+def test_high_sports_signal_without_event_context_is_not_publishable(temporal):
+    service, market = temporal
+    baseline = tight_context_market(market, event_title=None)
+    service.replace_inputs([baseline])
+    service.replace_inputs([later(baseline, yes_bid=0.43, yes_ask=0.45)])
+    assert service.signals(Plan.PRO)["total"] == 1
+    assert service.publishable_signals(Plan.PRO)["items"] == []
+
+
+def test_stale_high_signal_is_not_publishable(temporal):
+    service, market = temporal
+    baseline = tight_context_market(market)
+    service.replace_inputs([baseline])
+    service.replace_inputs([later(baseline, yes_bid=0.43, yes_ask=0.45)])
+    stale_at = utcnow() - timedelta(minutes=6)
+    service.signal_history[0] = replace(
+        service.signal_history[0],
+        detected_at=stale_at.isoformat(),
+    )
+    assert service.publishable_signals(Plan.PRO)["items"] == []
+
+
+def test_expired_signal_is_not_publishable(temporal):
+    service, market = temporal
+    baseline = tight_context_market(market, resolution_time="2000-01-01T00:00:00+00:00")
+    service.replace_inputs([baseline])
+    service.replace_inputs([later(baseline, yes_bid=0.43, yes_ask=0.45)])
+    assert service.signals(Plan.PRO)["total"] == 1
+    assert service.publishable_signals(Plan.PRO)["items"] == []
+
+
+def test_publishable_queue_limit_and_ranking(temporal):
+    service, market = temporal
+    detected_at = utcnow()
+    markets = [
+        tight_context_market(
+            market,
+            venue_market_id=f"publishable-{idx}",
+            slug=f"publishable-{idx}",
+            title=f"Market {idx}",
+        )
+        for idx in range(12)
+    ]
+    service.replace_inputs(markets)
+    for idx, row in enumerate(markets):
+        signal_type = (
+            SignalType.PRICE_MOVE
+            if idx % 3 == 0
+            else SignalType.SPREAD_MOVE
+            if idx % 3 == 1
+            else SignalType.LIQUIDITY_MOVE
+        )
+        service.signal_history.append(
+            service._signal(
+                row,
+                signal_type,
+                Side.YES,
+                0.10 if signal_type != SignalType.LIQUIDITY_MOVE else 100,
+                0.25 if signal_type != SignalType.LIQUIDITY_MOVE else 700,
+                30,
+                SignalSignificance.HIGH,
+                "Validated test signal.",
+                detected_at,
+                percent_change=600 if signal_type == SignalType.LIQUIDITY_MOVE else None,
+            )
+        )
+    payload = service.publishable_signals(Plan.PRO)
+    explorer = service.publishable_signals(Plan.EXPLORER)
+    assert payload["limit"] == PUBLISHABLE_SIGNAL_LIMIT
+    assert len(payload["items"]) == PUBLISHABLE_SIGNAL_LIMIT
+    assert len(explorer["items"]) == explorer["limit"] == 3
+    types = [item["signal_type"] for item in payload["items"]]
+    assert types[:4] == ["PRICE_MOVE"] * 4
+    assert types[4:8] == ["SPREAD_MOVE"] * 4
+    assert types[8:] == ["LIQUIDITY_MOVE"] * 2
+
+
+def test_social_preview_is_deterministic_human_readable_and_safe(temporal):
+    service, market = temporal
+    baseline = tight_context_market(market)
+    service.replace_inputs([baseline])
+    service.replace_inputs([later(baseline, yes_bid=0.43, yes_ask=0.45)])
+    first = service.publishable_signals(Plan.PRO)["items"][0]["social_preview"]
+    second = service.publishable_signals(Plan.PRO)["items"][0]["social_preview"]
+    assert first == second
+    assert "Polymarket" in first
+    assert "Villarreal CF vs Real Betis — Both Teams To Score" in first
+    assert "Price Move" in first
+    assert "YES: 32¢ -> 45¢" in first
+    assert "+13¢ in 1.5 min" in first
+    assert "Signal Strength: HIGH" in first
+    assert "Not a BUY recommendation" in first
+    lowered = first.casefold()
+    assert "probability" not in lowered
+    assert "fair value" not in lowered
+    assert "profit" not in lowered
+    assert "payout" not in lowered
+    assert "because" not in lowered
+
+
+def test_publishable_route_health_metric_and_raw_signals_unchanged(temporal):
+    service, market = temporal
+    baseline = tight_context_market(market)
+    service.replace_inputs([baseline])
+    service.replace_inputs([later(baseline, yes_bid=0.43, yes_ask=0.45)])
+    raw_signal = service.signals(Plan.PRO)["items"][0]
+    assert "publishable" not in raw_signal
+    assert "social_preview" not in raw_signal
+    assert service.health()["metrics"]["publishable_signals"] == 1
+
+    api = server(service, port=0, resolve_plan=lambda headers: Plan.PRO)
+    thread = Thread(target=api.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urlopen(
+            f"http://127.0.0.1:{api.server_port}/signals/publishable"
+        ) as response:
+            payload = json.load(response)
+        assert response.status == 200
+        assert payload["items"][0]["publishable"] is True
+    finally:
+        api.shutdown()
+        api.server_close()
+        thread.join(timeout=2)
+
+
+def test_launchd_plist_is_user_level_read_only_parallax_service():
+    path = Path("deploy/launchd/com.swarmaxis.parallax-intelligence.plist")
+    with path.open("rb") as handle:
+        plist = load_plist(handle)
+    assert plist["Label"] == "com.swarmaxis.parallax-intelligence"
+    assert plist["WorkingDirectory"] == "/Users/scottsteele/swarm-runtime/swarm-edge"
+    assert plist["RunAtLoad"] is True
+    assert plist["KeepAlive"] is True
+    assert plist["ProgramArguments"] == [
+        "/opt/homebrew/bin/uv",
+        "run",
+        "python",
+        "-m",
+        "parallax",
+        "serve",
+        "--limit",
+        "6",
+        "--port",
+        "8765",
+    ]
+    assert plist["StandardOutPath"].endswith("parallax-intelligence.log")
+    assert plist["StandardErrorPath"].endswith("parallax-intelligence.err.log")
+    joined = " ".join(plist["ProgramArguments"])
+    assert "sudo" not in joined
+    assert "maker" not in joined
+    assert "revenue" not in joined
 
 
 def test_duplicate_market_burst_reduced_to_one_surfaced_signal(temporal):

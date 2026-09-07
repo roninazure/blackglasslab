@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.swarmaxis.parallax-intelligence</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string>
+    <string>run</string>
+    <string>python</string>
+    <string>-m</string>
+    <string>parallax</string>
+    <string>serve</string>
+    <string>--limit</string>
+    <string>6</string>
+    <string>--port</string>
+    <string>8765</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/scottsteele/swarm-runtime/swarm-edge</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/scottsteele/Library/Logs/SwarmEdge/parallax-intelligence.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/scottsteele/Library/Logs/SwarmEdge/parallax-intelligence.err.log</string>
+</dict>
+</plist>

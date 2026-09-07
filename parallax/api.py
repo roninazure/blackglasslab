@@ -24,6 +24,10 @@ def handler_for(service: PlayService, resolve_plan=None):
                 filters = {k: v[0] for k, v in query.items()}
                 if route.path == "/plays":
                     payload = service.plays(plan, **filters)
+                elif route.path == "/signals/publishable":
+                    if filters:
+                        raise ValueError("Publishable signals do not accept filters")
+                    payload = service.publishable_signals(plan)
                 elif route.path == "/signals":
                     if filters:
                         raise ValueError("Signals do not accept filters")
