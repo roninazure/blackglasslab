@@ -8,6 +8,68 @@ from typing import Any
 from .models import Mechanics, NormalizedMarket, Venue
 
 
+def text(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def first_text(*values: Any) -> str | None:
+    for value in values:
+        result = text(value)
+        if result:
+            return result
+    return None
+
+
+def event_title_from_metadata(*metadata: Any) -> str | None:
+    for item in metadata:
+        if isinstance(item, dict):
+            result = first_text(
+                item.get("event_title"),
+                item.get("eventTitle"),
+                item.get("event_name"),
+                item.get("eventName"),
+                item.get("name"),
+                item.get("title"),
+            )
+            if result:
+                return result
+            event = item.get("event")
+            if isinstance(event, dict):
+                result = first_text(
+                    event.get("title"),
+                    event.get("name"),
+                    event.get("event_title"),
+                    event.get("eventTitle"),
+                )
+                if result:
+                    return result
+            events = item.get("events")
+            if isinstance(events, list):
+                for event_row in events:
+                    result = event_title_from_metadata(event_row)
+                    if result:
+                        return result
+    return None
+
+
+def source_url_from_metadata(*metadata: Any) -> str | None:
+    for item in metadata:
+        if isinstance(item, dict):
+            result = first_text(
+                item.get("source_url"),
+                item.get("sourceUrl"),
+                item.get("market_url"),
+                item.get("marketUrl"),
+                item.get("url"),
+            )
+            if result:
+                return result
+    return None
+
+
 def number(value: Any) -> float | None:
     if isinstance(value, dict):
         value = value.get("value")
@@ -56,6 +118,7 @@ def normalize_pmus(market: dict, book: dict, observed_at: str) -> NormalizedMark
     selection = str(raw.get("title") or "").strip()
     if selection and selection != title:
         title = f"{title} — {selection}"
+    event_title = event_title_from_metadata(market, raw)
     return NormalizedMarket(
         Venue.POLYMARKET,
         market["id"],
@@ -87,7 +150,7 @@ def normalize_pmus(market: dict, book: dict, observed_at: str) -> NormalizedMark
         stats.get("lastTradeSetTime"),
         book.get("transact_time"),
         observed_at,
-        None,
+        source_url_from_metadata(market, raw),
         Mechanics(
             # Whole-contract scenarios are conservative; do not assume fractional support.
             quantity_step=1,
@@ -102,11 +165,16 @@ def normalize_pmus(market: dict, book: dict, observed_at: str) -> NormalizedMark
             "depth_scope": "top_of_book",
             "volume_window": "24h",
         },
+        event_title=event_title,
     )
 
 
 def normalize_kalshi(
-    raw: dict, book: dict, observed_at: str, trades: list | None = None
+    raw: dict,
+    book: dict,
+    observed_at: str,
+    trades: list | None = None,
+    event: dict | None = None,
 ) -> NormalizedMarket:
     """Kalshi exposes YES/NO bids. Opposite bids imply asks at 1 - bid."""
     fp = book.get("orderbook_fp")
@@ -139,6 +207,7 @@ def normalize_kalshi(
     if not ranges and raw.get("price_level_structure") == "linear_cent":
         ranges = ((0, 1, 0.01),)
     ticker = str(raw["ticker"])
+    event_title = event_title_from_metadata(event, raw)
     rules = "\n".join(
         str(raw.get(k) or "") for k in ("rules_primary", "rules_secondary")
     ).strip()
@@ -172,7 +241,7 @@ def normalize_kalshi(
         or None,
         observed_at if book else None,
         observed_at,
-        None,
+        source_url_from_metadata(raw, event),
         Mechanics(
             quantity_step=1,
             minimum_quantity=1,
@@ -185,9 +254,11 @@ def normalize_kalshi(
             "market": raw,
             "book": book,
             "trades": trades,
+            "event": event,
             "venue_reference": ticker,
             "volume_window": "24h",
             "trade_count_scope": "returned sample (up to 100)",
         },
         timestamp_basis="local REST receipt; venue book timestamp unavailable",
+        event_title=event_title,
     )

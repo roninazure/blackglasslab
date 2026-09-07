@@ -105,6 +105,7 @@ class NormalizedMarket:
     original_metadata: dict[str, Any] = field(default_factory=dict)
     timestamp_basis: str = "source"
     demo: bool = False
+    event_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -230,6 +231,17 @@ class ParallaxSignal:
     market_url: str | None
     market_reference: str
     resolution_time: str | None
+    event_title: str | None = None
+    display_title: str | None = None
+    category: str | None = None
+    direction: str | None = None
+    signal_label: str | None = None
+    signal_strength: str | None = None
+    formatted_previous_value: str | None = None
+    formatted_current_value: str | None = None
+    formatted_change: str | None = None
+    formatted_window: str | None = None
+    resolution_label: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

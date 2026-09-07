@@ -132,7 +132,7 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
             except (OSError, ValueError, KeyError) as exc:
                 failure("KALSHI", "activity", exc)
             try:
-                market = normalize_kalshi(row, book, observed_at, trades)
+                market = normalize_kalshi(row, book, observed_at, trades, event)
                 market = replace(market, data_timestamp=discovery_at)
                 markets.append(
                     attach_fees(market, utcnow(), event=event, series=fee_series)

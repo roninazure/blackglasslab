@@ -9,7 +9,7 @@ from hashlib import sha256
 from threading import RLock
 from typing import Any
 
-from .engine import qualify
+from .engine import MAX_SPREAD, qualify
 from .entitlements import Feature, Plan, entitlement
 from .models import (
     Action,
@@ -52,6 +52,115 @@ def _display_price(value: float) -> str:
 
 def _display_quantity(value: float) -> str:
     return f"{value:,.0f}" if value.is_integer() else f"{value:,.2f}"
+
+
+def _display_signed_price_change(previous_value: float, current_value: float) -> str:
+    change = round((current_value - previous_value) * 100, 1)
+    prefix = "+" if change > 0 else ""
+    return f"{prefix}{change:.0f}¢" if change.is_integer() else f"{prefix}{change:.1f}¢"
+
+
+def _display_signed_quantity_change(previous_value: float, current_value: float) -> str:
+    change = current_value - previous_value
+    prefix = "+" if change > 0 else ""
+    return f"{prefix}{_display_quantity(change)} contracts"
+
+
+def _display_window(seconds: float) -> str:
+    rounded = round(seconds)
+    if rounded < 60:
+        return f"{rounded} sec"
+    minutes = rounded / 60
+    return f"{minutes:.0f} min" if minutes.is_integer() else f"{minutes:.1f} min"
+
+
+def _display_resolution(value: str | None) -> str | None:
+    resolved_at = timestamp(value)
+    if resolved_at is None:
+        return None
+    return f"{resolved_at:%b} {resolved_at.day}, {resolved_at.year}"
+
+
+def _dedupe_text(value: str) -> str:
+    return " ".join(value.casefold().replace("—", " ").replace("-", " ").split())
+
+
+def _display_title(event_title: str | None, market_title: str) -> str:
+    event = (event_title or "").strip()
+    market = market_title.strip()
+    if not event:
+        return market
+    event_key = _dedupe_text(event)
+    market_key = _dedupe_text(market)
+    if event_key and (event_key in market_key or market_key in event_key):
+        return market
+    return f"{event} — {market}"
+
+
+def _signal_direction(
+    signal_type: SignalType,
+    previous_value: float,
+    current_value: float,
+) -> str:
+    if signal_type == SignalType.SPREAD_MOVE:
+        return "COMPRESSED" if current_value < previous_value else "WIDENED"
+    if signal_type == SignalType.LIQUIDITY_MOVE:
+        return "INCREASED" if current_value > previous_value else "DECREASED"
+    return "UP" if current_value > previous_value else "DOWN"
+
+
+def _signal_label(signal_type: SignalType, direction: str) -> str:
+    if signal_type == SignalType.SPREAD_MOVE:
+        return "Spread Compression" if direction == "COMPRESSED" else "Spread Widening"
+    if signal_type == SignalType.LIQUIDITY_MOVE:
+        return (
+            "Liquidity Increase" if direction == "INCREASED" else "Liquidity Decrease"
+        )
+    return "Price Move"
+
+
+def _formatted_previous_current_change(
+    signal_type: SignalType,
+    previous_value: float,
+    current_value: float,
+) -> tuple[str, str, str]:
+    if signal_type == SignalType.LIQUIDITY_MOVE:
+        return (
+            f"{_display_quantity(previous_value)} contracts",
+            f"{_display_quantity(current_value)} contracts",
+            _display_signed_quantity_change(previous_value, current_value),
+        )
+    return (
+        _display_price(previous_value),
+        _display_price(current_value),
+        _display_signed_price_change(previous_value, current_value),
+    )
+
+
+def _valid_two_sided_book(bid: float | None, ask: float | None) -> bool:
+    return (
+        bid is not None
+        and ask is not None
+        and math.isfinite(bid)
+        and math.isfinite(ask)
+        and 0 < bid < ask < 1
+        and ask - bid <= MAX_SPREAD
+    )
+
+
+def _valid_side_books(
+    previous: NormalizedMarket,
+    current: NormalizedMarket,
+    side: Side,
+) -> bool:
+    name = side.value.lower()
+    return _valid_two_sided_book(
+        getattr(previous, f"{name}_bid"),
+        getattr(previous, f"{name}_ask"),
+    ) and _valid_two_sided_book(
+        getattr(current, f"{name}_bid"),
+        getattr(current, f"{name}_ask"),
+    )
 
 
 class PlayService:
@@ -150,6 +259,14 @@ class PlayService:
         *,
         percent_change: float | None = None,
     ) -> ParallaxSignal:
+        direction = _signal_direction(signal_type, previous_value, current_value)
+        previous_display, current_display, change_display = (
+            _formatted_previous_current_change(
+                signal_type,
+                previous_value,
+                current_value,
+            )
+        )
         return ParallaxSignal(
             id=cls._signal_id(market, signal_type, side, detected_at),
             detected_at=detected_at.isoformat(),
@@ -168,6 +285,17 @@ class PlayService:
             market_url=market.source_url,
             market_reference=market.slug or market.venue_market_id,
             resolution_time=market.resolution_time,
+            event_title=market.event_title,
+            display_title=_display_title(market.event_title, market.title),
+            category=market.category,
+            direction=direction,
+            signal_label=_signal_label(signal_type, direction),
+            signal_strength=significance.value,
+            formatted_previous_value=previous_display,
+            formatted_current_value=current_display,
+            formatted_change=change_display,
+            formatted_window=_display_window(window_seconds),
+            resolution_label=_display_resolution(market.resolution_time),
         )
 
     @staticmethod
@@ -310,9 +438,12 @@ class PlayService:
         window_text = f"{window:.0f} seconds"
         for side in Side:
             name = side.value.lower()
+            prior_bid = getattr(previous, f"{name}_bid")
+            current_bid = getattr(current, f"{name}_bid")
             prior_ask = getattr(previous, f"{name}_ask")
             current_ask = getattr(current, f"{name}_ask")
-            if prior_ask is not None and current_ask is not None:
+            valid_books = _valid_side_books(previous, current, side)
+            if valid_books and prior_ask is not None and current_ask is not None:
                 change = abs(current_ask - prior_ask)
                 if change >= PRICE_MOVE_THRESHOLD:
                     significance = (
@@ -335,9 +466,13 @@ class PlayService:
                         )
                     )
 
-            prior_bid = getattr(previous, f"{name}_bid")
-            current_bid = getattr(current, f"{name}_bid")
-            if None not in (prior_bid, prior_ask, current_bid, current_ask):
+            if (
+                valid_books
+                and prior_bid is not None
+                and prior_ask is not None
+                and current_bid is not None
+                and current_ask is not None
+            ):
                 prior_spread = max(0.0, prior_ask - prior_bid)
                 current_spread = max(0.0, current_ask - current_bid)
                 change = abs(current_spread - prior_spread)
@@ -368,7 +503,7 @@ class PlayService:
 
             prior_levels = previous.executable_depth.get(side.value, ())
             current_levels = current.executable_depth.get(side.value, ())
-            if prior_levels and current_levels:
+            if valid_books and prior_levels and current_levels:
                 prior_depth = float(prior_levels[0][1])
                 current_depth = float(current_levels[0][1])
                 key = self._signal_key(current, SignalType.LIQUIDITY_MOVE, side)
