@@ -58,6 +58,10 @@ class Mechanics:
     fee_rounding: str = "HALF_EVEN"
     fee_source: str = "Unknown"
     fee_valid_until: str | None = None
+    fee_status: str = "REVIEWED"
+    fee_observed_at: str | None = None
+    fee_buffer_per_contract: float = 0
+    fee_balance_precision: float = 0.01
 
 
 @dataclass(frozen=True)

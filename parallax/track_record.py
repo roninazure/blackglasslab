@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -25,6 +26,13 @@ class TrackRecord:
                     play_id TEXT PRIMARY KEY REFERENCES publications(play_id),
                     settled_at TEXT NOT NULL, snapshot TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS candidates (
+                    candidate_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL
+                );
+                CREATE TRIGGER IF NOT EXISTS candidates_no_update BEFORE UPDATE ON candidates
+                    BEGIN SELECT RAISE(ABORT, 'Immutable candidate'); END;
+                CREATE TRIGGER IF NOT EXISTS candidates_no_delete BEFORE DELETE ON candidates
+                    BEGIN SELECT RAISE(ABORT, 'Immutable candidate'); END;
                 CREATE TRIGGER IF NOT EXISTS publications_no_update BEFORE UPDATE ON publications
                     BEGIN SELECT RAISE(ABORT, 'Immutable publication'); END;
                 CREATE TRIGGER IF NOT EXISTS publications_no_delete BEFORE DELETE ON publications
@@ -78,6 +86,41 @@ class TrackRecord:
                 (play.id, now.isoformat(), json.dumps(snapshot, allow_nan=False)),
             )
             return cursor.rowcount == 1
+
+    def candidate(self, candidate_id, market, side, evidence, *, now=None) -> dict:
+        """Freeze a dry run without calling publish or consuming public identities."""
+        now = now or utcnow()
+        if not re.fullmatch(r"PX-CANDIDATE-\d{8}-\d{3}", candidate_id):
+            raise ValueError("Provisional candidate ID required")
+        play = qualify(market, side, evidence, now=now)
+        if play.demo or play.suggested_action != Action.BUY:
+            raise ValueError("Only freshly qualified real BUY candidates can be frozen")
+        view = play.as_dict()
+        view.update(id=candidate_id, status="PRE-PUBLICATION VALIDATION CANDIDATE")
+        snapshot = {
+            "play_id": candidate_id,
+            "published_at": None,
+            "candidate_at": now.isoformat(),
+            "dry_run": True,
+            "status": "NOT YET PUBLISHED",
+            "venue": play.venue,
+            "market": play.market_id,
+            "side": play.side,
+            "entry_price_at_publication": play.executable_price,
+            "fair_value_at_publication": play.parallax_fair_value,
+            "edge_at_publication": play.edge_points,
+            "confidence": play.confidence_band,
+            "verdict": play.suggested_action,
+            "resolution_time": play.resolution_time,
+            "play": view,
+            "market_snapshot": asdict(market),
+        }
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO candidates VALUES (?, ?)",
+                (candidate_id, json.dumps(snapshot, allow_nan=False)),
+            )
+        return snapshot
 
     def settle(
         self,

@@ -119,7 +119,11 @@ def qualify(
     fee_until = timestamp(market.mechanics.fee_valid_until)
     fees_known = bool(
         market.mechanics.fee_rate is not None
-        and market.mechanics.fee_source != "Unknown"
+        and math.isfinite(market.mechanics.fee_rate)
+        and market.mechanics.fee_rate >= 0
+        and market.mechanics.fee_source.strip() not in ("", "Unknown")
+        and market.mechanics.fee_status
+        in {"REVIEWED", "VERIFIED_SCHEDULE", "VERIFIED_UPPER_BOUND"}
         and fee_until
         and now < fee_until
     )
@@ -191,9 +195,15 @@ def qualify(
         ),
     }
     failed = tuple(k for k, (ok, _) in gates.items() if not ok)
-    hard = {"market_closed", "invalid_price", "rules_ambiguous", "contradiction"}
+    hard = {"market_closed", "invalid_price", "contradiction"}
+    # Missing value blocks BUY but need not label otherwise viable quotes PASS.
+    # Missing rules or supplied evidence bound to different rules remains a hard fail.
+    if not market.resolution_rules.strip() or evidence is not None:
+        hard.add("rules_ambiguous")
     if edge is not None and edge <= 0:
         hard.add("edge")
+    if ev is not None and ev <= 0:
+        hard.add("risk_reward")
     if resolution and resolution <= now:
         hard.add("resolution_unknown")
     action = (
