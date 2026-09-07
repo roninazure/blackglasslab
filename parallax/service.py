@@ -37,6 +37,12 @@ LIQUIDITY_HIGH_ABSOLUTE_THRESHOLD = 500.0
 LIQUIDITY_HIGH_PERCENT_THRESHOLD = 100.0
 OBSERVATION_HISTORY_LIMIT = 2
 SIGNAL_HISTORY_LIMIT = 200
+SIGNAL_DEDUPE_COOLDOWN_SECONDS = 15 * 60
+SIGNAL_PRIORITY = {
+    SignalType.PRICE_MOVE: 0,
+    SignalType.SPREAD_MOVE: 1,
+    SignalType.LIQUIDITY_MOVE: 2,
+}
 
 
 def _display_price(value: float) -> str:
@@ -68,6 +74,12 @@ class PlayService:
         self.signal_history: deque[ParallaxSignal] = deque(
             maxlen=SIGNAL_HISTORY_LIMIT
         )
+        self.last_emitted_signals: dict[
+            tuple[Venue, str, SignalType, Side], ParallaxSignal
+        ] = {}
+        self.pending_liquidity_high: dict[
+            tuple[Venue, str, SignalType, Side], tuple[float, float]
+        ] = {}
 
     def replace_inputs(self, markets, evidence=None, collection=None, *, mode="live"):
         if mode not in {"live", "demo"} or any(
@@ -158,16 +170,141 @@ class PlayService:
             resolution_time=market.resolution_time,
         )
 
-    @classmethod
+    @staticmethod
+    def _signal_key(
+        market: NormalizedMarket,
+        signal_type: SignalType,
+        side: Side,
+    ) -> tuple[Venue, str, SignalType, Side]:
+        return (market.venue, market.venue_market_id, signal_type, side)
+
+    @staticmethod
+    def _percent_change(previous_value: float, current_value: float) -> float | None:
+        if previous_value <= 0:
+            return None
+        return (current_value - previous_value) / previous_value * 100
+
+    @staticmethod
+    def _liquidity_significant(
+        previous_value: float,
+        current_value: float,
+    ) -> tuple[bool, bool, float | None]:
+        absolute = abs(current_value - previous_value)
+        percent = PlayService._percent_change(previous_value, current_value)
+        percent_abs = abs(percent) if percent is not None else None
+        material = (
+            percent_abs is not None
+            and absolute >= LIQUIDITY_ABSOLUTE_THRESHOLD
+            and percent_abs >= LIQUIDITY_PERCENT_THRESHOLD
+        )
+        high = (
+            material
+            and absolute >= LIQUIDITY_HIGH_ABSOLUTE_THRESHOLD
+            and percent_abs is not None
+            and percent_abs >= LIQUIDITY_HIGH_PERCENT_THRESHOLD
+        )
+        return material, high, percent
+
+    @staticmethod
+    def _same_direction(
+        prior_start: float,
+        prior_current: float,
+        current_value: float,
+    ) -> bool:
+        prior_direction = prior_current - prior_start
+        current_direction = current_value - prior_start
+        return (
+            prior_direction != 0
+            and current_direction != 0
+            and (prior_direction > 0) == (current_direction > 0)
+        )
+
+    def _should_emit_signal(
+        self,
+        signal: ParallaxSignal,
+        threshold: float,
+        detected_at: datetime,
+    ) -> bool:
+        key = (signal.venue, signal.market_id, signal.signal_type, signal.side)
+        last = self.last_emitted_signals.get(key)
+        if last is None:
+            self.last_emitted_signals[key] = signal
+            return True
+        if (
+            last.significance == SignalSignificance.MATERIAL
+            and signal.significance == SignalSignificance.HIGH
+        ):
+            self.last_emitted_signals[key] = signal
+            return True
+        if abs(signal.current_value - last.current_value) >= threshold:
+            self.last_emitted_signals[key] = signal
+            return True
+        last_at = timestamp(last.detected_at)
+        if (
+            last_at is not None
+            and (detected_at - last_at).total_seconds()
+            >= SIGNAL_DEDUPE_COOLDOWN_SECONDS
+        ):
+            self.last_emitted_signals[key] = signal
+            return True
+        return False
+
+    def _append_signal(
+        self,
+        signals: list[ParallaxSignal],
+        signal: ParallaxSignal,
+        threshold: float,
+        detected_at: datetime,
+    ) -> None:
+        if self._should_emit_signal(signal, threshold, detected_at):
+            signals.append(signal)
+
+    @staticmethod
+    def _dedupe_threshold(signal_type: SignalType) -> float:
+        if signal_type == SignalType.PRICE_MOVE:
+            return PRICE_MOVE_THRESHOLD
+        if signal_type == SignalType.SPREAD_MOVE:
+            return SPREAD_MOVE_THRESHOLD
+        return LIQUIDITY_ABSOLUTE_THRESHOLD
+
+    @staticmethod
+    def _best_signal(signals: list[ParallaxSignal]) -> ParallaxSignal | None:
+        if not signals:
+            return None
+        return min(
+            signals,
+            key=lambda signal: (
+                SIGNAL_PRIORITY[signal.signal_type],
+                -signal.absolute_change,
+            ),
+        )
+
+    def _surface_window_signals(
+        self,
+        candidates: list[ParallaxSignal],
+        detected_at: datetime,
+    ) -> list[ParallaxSignal]:
+        signal = self._best_signal(candidates)
+        if signal is None:
+            return []
+        surfaced: list[ParallaxSignal] = []
+        self._append_signal(
+            surfaced,
+            signal,
+            self._dedupe_threshold(signal.signal_type),
+            detected_at,
+        )
+        return surfaced
+
     def _detect_signals(
-        cls,
+        self,
         previous: NormalizedMarket,
         current: NormalizedMarket,
         previous_detected_at: datetime,
         detected_at: datetime,
     ) -> list[ParallaxSignal]:
         signals: list[ParallaxSignal] = []
-        window = cls._window_seconds(
+        window = self._window_seconds(
             previous, current, previous_detected_at, detected_at
         )
         window_text = f"{window:.0f} seconds"
@@ -184,7 +321,7 @@ class PlayService:
                         else SignalSignificance.MATERIAL
                     )
                     signals.append(
-                        cls._signal(
+                        self._signal(
                             current,
                             SignalType.PRICE_MOVE,
                             side,
@@ -214,7 +351,7 @@ class PlayService:
                         "compressed" if current_spread < prior_spread else "widened"
                     )
                     signals.append(
-                        cls._signal(
+                        self._signal(
                             current,
                             SignalType.SPREAD_MOVE,
                             side,
@@ -234,26 +371,61 @@ class PlayService:
             if prior_levels and current_levels:
                 prior_depth = float(prior_levels[0][1])
                 current_depth = float(current_levels[0][1])
-                absolute = abs(current_depth - prior_depth)
-                percent = (
-                    (current_depth - prior_depth) / prior_depth * 100
-                    if prior_depth > 0
-                    else None
-                )
-                if (
-                    percent is not None
-                    and absolute >= LIQUIDITY_ABSOLUTE_THRESHOLD
-                    and abs(percent) >= LIQUIDITY_PERCENT_THRESHOLD
-                ):
-                    significance = (
-                        SignalSignificance.HIGH
-                        if absolute >= LIQUIDITY_HIGH_ABSOLUTE_THRESHOLD
-                        and abs(percent) >= LIQUIDITY_HIGH_PERCENT_THRESHOLD
-                        else SignalSignificance.MATERIAL
+                key = self._signal_key(current, SignalType.LIQUIDITY_MOVE, side)
+                pending = self.pending_liquidity_high.get(key)
+                if pending is not None:
+                    pending_start, pending_current = pending
+                    _, persistent_high, persistent_percent = (
+                        self._liquidity_significant(pending_start, current_depth)
                     )
-                    direction = "increased" if current_depth > prior_depth else "decreased"
+                    if persistent_high and self._same_direction(
+                        pending_start, pending_current, current_depth
+                    ):
+                        direction = (
+                            "increased"
+                            if current_depth > pending_start
+                            else "decreased"
+                        )
+                        signals.append(
+                            self._signal(
+                                current,
+                                SignalType.LIQUIDITY_MOVE,
+                                side,
+                                pending_start,
+                                current_depth,
+                                window,
+                                SignalSignificance.HIGH,
+                                f"Executable {side} depth {direction} from "
+                                f"{_display_quantity(pending_start)} to "
+                                f"{_display_quantity(current_depth)} contracts.",
+                                detected_at,
+                                percent_change=persistent_percent,
+                            )
+                        )
+                        self.pending_liquidity_high.pop(key, None)
+                        continue
+                    if not self._same_direction(
+                        pending_start, pending_current, current_depth
+                    ):
+                        self.pending_liquidity_high.pop(key, None)
+                        continue
+                    self.pending_liquidity_high.pop(key, None)
+
+                material, high_candidate, percent = self._liquidity_significant(
+                    prior_depth, current_depth
+                )
+                if material:
+                    significance = SignalSignificance.MATERIAL
+                    if high_candidate:
+                        self.pending_liquidity_high[key] = (
+                            prior_depth,
+                            current_depth,
+                        )
+                    direction = (
+                        "increased" if current_depth > prior_depth else "decreased"
+                    )
                     signals.append(
-                        cls._signal(
+                        self._signal(
                             current,
                             SignalType.LIQUIDITY_MOVE,
                             side,
@@ -268,7 +440,7 @@ class PlayService:
                             percent_change=percent,
                         )
                     )
-        return signals
+        return self._surface_window_signals(signals, detected_at)
 
     def _plays(self):
         now = utcnow()

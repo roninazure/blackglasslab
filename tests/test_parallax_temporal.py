@@ -40,6 +40,10 @@ def items_of_type(service, signal_type):
     ]
 
 
+def all_signals(service):
+    return service.signals(Plan.PRO)["items"]
+
+
 def test_first_observation_creates_no_signal(temporal):
     service, market = temporal
     service.replace_inputs([market])
@@ -62,6 +66,62 @@ def test_material_price_move_without_fair_value_or_order(temporal):
     assert service.alert_candidates(Plan.PRO) == []
     assert service.store.summary()["published_plays"] == 0
     assert service.health()["live_orders"] == 0
+
+
+def test_price_beats_spread_and_liquidity_in_same_window(temporal):
+    service, market = temporal
+    baseline = replace(
+        market,
+        yes_bid=0.24,
+        yes_ask=0.32,
+        executable_depth={"YES": ((0.32, 85),)},
+    )
+    current = later(
+        baseline,
+        yes_bid=0.20,
+        yes_ask=0.39,
+        executable_depth={"YES": ((0.39, 700),)},
+    )
+    service.replace_inputs([baseline])
+    service.replace_inputs([current])
+    signals = all_signals(service)
+    assert len(signals) == 1
+    assert signals[0]["signal_type"] == "PRICE_MOVE"
+
+
+def test_duplicate_price_alert_suppressed(temporal):
+    service, market = temporal
+    first_move = later(market, yes_ask=market.yes_ask + 0.07)
+    quiet_pullback = later(first_move, yes_ask=market.yes_ask + 0.045)
+    duplicate_churn = later(quiet_pullback, yes_ask=market.yes_ask + 0.096)
+    service.replace_inputs([market])
+    service.replace_inputs([first_move])
+    service.replace_inputs([quiet_pullback])
+    service.replace_inputs([duplicate_churn])
+    signals = items_of_type(service, SignalType.PRICE_MOVE)
+    assert len(signals) == 1
+    assert signals[0]["current_value"] == first_move.yes_ask
+
+
+def test_price_cooldown_preserved(temporal):
+    service, market = temporal
+    first_move = later(market, yes_ask=market.yes_ask + 0.07)
+    quiet_pullback = later(first_move, yes_ask=market.yes_ask + 0.04)
+    after_cooldown = later(quiet_pullback, yes_ask=market.yes_ask + 0.095)
+    service.replace_inputs([market])
+    service.replace_inputs([first_move])
+    key = next(iter(service.last_emitted_signals))
+    older = timestamp(service.last_emitted_signals[key].detected_at) - timedelta(
+        minutes=16
+    )
+    service.last_emitted_signals[key] = replace(
+        service.last_emitted_signals[key],
+        detected_at=older.isoformat(),
+    )
+    service.replace_inputs([quiet_pullback])
+    service.replace_inputs([after_cooldown])
+    signals = items_of_type(service, SignalType.PRICE_MOVE)
+    assert len(signals) == 2
 
 
 def test_tiny_noise_creates_no_signal(temporal):
@@ -94,6 +154,62 @@ def test_spread_move(temporal, bid, ask, direction):
     assert direction in signals[0]["explanation"]
 
 
+def test_spread_beats_liquidity_without_price(temporal):
+    service, market = temporal
+    baseline = replace(
+        market,
+        yes_bid=0.24,
+        yes_ask=0.32,
+        executable_depth={"YES": ((0.32, 85),)},
+    )
+    current = later(
+        baseline,
+        yes_bid=0.20,
+        executable_depth={"YES": ((0.32, 700),)},
+    )
+    service.replace_inputs([baseline])
+    service.replace_inputs([current])
+    signals = all_signals(service)
+    assert len(signals) == 1
+    assert signals[0]["signal_type"] == "SPREAD_MOVE"
+
+
+def test_only_one_spread_signal_for_mirrored_yes_no_movement(temporal):
+    service, market = temporal
+    baseline = replace(
+        market,
+        yes_bid=0.24,
+        yes_ask=0.32,
+        no_bid=0.68,
+        no_ask=0.76,
+    )
+    current = later(
+        baseline,
+        yes_bid=0.19,
+        no_ask=0.80,
+    )
+    service.replace_inputs([baseline])
+    service.replace_inputs([current])
+    signals = items_of_type(service, SignalType.SPREAD_MOVE)
+    assert len(signals) == 1
+    assert signals[0]["side"] == "YES"
+
+
+def test_duplicate_spread_churn_suppressed(temporal):
+    service, market = temporal
+    baseline = replace(market, yes_bid=0.24, yes_ask=0.32)
+    first_widening = later(baseline, yes_bid=0.20, yes_ask=0.32)
+    quiet_compression = later(first_widening, yes_bid=0.215, yes_ask=0.32)
+    duplicate_widening = later(quiet_compression, yes_bid=0.184, yes_ask=0.32)
+    service.replace_inputs([baseline])
+    service.replace_inputs([first_widening])
+    service.replace_inputs([quiet_compression])
+    service.replace_inputs([duplicate_widening])
+    signals = items_of_type(service, SignalType.SPREAD_MOVE)
+    assert len(signals) == 1
+    assert signals[0]["current_value"] == pytest.approx(0.12)
+
+
 def test_liquidity_move(temporal):
     service, market = temporal
     baseline = replace(market, executable_depth={"YES": ((0.32, 85),)})
@@ -104,11 +220,79 @@ def test_liquidity_move(temporal):
     assert signal["previous_value"] == 85
     assert signal["current_value"] == 390
     assert signal["percent_change"] == pytest.approx(358.8235)
+    assert signal["significance"] == "MATERIAL"
+
+
+def test_liquidity_spike_reversal_suppressed(temporal):
+    service, market = temporal
+    baseline = replace(market, executable_depth={"YES": ((0.32, 85),)})
+    spike = later(baseline, executable_depth={"YES": ((0.32, 700),)})
+    reversal = later(spike, executable_depth={"YES": ((0.32, 85),)})
+    service.replace_inputs([baseline])
+    service.replace_inputs([spike])
+    service.replace_inputs([reversal])
+    signals = items_of_type(service, SignalType.LIQUIDITY_MOVE)
+    assert len(signals) == 1
+    assert signals[0]["significance"] == "MATERIAL"
+
+
+def test_one_snapshot_liquidity_spike_is_not_high(temporal):
+    service, market = temporal
+    baseline = replace(market, executable_depth={"YES": ((0.32, 85),)})
+    spike = later(baseline, executable_depth={"YES": ((0.32, 700),)})
+    service.replace_inputs([baseline])
+    service.replace_inputs([spike])
+    signal = items_of_type(service, SignalType.LIQUIDITY_MOVE)[0]
+    assert signal["significance"] == "MATERIAL"
+
+
+def test_persistent_liquidity_change_can_become_high(temporal):
+    service, market = temporal
+    baseline = replace(market, executable_depth={"YES": ((0.32, 85),)})
+    spike = later(baseline, executable_depth={"YES": ((0.32, 700),)})
+    persistent = later(spike, executable_depth={"YES": ((0.32, 700),)})
+    service.replace_inputs([baseline])
+    service.replace_inputs([spike])
+    service.replace_inputs([persistent])
+    signals = items_of_type(service, SignalType.LIQUIDITY_MOVE)
+    assert [signal["significance"] for signal in signals] == ["HIGH", "MATERIAL"]
+    assert signals[0]["previous_value"] == 85
+    assert signals[0]["current_value"] == 700
+
+
+def test_duplicate_market_burst_reduced_to_one_surfaced_signal(temporal):
+    service, market = temporal
+    baseline = replace(
+        market,
+        yes_bid=0.24,
+        yes_ask=0.32,
+        no_bid=0.68,
+        no_ask=0.76,
+        executable_depth={
+            "YES": ((0.32, 85),),
+            "NO": ((0.76, 90),),
+        },
+    )
+    burst = later(
+        baseline,
+        yes_bid=0.20,
+        yes_ask=0.39,
+        no_ask=0.81,
+        executable_depth={
+            "YES": ((0.39, 700),),
+            "NO": ((0.81, 650),),
+        },
+    )
+    service.replace_inputs([baseline])
+    service.replace_inputs([burst])
+    signals = all_signals(service)
+    assert len(signals) == 1
+    assert signals[0]["signal_type"] == "PRICE_MOVE"
 
 
 def test_signals_route_and_bounded_history(temporal):
     service, market = temporal
-    for step in range(OBSERVATION_HISTORY_LIMIT + 3):
+    for step in range(OBSERVATION_HISTORY_LIMIT + 5):
         service.replace_inputs([later(market, step * 90, yes_ask=0.32 + step * 0.06)])
     assert len(service.observation_history) == OBSERVATION_HISTORY_LIMIT
     assert len(service.observation_times) == OBSERVATION_HISTORY_LIMIT
