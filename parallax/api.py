@@ -28,6 +28,10 @@ def handler_for(service: PlayService, resolve_plan=None):
                     if filters:
                         raise ValueError("Publishable signals do not accept filters")
                     payload = service.publishable_signals(plan)
+                elif route.path == "/signals/explained":
+                    if filters:
+                        raise ValueError("Explained signals do not accept filters")
+                    payload = service.explained_signals(plan)
                 elif route.path == "/signals":
                     if filters:
                         raise ValueError("Signals do not accept filters")

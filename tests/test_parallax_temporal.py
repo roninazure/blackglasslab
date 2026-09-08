@@ -13,8 +13,17 @@ import pytest
 from parallax.api import server
 from parallax.demo import demo_inputs
 from parallax.entitlements import Plan
-from parallax.models import Side, SignalSignificance, SignalType, timestamp, utcnow
-from parallax.normalization import normalize_kalshi, normalize_pmus
+from parallax.models import (
+    Evidence,
+    Mechanics,
+    Side,
+    SignalSignificance,
+    SignalType,
+    Venue,
+    timestamp,
+    utcnow,
+)
+from parallax.normalization import normalize_kalshi, normalize_pmus, rules_digest
 from parallax.service import (
     OBSERVATION_HISTORY_LIMIT,
     PUBLISHABLE_SIGNAL_LIMIT,
@@ -59,6 +68,19 @@ def tight_context_market(market, **changes):
     }
     defaults.update(changes)
     return replace(market, **defaults)
+
+
+def no_fee_binary_mechanics():
+    return Mechanics(
+        quantity_step=0.001,
+        minimum_quantity=0.001,
+        price_ranges=((0.01, 0.99, 0.01),),
+        payout=1,
+        fee_rate=0,
+        fee_source="test fixture",
+        fee_valid_until="2099-01-01T00:00:00+00:00",
+        fee_status="REVIEWED",
+    )
 
 
 def test_source_event_metadata_and_url_survive_normalization():
@@ -648,12 +670,12 @@ def test_publishable_queue_limit_and_ranking(temporal):
     payload = service.publishable_signals(Plan.PRO)
     explorer = service.publishable_signals(Plan.EXPLORER)
     assert payload["limit"] == PUBLISHABLE_SIGNAL_LIMIT
-    assert len(payload["items"]) == PUBLISHABLE_SIGNAL_LIMIT
+    assert len(payload["items"]) == 8
     assert len(explorer["items"]) == explorer["limit"] == 3
     types = [item["signal_type"] for item in payload["items"]]
     assert types[:4] == ["PRICE_MOVE"] * 4
     assert types[4:8] == ["SPREAD_MOVE"] * 4
-    assert types[8:] == ["LIQUIDITY_MOVE"] * 2
+    assert "LIQUIDITY_MOVE" not in types
 
 
 def test_social_preview_is_deterministic_human_readable_and_safe(temporal):
@@ -669,7 +691,7 @@ def test_social_preview_is_deterministic_human_readable_and_safe(temporal):
     assert "Price Move" in first
     assert "YES: 32¢ -> 45¢" in first
     assert "+13¢ in 1.5 min" in first
-    assert "Signal Strength: HIGH" in first
+    assert "Market Activity Strength: HIGH" in first
     assert "Not a BUY recommendation" in first
     lowered = first.casefold()
     assert "probability" not in lowered
@@ -703,6 +725,225 @@ def test_publishable_route_health_metric_and_raw_signals_unchanged(temporal):
         api.shutdown()
         api.server_close()
         thread.join(timeout=2)
+
+
+def test_explained_aston_villa_liquidity_high_is_watch_not_buy(temporal):
+    service, market = temporal
+    opened_at = (utcnow() - timedelta(minutes=12, seconds=30)).isoformat()
+    baseline = replace(
+        market,
+        venue=Venue.KALSHI,
+        venue_market_id="KASTONVILLA-TEST",
+        slug="club-brugge-vs-aston-villa-margin",
+        title="Aston Villa wins by more than 3.5 goals?",
+        event_title="Club Brugge vs Aston Villa",
+        category="Soccer",
+        status="OPEN",
+        yes_bid=0.10,
+        yes_ask=0.11,
+        no_bid=0.89,
+        no_ask=0.90,
+        executable_depth={"NO": ((0.90, 1951.99),)},
+        original_metadata={"opened_at": opened_at},
+        resolution_time="2099-09-14T23:00:00+00:00",
+    )
+    spike = later(
+        baseline,
+        seconds=32,
+        executable_depth={"NO": ((0.90, 5087.43),)},
+    )
+    persistent = later(
+        spike,
+        seconds=32,
+        executable_depth={"NO": ((0.90, 5087.43),)},
+    )
+    service.replace_inputs([baseline])
+    service.replace_inputs([spike])
+    service.replace_inputs([persistent])
+
+    explained = service.explained_signals(Plan.PRO)["items"][0]
+    raw = service.signals(Plan.PRO)["items"][0]
+    retail = explained["retail_interpretation"]
+
+    assert raw["signal_type"] == "LIQUIDITY_MOVE"
+    assert raw["significance"] == "HIGH"
+    assert "retail_interpretation" not in raw
+    assert retail["verdict"] in {"WATCH", "PASS"}
+    assert retail["verdict"] != "BUY NO"
+    assert retail["actionability"] == "NOT_ACTIONABLE"
+    assert retail["directional_read"] in {"NEUTRAL", "UNKNOWN"}
+    assert retail["market_activity_strength"] == "HIGH"
+    assert retail["trade_confidence"] == "NONE"
+    assert "NO-side liquidity jumped" in retail["what_happened"]
+    assert "does not mean PARALLAX believes NO" in retail["what_it_does_not_mean"]
+    assert retail["current_market"]["yes_bid"] == pytest.approx(0.10)
+    assert retail["current_market"]["yes_ask"] == pytest.approx(0.11)
+    assert retail["current_market"]["no_bid"] == pytest.approx(0.89)
+    assert retail["current_market"]["no_ask"] == pytest.approx(0.90)
+    assert retail["current_market"]["market_age_seconds"] < 15 * 60
+    assert retail["public_worthy"] is False
+    assert set(retail["public_worthy_reason"]) >= {
+        "LIQUIDITY_ONLY_NOT_DIRECTIONAL",
+        "NEW_MARKET_PRICE_DISCOVERY",
+    }
+    economics = retail["economics"]
+    assert economics["label"] == "REFERENCE ECONOMICS - NOT A RECOMMENDATION"
+    assert economics["risk_reward_label"] == "LOW UPSIDE / HIGH PRICE"
+    assert "make 10¢ per contract" in economics["risk_reward_explanation"]
+    examples = {row["stake"]: row for row in economics["examples"]}
+    assert examples[25.0]["contracts_or_shares"] == pytest.approx(27.777777)
+    assert examples[25.0]["payout_if_correct"] == pytest.approx(27.777777)
+    assert examples[25.0]["gross_profit_if_correct"] == pytest.approx(2.777777)
+    assert examples[25.0]["maximum_loss"] == pytest.approx(25)
+    assert examples[50.0]["gross_profit_if_correct"] == pytest.approx(5.555555)
+    assert examples[100.0]["gross_profit_if_correct"] == pytest.approx(11.111111)
+    assert service.publishable_signals(Plan.PRO)["items"] == []
+    assert service.health()["live_orders"] == 0
+    assert service.health()["execution_enabled"] is False
+
+
+def test_explained_route_returns_beginner_cards(temporal):
+    service, market = temporal
+    baseline = tight_context_market(market)
+    service.replace_inputs([baseline])
+    service.replace_inputs([later(baseline, yes_bid=0.43, yes_ask=0.45)])
+
+    api = server(service, port=0, resolve_plan=lambda headers: Plan.PRO)
+    thread = Thread(target=api.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urlopen(
+            f"http://127.0.0.1:{api.server_port}/signals/explained"
+        ) as response:
+            payload = json.load(response)
+        assert response.status == 200
+        assert payload["items"][0]["retail_interpretation"]["verdict"] == "WATCH"
+    finally:
+        api.shutdown()
+        api.server_close()
+        thread.join(timeout=2)
+
+
+def test_valid_existing_buy_play_becomes_actionable_with_32_cent_economics(temporal):
+    service, market = temporal
+    now = utcnow() - timedelta(seconds=30)
+    baseline = replace(
+        market,
+        yes_bid=0.24,
+        yes_ask=0.26,
+        no_bid=0.68,
+        no_ask=0.70,
+        book_timestamp=now.isoformat(),
+        data_timestamp=now.isoformat(),
+        resolution_time="2099-09-14T23:00:00+00:00",
+        resolution_rules="The market resolves YES if the fixture condition is met.",
+        mechanics=no_fee_binary_mechanics(),
+        executable_depth={"YES": ((0.32, 1000),)},
+        status="OPEN",
+    )
+    current = replace(
+        baseline,
+        yes_bid=0.30,
+        yes_ask=0.32,
+        no_bid=0.68,
+        no_ask=0.70,
+        book_timestamp=(now + timedelta(seconds=10)).isoformat(),
+        data_timestamp=(now + timedelta(seconds=10)).isoformat(),
+    )
+    evidence = Evidence(
+        venue=current.venue,
+        market_id=current.venue_market_id,
+        fair_probability=0.65,
+        source="test fixture",
+        model_version="test-v1",
+        observed_at=(now + timedelta(seconds=10)).isoformat(),
+        valid_until=(now + timedelta(minutes=5)).isoformat(),
+        rules_digest=rules_digest(current),
+        review_reference="reviewed fixture",
+        rationale="Reviewed fixture supports YES.",
+        independent_sources=("source-a", "source-b"),
+        validation_reference="validated fixture",
+        demo=current.demo,
+    )
+
+    service.replace_inputs([baseline])
+    service.replace_inputs(
+        [current],
+        evidence={(current.venue, current.venue_market_id): evidence},
+    )
+
+    explained = service.explained_signals(Plan.PRO)["items"][0]
+    retail = explained["retail_interpretation"]
+    assert retail["verdict"] == "BUY YES"
+    assert retail["actionability"] == "ACTIONABLE"
+    assert retail["directional_read"] == "YES"
+    assert retail["trade_confidence"] in {"HIGH", "ELITE"}
+    assert retail["economics"]["label"] == "PARALLAX PLAY ECONOMICS"
+    examples = {row["stake"]: row for row in retail["economics"]["examples"]}
+    assert examples[25.0]["gross_profit_if_correct"] == pytest.approx(53.125)
+    assert examples[50.0]["gross_profit_if_correct"] == pytest.approx(106.25)
+    assert examples[100.0]["gross_profit_if_correct"] == pytest.approx(212.5)
+    assert "fair_probability" not in retail
+    assert "model_probability" not in retail
+    assert service.health()["live_orders"] == 0
+    assert service.health()["execution_enabled"] is False
+
+
+def test_publishable_liquidity_and_new_market_guards(temporal):
+    service, market = temporal
+    detected_at = utcnow()
+    old_opened = (detected_at - timedelta(hours=1)).isoformat()
+    new_opened = (detected_at - timedelta(minutes=5)).isoformat()
+    old_market = tight_context_market(
+        market,
+        venue_market_id="old-liquidity",
+        slug="old-liquidity",
+        executable_depth={"YES": ((0.32, 700),)},
+        original_metadata={"opened_at": old_opened},
+    )
+    new_market = tight_context_market(
+        market,
+        venue_market_id="new-price",
+        slug="new-price",
+        original_metadata={"opened_at": new_opened},
+    )
+    service.replace_inputs([old_market, new_market])
+    service.signal_history.append(
+        service._signal(
+            old_market,
+            SignalType.LIQUIDITY_MOVE,
+            Side.YES,
+            100,
+            700,
+            30,
+            SignalSignificance.HIGH,
+            "Validated test signal.",
+            detected_at,
+            percent_change=600,
+        )
+    )
+    service.signal_history.append(
+        service._signal(
+            new_market,
+            SignalType.PRICE_MOVE,
+            Side.YES,
+            0.32,
+            0.45,
+            30,
+            SignalSignificance.HIGH,
+            "Validated test signal.",
+            detected_at,
+        )
+    )
+
+    explained = service.explained_signals(Plan.PRO)["items"]
+    reasons = {
+        item["market_id"]: item["retail_interpretation"]["public_worthy_reason"]
+        for item in explained
+    }
+    assert "LIQUIDITY_ONLY_NOT_DIRECTIONAL" in reasons["old-liquidity"]
+    assert "NEW_MARKET_PRICE_DISCOVERY" in reasons["new-price"]
+    assert service.publishable_signals(Plan.PRO)["items"] == []
 
 
 def test_launchd_plist_is_user_level_read_only_parallax_service():

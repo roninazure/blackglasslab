@@ -39,6 +39,7 @@ OBSERVATION_HISTORY_LIMIT = 2
 SIGNAL_HISTORY_LIMIT = 200
 SIGNAL_DEDUPE_COOLDOWN_SECONDS = 15 * 60
 PUBLISHABLE_SIGNAL_MAX_AGE_SECONDS = 5 * 60
+NEW_MARKET_PUBLICATION_BLOCK_SECONDS = 15 * 60
 PUBLISHABLE_SIGNAL_LIMIT = 10
 EXPLORER_PUBLISHABLE_SIGNAL_LIMIT = 3
 SIGNAL_PRIORITY = {
@@ -56,10 +57,16 @@ SPORTS_CATEGORIES = {
     "sports",
     "tennis",
 }
+RETAIL_STAKES = (25.0, 50.0, 100.0)
+TEMPORAL_SIGNAL_TYPES = {
+    SignalType.PRICE_MOVE,
+    SignalType.SPREAD_MOVE,
+    SignalType.LIQUIDITY_MOVE,
+}
 
 
 def _display_price(value: float) -> str:
-    cents = value * 100
+    cents = round(value * 100, 10)
     return f"{cents:.0f}¢" if cents.is_integer() else f"{cents:.1f}¢"
 
 
@@ -92,6 +99,10 @@ def _display_resolution(value: str | None) -> str | None:
     if resolved_at is None:
         return None
     return f"{resolved_at:%b} {resolved_at.day}, {resolved_at.year}"
+
+
+def _display_money(value: float) -> str:
+    return f"${value:,.2f}"
 
 
 def _dedupe_text(value: str) -> str:
@@ -214,11 +225,88 @@ def _social_preview(signal: ParallaxSignal) -> str:
             str(signal.signal_label),
             f"{signal.side}: {signal.formatted_previous_value} -> {signal.formatted_current_value}",
             f"{signal.formatted_change} in {signal.formatted_window}",
-            f"Signal Strength: {signal.signal_strength}",
+            f"Market Activity Strength: {signal.signal_strength}",
             "",
             "Observed market movement. Not a BUY recommendation.",
         )
     )
+
+
+def _market_opened_at(market: NormalizedMarket) -> datetime | None:
+    for key in (
+        "opened_at",
+        "open_time",
+        "created_at",
+        "listed_at",
+        "published_at",
+        "first_opened_at",
+    ):
+        opened_at = timestamp(market.original_metadata.get(key))
+        if opened_at is not None:
+            return opened_at
+    return None
+
+
+def _market_age_seconds(
+    market: NormalizedMarket,
+    now: datetime,
+) -> float | None:
+    opened_at = _market_opened_at(market)
+    if opened_at is not None and now >= opened_at:
+        return (now - opened_at).total_seconds()
+    return None
+
+
+def _risk_reward_label(price: float | None) -> str:
+    if price is None:
+        return "UNKNOWN"
+    if price >= 0.75:
+        return "LOW UPSIDE / HIGH PRICE"
+    if price <= 0.35:
+        return "HIGH UPSIDE / LOW PRICE"
+    return "BALANCED"
+
+
+def _economics(price: float | None, label: str) -> dict[str, Any]:
+    examples = []
+    for stake in RETAIL_STAKES:
+        if price is None or not math.isfinite(price) or not 0 < price < 1:
+            examples.append(
+                {
+                    "stake": stake,
+                    "available": False,
+                    "reason": "No valid executable buy price is available.",
+                }
+            )
+            continue
+        shares = stake / price
+        payout = shares
+        examples.append(
+            {
+                "stake": stake,
+                "price_paid": price,
+                "contracts_or_shares": shares,
+                "payout_if_correct": payout,
+                "gross_profit_if_correct": payout - stake,
+                "maximum_loss": stake,
+                "before_fees_costs": True,
+            }
+        )
+    if price is None:
+        explanation = "No valid executable buy price is available."
+    else:
+        per_contract_gain = max(0.0, 1 - price)
+        explanation = (
+            f"At {_display_price(price)}, approximately {_display_price(price)} is "
+            f"risked to make {_display_price(per_contract_gain)} per contract if correct."
+        )
+    return {
+        "label": label,
+        "examples": examples,
+        "risk_reward_label": _risk_reward_label(price),
+        "risk_reward_explanation": explanation,
+        "note": "Before fees/costs.",
+    }
 
 
 class PlayService:
@@ -796,6 +884,242 @@ class PlayService:
             "as_of": utcnow().isoformat(),
         }
 
+    def _current_market_snapshot(
+        self,
+        signal: ParallaxSignal,
+        market: NormalizedMarket | None,
+        now: datetime,
+    ) -> dict[str, Any]:
+        if market is None:
+            return {
+                "status": None,
+                "resolution_time": signal.resolution_time,
+                "market_age_seconds": None,
+            }
+        yes_spread = (
+            market.yes_ask - market.yes_bid
+            if market.yes_bid is not None and market.yes_ask is not None
+            else None
+        )
+        no_spread = (
+            market.no_ask - market.no_bid
+            if market.no_bid is not None and market.no_ask is not None
+            else None
+        )
+        return {
+            "yes_bid": market.yes_bid,
+            "yes_ask": market.yes_ask,
+            "no_bid": market.no_bid,
+            "no_ask": market.no_ask,
+            "spread": {
+                "YES": yes_spread,
+                "NO": no_spread,
+            },
+            "current_executable_buy_prices": {
+                "YES": market.yes_ask,
+                "NO": market.no_ask,
+            },
+            "market_age_seconds": _market_age_seconds(market, now),
+            "resolution_time": market.resolution_time,
+            "status": market.status,
+        }
+
+    def _publishability_reasons(
+        self,
+        signal: ParallaxSignal,
+        market: NormalizedMarket | None,
+        now: datetime,
+    ) -> tuple[str, ...]:
+        reasons: list[str] = []
+        if signal.significance != SignalSignificance.HIGH:
+            reasons.append("NOT_HIGH_MARKET_ACTIVITY")
+        if signal.signal_type == SignalType.LIQUIDITY_MOVE:
+            reasons.append("LIQUIDITY_ONLY_NOT_DIRECTIONAL")
+        detected_at = timestamp(signal.detected_at)
+        cutoff = now - timedelta(seconds=PUBLISHABLE_SIGNAL_MAX_AGE_SECONDS)
+        if detected_at is None or detected_at < cutoff:
+            reasons.append("STALE_SIGNAL")
+        resolved_at = timestamp(signal.resolution_time)
+        if resolved_at is not None and resolved_at <= now:
+            reasons.append("RESOLVED_OR_EXPIRED_MARKET")
+        if market is not None:
+            if market.status != "OPEN":
+                reasons.append("MARKET_NOT_OPEN")
+            age = _market_age_seconds(market, now)
+            if (
+                age is not None
+                and age < NEW_MARKET_PUBLICATION_BLOCK_SECONDS
+                and signal.signal_type in TEMPORAL_SIGNAL_TYPES
+            ):
+                reasons.append("NEW_MARKET_PRICE_DISCOVERY")
+        if not _has_publishable_context(signal):
+            reasons.append("INSUFFICIENT_PUBLIC_CONTEXT")
+        return tuple(dict.fromkeys(reasons))
+
+    def _plain_english(
+        self,
+        signal: ParallaxSignal,
+        buy_play: Any | None,
+    ) -> dict[str, str]:
+        side = signal.side.value
+        happened = (
+            f"{side}-side liquidity jumped from {signal.formatted_previous_value} "
+            f"to {signal.formatted_current_value} in {signal.formatted_window}."
+            if signal.signal_type == SignalType.LIQUIDITY_MOVE
+            else f"{side} moved from {signal.formatted_previous_value} to "
+            f"{signal.formatted_current_value} in {signal.formatted_window}."
+            if signal.signal_type == SignalType.PRICE_MOVE
+            else f"The {side} price gap changed from {signal.formatted_previous_value} "
+            f"to {signal.formatted_current_value} in {signal.formatted_window}."
+        )
+        if buy_play is not None:
+            means = (
+                f"PARALLAX has a validated BUY {buy_play.side.value} play for this "
+                "market after its value, cost, freshness, spread, liquidity, "
+                "confidence and risk checks."
+            )
+            not_mean = "This still does not guarantee the contract will finish correct."
+            instruction = (
+                f"This is an actionable PARALLAX Play for BUY {buy_play.side.value}. "
+                "Review the risks and invalidation conditions before acting manually."
+            )
+            return {
+                "what_happened": happened,
+                "what_it_means": means,
+                "what_it_does_not_mean": not_mean,
+                "operator_instruction": instruction,
+                "what_would_make_it_actionable": "It is already actionable while the PARALLAX Play remains fresh.",
+            }
+        if signal.signal_type == SignalType.LIQUIDITY_MOVE:
+            means = f"More trading capacity appeared on the {side} side of the market."
+            not_mean = (
+                f"This does not mean PARALLAX believes {side} is more likely to win."
+            )
+            actionable = (
+                "Validated directional price/value evidence or a PARALLAX BUY play."
+            )
+            instruction = (
+                "Do not buy based on this liquidity change alone. Watch for price "
+                "movement or an independently validated PARALLAX Play."
+            )
+        elif signal.signal_type == SignalType.PRICE_MOVE:
+            means = "The market price changed quickly, which can be useful context but is not a value estimate."
+            not_mean = "This does not mean PARALLAX has found a profitable BUY."
+            actionable = "A validated PARALLAX BUY play that clears value, cost, spread, liquidity, freshness, confidence and risk gates."
+            instruction = "Treat this as a watch item unless a PARALLAX BUY play appears."
+        else:
+            means = "The gap between the sell and buy prices changed, which affects trading cost."
+            not_mean = "This does not mean either side is more likely to win."
+            actionable = "A validated PARALLAX BUY play with a current executable price and acceptable trading cost."
+            instruction = "Do not buy based on spread movement alone."
+        return {
+            "what_happened": happened,
+            "what_it_means": means,
+            "what_it_does_not_mean": not_mean,
+            "operator_instruction": instruction,
+            "what_would_make_it_actionable": actionable,
+        }
+
+    def _explained_signal(
+        self,
+        signal: ParallaxSignal,
+        market: NormalizedMarket | None,
+        buy_play: Any | None,
+        now: datetime,
+    ) -> dict[str, Any]:
+        public_reasons = self._publishability_reasons(signal, market, now)
+        side = buy_play.side if buy_play is not None else signal.side
+        price = buy_play.executable_price if buy_play is not None else None
+        if price is None and market is not None:
+            price = market.yes_ask if side == Side.YES else market.no_ask
+        actionable = buy_play is not None
+        verdict = f"BUY {side.value}" if actionable else "WATCH"
+        actionability = "ACTIONABLE" if actionable else "NOT_ACTIONABLE"
+        directional_read = side.value if actionable else "NEUTRAL"
+        confidence = (
+            buy_play.confidence_band.value
+            if buy_play is not None
+            and buy_play.confidence_band in (Confidence.HIGH, Confidence.ELITE)
+            else "NONE"
+        )
+        plain = self._plain_english(signal, buy_play)
+        economics_label = (
+            "PARALLAX PLAY ECONOMICS"
+            if actionable
+            else "REFERENCE ECONOMICS - NOT A RECOMMENDATION"
+        )
+        interpretation = {
+            "verdict": verdict,
+            "actionability": actionability,
+            "directional_read": directional_read,
+            "headline": f"PARALLAX {verdict}" if actionable else "PARALLAX WATCH",
+            **plain,
+            "current_market": self._current_market_snapshot(signal, market, now),
+            "economics": _economics(price, economics_label),
+            "risks": (
+                buy_play.risk_factors
+                if buy_play is not None
+                else (
+                    "Liquidity, price and spread can change quickly.",
+                    "A market can be noisy while it is newly opened.",
+                    "You can lose the full amount spent if a manual trade is wrong.",
+                )
+            ),
+            "operator_instruction": plain["operator_instruction"],
+            "public_worthy": not public_reasons,
+            "public_worthy_reason": "HIGH_VALIDATED_SIGNAL"
+            if not public_reasons
+            else public_reasons,
+            "market_activity_strength": signal.signal_strength,
+            "trade_confidence": confidence,
+            "parallax_play_id": None if buy_play is None else buy_play.id,
+        }
+        if buy_play is not None:
+            interpretation["why_parallax_favors_side"] = buy_play.reason_summary
+            interpretation["evidence_supporting_it"] = buy_play.reason_factors
+            interpretation["what_could_make_it_wrong"] = buy_play.invalidation_conditions
+        else:
+            interpretation["what_could_make_it_wrong"] = (
+                "The liquidity change may reverse.",
+                "Other market participants may update prices for reasons PARALLAX has not validated.",
+                "New information about the event can change the market.",
+            )
+        return {**signal.as_dict(), "retail_interpretation": interpretation}
+
+    def explained_signals(self, plan: Plan = Plan.EXPLORER):
+        with self.lock:
+            rows = list(self.signal_history)
+            markets = {
+                (market.venue, market.venue_market_id): market for market in self.markets
+            }
+        rank = {SignalSignificance.HIGH: 1, SignalSignificance.MATERIAL: 0}
+        rows.sort(key=lambda row: (rank[row.significance], row.detected_at), reverse=True)
+        limit = min(5, entitlement(plan).play_limit)
+        if entitlement(plan).permits(Feature.DETAILS):
+            limit = entitlement(plan).play_limit
+        plays = self._plays()
+        buy_plays = {
+            (play.venue, play.market_id, play.side): play
+            for play in plays
+            if play.suggested_action == Action.BUY
+        }
+        now = utcnow()
+        return {
+            "mode": self.mode,
+            "total": len(rows),
+            "limit": limit,
+            "items": [
+                self._explained_signal(
+                    row,
+                    markets.get((row.venue, row.market_id)),
+                    buy_plays.get((row.venue, row.market_id, row.side)),
+                    now,
+                )
+                for row in rows[:limit]
+            ],
+            "as_of": now.isoformat(),
+        }
+
     def _publishable_rows(
         self,
         plan: Plan = Plan.EXPLORER,
@@ -803,7 +1127,6 @@ class PlayService:
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
         now = now or utcnow()
-        cutoff = now - timedelta(seconds=PUBLISHABLE_SIGNAL_MAX_AGE_SECONDS)
         with self.lock:
             markets = {
                 (market.venue, market.venue_market_id): market for market in self.markets
@@ -819,18 +1142,8 @@ class PlayService:
             )
         )
         for signal in rows:
-            if signal.significance != SignalSignificance.HIGH:
-                continue
-            detected_at = timestamp(signal.detected_at)
-            if detected_at is None or detected_at < cutoff:
-                continue
-            resolved_at = timestamp(signal.resolution_time)
-            if resolved_at is not None and resolved_at <= now:
-                continue
             market = markets.get((signal.venue, signal.market_id))
-            if market is not None and market.status != "OPEN":
-                continue
-            if not _has_publishable_context(signal):
+            if self._publishability_reasons(signal, market, now):
                 continue
             market_key = (signal.venue, signal.market_id)
             if market_key in seen_markets:
