@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -37,6 +38,10 @@ DEFAULT_NTFY_SERVER = "https://ntfy.sh"
 MAX_ATTEMPTS = 2
 WEBHOOK_TIMEOUT_SECONDS = 5
 MAX_RESPONSE_BYTES = 4096
+
+
+def _pytest_active() -> bool:
+    return bool(os.environ.get("PYTEST_CURRENT_TEST")) or "pytest" in sys.modules
 
 
 @dataclass(frozen=True)
@@ -369,14 +374,22 @@ class AlertDispatcher:
         transport: AlertTransport | None = None,
     ):
         self.store = store
-        self.config = config or AlertConfig.load()
         self.transport = transport or WebhookTransport()
+        if _pytest_active() and (
+            config is None or isinstance(self.transport, WebhookTransport)
+        ):
+            # Test-created services must never inherit operator alert config.
+            self.config = AlertConfig(mode="disabled")
+        else:
+            self.config = config or AlertConfig.load()
 
     @property
     def channel(self) -> str:
         return self.config.mode
 
     def dispatch(self, inbox_items: list[dict[str, Any]]) -> None:
+        if _pytest_active() and isinstance(self.transport, WebhookTransport):
+            return
         if self.config.mode == "disabled":
             return
         eligible = [

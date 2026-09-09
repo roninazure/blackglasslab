@@ -53,6 +53,19 @@ def temporal(tmp_path):
     return service, market
 
 
+@pytest.fixture(autouse=True)
+def isolate_alert_network(monkeypatch):
+    monkeypatch.setenv("PARALLAX_ALERT_MODE", "disabled")
+    monkeypatch.delenv("PARALLAX_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("PARALLAX_ALERT_NTFY_TOPIC", raising=False)
+    monkeypatch.delenv("PARALLAX_ALERT_NTFY_SERVER", raising=False)
+
+    def fail_external_urlopen(*args, **kwargs):
+        raise AssertionError("automated tests must not perform external alert delivery")
+
+    monkeypatch.setattr("parallax.alerts.urlopen", fail_external_urlopen)
+
+
 def later(market, seconds=90, **changes):
     observed = timestamp(market.data_timestamp) + timedelta(seconds=seconds)
     return replace(market, data_timestamp=observed.isoformat(), **changes)
@@ -1493,6 +1506,28 @@ def test_dashboard_public_worthy_and_priority_watch_do_not_create_buy_language(
     assert "PARALLAX PRIORITY WATCH" in watch_html
     assert "BUY YES" not in watch_html
     assert "BUY NO" not in watch_html
+
+
+@pytest.mark.parametrize(
+    ("mode", "variable", "value"),
+    (
+        ("ntfy", "PARALLAX_ALERT_NTFY_TOPIC", "fake-test-topic"),
+        ("webhook", "PARALLAX_ALERT_WEBHOOK_URL", "https://fake.example/hook"),
+    ),
+)
+def test_default_services_ignore_external_alert_config_in_pytest(
+    tmp_path, monkeypatch, mode, variable, value
+):
+    monkeypatch.setenv("PARALLAX_ALERT_MODE", mode)
+    monkeypatch.setenv(variable, value)
+    service = PlayService(
+        TrackRecord(tmp_path / "record.sqlite"),
+        InboxStore(tmp_path / "inbox.sqlite"),
+    )
+
+    assert service.alerts_status()["mode"] == "disabled"
+    assert service.health()["live_orders"] == 0
+    assert service.health()["execution_enabled"] is False
 
 
 def test_dashboard_mark_seen_script_calls_existing_seen_endpoint(temporal):
