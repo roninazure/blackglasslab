@@ -47,6 +47,17 @@ class SignalSignificance(StrEnum):
     HIGH = "HIGH"
 
 
+class AttentionClass(StrEnum):
+    ACTIONABLE_PLAY = "ACTIONABLE_PLAY"
+    PUBLIC_WORTHY = "PUBLIC_WORTHY"
+    PRIORITY_WATCH = "PRIORITY_WATCH"
+
+
+class InboxStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    EXPIRED = "EXPIRED"
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 

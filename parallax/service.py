@@ -11,10 +11,19 @@ from typing import Any
 
 from .engine import MAX_SPREAD, qualify
 from .entitlements import Feature, Plan, entitlement
+from .inbox import (
+    ATTENTION_PRIORITY,
+    INBOX_ACTIVE_LIMIT,
+    InboxStore,
+    InboxUpsert,
+    default_inbox_store,
+)
 from .models import (
     Action,
+    AttentionClass,
     Confidence,
     Evidence,
+    InboxStatus,
     NormalizedMarket,
     ParallaxSignal,
     PlayType,
@@ -42,6 +51,7 @@ PUBLISHABLE_SIGNAL_MAX_AGE_SECONDS = 5 * 60
 NEW_MARKET_PUBLICATION_BLOCK_SECONDS = 15 * 60
 PUBLISHABLE_SIGNAL_LIMIT = 10
 EXPLORER_PUBLISHABLE_SIGNAL_LIMIT = 3
+INBOX_SIGNAL_MAX_AGE_SECONDS = PUBLISHABLE_SIGNAL_MAX_AGE_SECONDS
 SIGNAL_PRIORITY = {
     SignalType.PRICE_MOVE: 0,
     SignalType.SPREAD_MOVE: 1,
@@ -310,8 +320,9 @@ def _economics(price: float | None, label: str) -> dict[str, Any]:
 
 
 class PlayService:
-    def __init__(self, store: TrackRecord):
+    def __init__(self, store: TrackRecord, inbox_store: InboxStore | None = None):
         self.store = store
+        self.inbox_store = inbox_store or default_inbox_store()
         self.lock = RLock()
         self.markets: list[NormalizedMarket] = []
         self.evidence: dict[tuple[Venue, str], Evidence] = {}
@@ -335,6 +346,7 @@ class PlayService:
         self.pending_liquidity_high: dict[
             tuple[Venue, str, SignalType, Side], tuple[float, float]
         ] = {}
+        self.inbox_suppressed = 0
 
     def replace_inputs(self, markets, evidence=None, collection=None, *, mode="live"):
         if mode not in {"live", "demo"} or any(
@@ -363,6 +375,7 @@ class PlayService:
             self.collection = collection or {}
             self.mode = mode
             self.last_refresh = detected_at.isoformat()
+        self.refresh_inbox()
 
     @staticmethod
     def _window_seconds(
@@ -956,6 +969,12 @@ class PlayService:
             reasons.append("INSUFFICIENT_PUBLIC_CONTEXT")
         return tuple(dict.fromkeys(reasons))
 
+    def _inbox_expiry(self, signal: ParallaxSignal) -> str | None:
+        detected_at = timestamp(signal.detected_at)
+        if detected_at is None:
+            return None
+        return (detected_at + timedelta(seconds=INBOX_SIGNAL_MAX_AGE_SECONDS)).isoformat()
+
     def _plain_english(
         self,
         signal: ParallaxSignal,
@@ -1120,6 +1139,218 @@ class PlayService:
             "as_of": now.isoformat(),
         }
 
+    def _inbox_rows(self, now: datetime) -> tuple[list[InboxUpsert], int]:
+        with self.lock:
+            rows = list(self.signal_history)
+            markets = {
+                (market.venue, market.venue_market_id): market for market in self.markets
+            }
+        rows.sort(
+            key=lambda row: (
+                SIGNAL_PRIORITY[row.signal_type],
+                -row.absolute_change,
+                row.detected_at,
+            )
+        )
+        plays = self._plays()
+        buy_plays = {
+            (play.venue, play.market_id, play.side): play
+            for play in plays
+            if play.suggested_action == Action.BUY
+        }
+        by_market: dict[tuple[Venue, str], tuple[AttentionClass, InboxUpsert]] = {}
+        suppressed = 0
+        for signal in rows:
+            market = markets.get((signal.venue, signal.market_id))
+            explained = self._explained_signal(
+                signal,
+                market,
+                buy_plays.get((signal.venue, signal.market_id, signal.side)),
+                now,
+            )
+            attention_class = self._attention_class(explained, signal, market, now)
+            if attention_class is None:
+                suppressed += 1
+                continue
+            item = self._inbox_upsert(attention_class, explained, signal)
+            key = (signal.venue, signal.market_id)
+            existing = by_market.get(key)
+            if existing is None or self._prefer_inbox_item(item, existing[1]):
+                by_market[key] = (attention_class, item)
+            else:
+                suppressed += 1
+        ordered = sorted(
+            (row for _, row in by_market.values()),
+            key=lambda row: (
+                ATTENTION_PRIORITY[row.attention_class],
+                -_iso_timestamp(row.detected_at),
+            ),
+        )
+        return ordered[:INBOX_ACTIVE_LIMIT], suppressed + max(0, len(ordered) - INBOX_ACTIVE_LIMIT)
+
+    def _attention_class(
+        self,
+        explained: dict[str, Any],
+        signal: ParallaxSignal,
+        market: NormalizedMarket | None,
+        now: datetime,
+    ) -> AttentionClass | None:
+        retail = explained["retail_interpretation"]
+        if (
+            retail["actionability"] == "ACTIONABLE"
+            and retail["verdict"] in {"BUY YES", "BUY NO"}
+        ):
+            return AttentionClass.ACTIONABLE_PLAY
+        if retail["public_worthy"] is True:
+            return AttentionClass.PUBLIC_WORTHY
+        if (
+            retail["verdict"] == "WATCH"
+            and retail["actionability"] != "ACTIONABLE"
+            and retail["market_activity_strength"] == SignalSignificance.HIGH.value
+            and signal.signal_type in {SignalType.PRICE_MOVE, SignalType.SPREAD_MOVE}
+            and self._priority_watch_reasons(signal, market, now) == ()
+        ):
+            return AttentionClass.PRIORITY_WATCH
+        return None
+
+    def _priority_watch_reasons(
+        self,
+        signal: ParallaxSignal,
+        market: NormalizedMarket | None,
+        now: datetime,
+    ) -> tuple[str, ...]:
+        reasons: list[str] = []
+        if signal.significance != SignalSignificance.HIGH:
+            reasons.append("NOT_HIGH_MARKET_ACTIVITY")
+        if signal.signal_type not in {SignalType.PRICE_MOVE, SignalType.SPREAD_MOVE}:
+            reasons.append("UNSUPPORTED_SIGNAL_TYPE")
+        detected_at = timestamp(signal.detected_at)
+        cutoff = now - timedelta(seconds=INBOX_SIGNAL_MAX_AGE_SECONDS)
+        if detected_at is None or detected_at < cutoff:
+            reasons.append("STALE_SIGNAL")
+        resolved_at = timestamp(signal.resolution_time)
+        if resolved_at is not None and resolved_at <= now:
+            reasons.append("RESOLVED_OR_EXPIRED_MARKET")
+        if market is None:
+            reasons.append("MISSING_RETAIL_CONTEXT")
+        else:
+            if market.status.upper() in {"CLOSED", "RESOLVED", "EXPIRED"}:
+                reasons.append("RESOLVED_OR_EXPIRED_MARKET")
+            age = _market_age_seconds(market, now)
+            if (
+                age is not None
+                and age < NEW_MARKET_PUBLICATION_BLOCK_SECONDS
+                and signal.signal_type in TEMPORAL_SIGNAL_TYPES
+            ):
+                reasons.append("NEW_MARKET_PRICE_DISCOVERY")
+            if not _valid_two_sided_book(market.yes_bid, market.yes_ask):
+                reasons.append("INVALID_YES_BOOK")
+            if not _valid_two_sided_book(market.no_bid, market.no_ask):
+                reasons.append("INVALID_NO_BOOK")
+        if not _has_publishable_context(signal):
+            reasons.append("MISSING_RETAIL_CONTEXT")
+        return tuple(dict.fromkeys(reasons))
+
+    def _inbox_upsert(
+        self,
+        attention_class: AttentionClass,
+        explained: dict[str, Any],
+        signal: ParallaxSignal,
+    ) -> InboxUpsert:
+        retail = explained["retail_interpretation"]
+        payload = {
+            "headline": retail["headline"],
+            "market": explained["display_title"] or explained["market_title"],
+            "what_happened": retail["what_happened"],
+            "what_it_means": retail["what_it_means"],
+            "operator_instruction": retail["operator_instruction"],
+            "why": retail.get("why_parallax_favors_side"),
+            "economics": retail["economics"],
+            "risks": retail["risks"],
+            "invalidation": retail.get("what_could_make_it_wrong"),
+            "current_market": retail["current_market"],
+            "parallax_play_id": retail.get("parallax_play_id"),
+            "source_signal": {
+                "signal_type": signal.signal_type.value,
+                "side": signal.side.value,
+                "formatted_previous_value": signal.formatted_previous_value,
+                "formatted_current_value": signal.formatted_current_value,
+                "formatted_change": signal.formatted_change,
+                "formatted_window": signal.formatted_window,
+            },
+        }
+        return InboxUpsert(
+            attention_class=attention_class,
+            source_id=signal.id,
+            venue=signal.venue.value,
+            market_id=signal.market_id,
+            display_title=explained["display_title"] or explained["market_title"],
+            headline=retail["headline"],
+            verdict=retail["verdict"],
+            actionability=retail["actionability"],
+            directional_read=retail["directional_read"],
+            trade_confidence=retail["trade_confidence"],
+            market_activity_strength=retail["market_activity_strength"],
+            what_happened=retail["what_happened"],
+            what_it_means=retail["what_it_means"],
+            operator_instruction=retail["operator_instruction"],
+            detected_at=signal.detected_at,
+            expires_at=self._inbox_expiry(signal),
+            payload=payload,
+        )
+
+    @staticmethod
+    def _prefer_inbox_item(candidate: InboxUpsert, existing: InboxUpsert) -> bool:
+        candidate_priority = ATTENTION_PRIORITY[candidate.attention_class]
+        existing_priority = ATTENTION_PRIORITY[existing.attention_class]
+        if candidate_priority != existing_priority:
+            return candidate_priority < existing_priority
+        return _iso_timestamp(candidate.detected_at) > _iso_timestamp(existing.detected_at)
+
+    def refresh_inbox(self) -> None:
+        now = utcnow()
+        items, suppressed = self._inbox_rows(now)
+        for item in items:
+            self.inbox_store.upsert(item)
+        active_ids = {
+            self.inbox_store.inbox_id(item.venue, item.market_id, item.attention_class)
+            for item in items
+        }
+        self.inbox_store.expire_missing_active(active_ids)
+        self.inbox_suppressed = suppressed
+
+    def inbox(self, *, include_expired: bool = False) -> dict[str, Any]:
+        self.refresh_inbox()
+        items = self.inbox_store.items(include_expired=include_expired)
+        active = [item for item in items if item["status"] == InboxStatus.ACTIVE.value]
+        summary = {
+            "actionable_plays": sum(
+                item["attention_class"] == AttentionClass.ACTIONABLE_PLAY.value
+                for item in active
+            ),
+            "public_worthy": sum(
+                item["attention_class"] == AttentionClass.PUBLIC_WORTHY.value
+                for item in active
+            ),
+            "priority_watch": sum(
+                item["attention_class"] == AttentionClass.PRIORITY_WATCH.value
+                for item in active
+            ),
+            "unseen": sum(not item["seen"] for item in active),
+            "suppressed": self.inbox_suppressed,
+        }
+        return {
+            "mode": self.mode,
+            "summary": summary,
+            "total": len(items),
+            "limit": INBOX_ACTIVE_LIMIT,
+            "items": items,
+            "as_of": utcnow().isoformat(),
+        }
+
+    def mark_inbox_seen(self, inbox_id: str) -> dict[str, Any]:
+        return self.inbox_store.mark_seen(inbox_id)
+
     def _publishable_rows(
         self,
         plan: Plan = Plan.EXPLORER,
@@ -1199,6 +1430,8 @@ class PlayService:
 
     def health(self):
         plays = self._plays()
+        self.refresh_inbox()
+        inbox_items = self.inbox_store.items()
         metrics = Counter(
             {
                 "plays_generated": len(plays),
@@ -1210,6 +1443,20 @@ class PlayService:
                 "liquidity_rejections": 0,
                 "confidence_rejections": 0,
                 "publishable_signals": len(self._publishable_rows(Plan.PRO)),
+                "inbox_active": len(inbox_items),
+                "inbox_unseen": sum(not item["seen"] for item in inbox_items),
+                "inbox_actionable": sum(
+                    item["attention_class"] == AttentionClass.ACTIONABLE_PLAY.value
+                    for item in inbox_items
+                ),
+                "inbox_public_worthy": sum(
+                    item["attention_class"] == AttentionClass.PUBLIC_WORTHY.value
+                    for item in inbox_items
+                ),
+                "inbox_priority_watch": sum(
+                    item["attention_class"] == AttentionClass.PRIORITY_WATCH.value
+                    for item in inbox_items
+                ),
             }
         )
         for play in plays:
@@ -1258,3 +1505,8 @@ class PlayService:
         if not entitlement(plan).permits(Feature.ALERTS):
             raise PermissionError("Alerts require PRO")
         return self.plays(plan, action="BUY")["items"]
+
+
+def _iso_timestamp(value: str) -> float:
+    parsed = timestamp(value)
+    return 0.0 if parsed is None else parsed.timestamp()

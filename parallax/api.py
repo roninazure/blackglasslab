@@ -24,6 +24,13 @@ def handler_for(service: PlayService, resolve_plan=None):
                 filters = {k: v[0] for k, v in query.items()}
                 if route.path == "/plays":
                     payload = service.plays(plan, **filters)
+                elif route.path == "/inbox":
+                    include_expired = filters.pop("include_expired", "false")
+                    if filters:
+                        raise ValueError("Inbox does not accept unknown filters")
+                    payload = service.inbox(
+                        include_expired=include_expired.casefold() == "true"
+                    )
                 elif route.path == "/signals/publishable":
                     if filters:
                         raise ValueError("Publishable signals do not accept filters")
@@ -51,6 +58,28 @@ def handler_for(service: PlayService, resolve_plan=None):
                 self.respond(200, payload)
             except PermissionError as exc:
                 self.respond(403, {"error": str(exc)})
+            except (ValueError, TypeError) as exc:
+                self.respond(400, {"error": str(exc)})
+            except KeyError:
+                self.respond(404, {"error": "Not found"})
+            except Exception:  # noqa: BLE001 - HTTP boundary must not expose internal errors
+                self.respond(503, {"error": "Intelligence temporarily unavailable"})
+
+        def do_POST(self):
+            try:
+                route = urlsplit(self.path)
+                if route.query:
+                    raise ValueError("POST routes do not accept query parameters")
+                if (
+                    route.path.startswith("/inbox/")
+                    and route.path.endswith("/seen")
+                    and len(route.path.split("/")) == 4
+                ):
+                    inbox_id = route.path.split("/")[2]
+                    payload = service.mark_inbox_seen(inbox_id)
+                else:
+                    raise KeyError(route.path)
+                self.respond(200, payload)
             except (ValueError, TypeError) as exc:
                 self.respond(400, {"error": str(exc)})
             except KeyError:

@@ -6,15 +6,18 @@ from datetime import timedelta
 from pathlib import Path
 from plistlib import load as load_plist
 from threading import Thread
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 
 from parallax.api import server
 from parallax.demo import demo_inputs
 from parallax.entitlements import Plan
+from parallax.inbox import InboxStore
 from parallax.models import (
+    AttentionClass,
     Evidence,
+    InboxStatus,
     Mechanics,
     Side,
     SignalSignificance,
@@ -36,7 +39,10 @@ from parallax.track_record import TrackRecord
 @pytest.fixture
 def temporal(tmp_path):
     market = replace(demo_inputs()[0][0], demo=False)
-    service = PlayService(TrackRecord(tmp_path / "record.sqlite"))
+    service = PlayService(
+        TrackRecord(tmp_path / "record.sqlite"),
+        InboxStore(tmp_path / "parallax_inbox.sqlite"),
+    )
     return service, market
 
 
@@ -80,6 +86,52 @@ def no_fee_binary_mechanics():
         fee_source="test fixture",
         fee_valid_until="2099-01-01T00:00:00+00:00",
         fee_status="REVIEWED",
+    )
+
+
+def reviewed_evidence(market, fair_probability=0.65):
+    observed = timestamp(market.data_timestamp) or utcnow()
+    return Evidence(
+        venue=market.venue,
+        market_id=market.venue_market_id,
+        fair_probability=fair_probability,
+        source="test fixture",
+        model_version="test-v1",
+        observed_at=observed.isoformat(),
+        valid_until=(observed + timedelta(minutes=5)).isoformat(),
+        rules_digest=rules_digest(market),
+        review_reference="reviewed fixture",
+        rationale="Reviewed fixture.",
+        independent_sources=("source-a", "source-b"),
+        validation_reference="validated fixture",
+        demo=market.demo,
+    )
+
+
+def append_signal(
+    service,
+    market,
+    signal_type=SignalType.PRICE_MOVE,
+    side=Side.YES,
+    previous=0.32,
+    current=0.45,
+    significance=SignalSignificance.HIGH,
+    detected_at=None,
+):
+    detected = detected_at or utcnow()
+    service.signal_history.append(
+        service._signal(
+            market,
+            signal_type,
+            side,
+            previous,
+            current,
+            30,
+            significance,
+            "Validated test signal.",
+            detected,
+            percent_change=600 if signal_type == SignalType.LIQUIDITY_MOVE else None,
+        )
     )
 
 
@@ -212,7 +264,10 @@ def test_display_title_avoids_duplicates_and_missing_context_fabrication(
     signal = all_signals(service)[0]
     assert signal["display_title"] == "Villarreal CF vs Real Betis — Both Teams To Score"
 
-    service = PlayService(TrackRecord(tmp_path / "missing-context.sqlite"))
+    service = PlayService(
+        TrackRecord(tmp_path / "missing-context.sqlite"),
+        InboxStore(tmp_path / "missing-context-inbox.sqlite"),
+    )
     untitled = replace(market, event_title=None, yes_bid=0.30, yes_ask=0.32)
     service.replace_inputs([untitled])
     service.replace_inputs([later(untitled, yes_bid=0.36, yes_ask=0.38)])
@@ -887,6 +942,331 @@ def test_valid_existing_buy_play_becomes_actionable_with_32_cent_economics(tempo
     assert "model_probability" not in retail
     assert service.health()["live_orders"] == 0
     assert service.health()["execution_enabled"] is False
+
+
+def test_inbox_actionable_buy_yes_enters_as_actionable_play(temporal):
+    service, market = temporal
+    now = utcnow() - timedelta(seconds=30)
+    baseline = tight_context_market(
+        market,
+        yes_bid=0.24,
+        yes_ask=0.26,
+        no_bid=0.68,
+        no_ask=0.70,
+        data_timestamp=now.isoformat(),
+        book_timestamp=now.isoformat(),
+        mechanics=no_fee_binary_mechanics(),
+        executable_depth={"YES": ((0.32, 1000),)},
+    )
+    current = replace(
+        baseline,
+        yes_bid=0.30,
+        yes_ask=0.32,
+        data_timestamp=(now + timedelta(seconds=30)).isoformat(),
+        book_timestamp=(now + timedelta(seconds=30)).isoformat(),
+    )
+    service.replace_inputs([baseline])
+    service.replace_inputs(
+        [current],
+        evidence={(current.venue, current.venue_market_id): reviewed_evidence(current)},
+    )
+
+    item = service.inbox()["items"][0]
+    assert item["attention_class"] == AttentionClass.ACTIONABLE_PLAY
+    assert item["verdict"] == "BUY YES"
+    assert item["actionability"] == "ACTIONABLE"
+    assert item["economics"]["label"] == "PARALLAX PLAY ECONOMICS"
+
+
+def test_inbox_actionable_buy_no_enters_as_actionable_play(temporal):
+    service, market = temporal
+    now = utcnow() - timedelta(seconds=30)
+    baseline = tight_context_market(
+        market,
+        yes_bid=0.68,
+        yes_ask=0.70,
+        no_bid=0.24,
+        no_ask=0.26,
+        data_timestamp=now.isoformat(),
+        book_timestamp=now.isoformat(),
+        mechanics=no_fee_binary_mechanics(),
+        executable_depth={"NO": ((0.32, 1000),)},
+    )
+    current = replace(
+        baseline,
+        no_bid=0.30,
+        no_ask=0.32,
+        data_timestamp=(now + timedelta(seconds=30)).isoformat(),
+        book_timestamp=(now + timedelta(seconds=30)).isoformat(),
+    )
+    service.replace_inputs([baseline])
+    service.replace_inputs(
+        [current],
+        evidence={
+            (current.venue, current.venue_market_id): reviewed_evidence(
+                current, fair_probability=0.35
+            )
+        },
+    )
+
+    item = service.inbox()["items"][0]
+    assert item["attention_class"] == AttentionClass.ACTIONABLE_PLAY
+    assert item["verdict"] == "BUY NO"
+    assert item["actionability"] == "ACTIONABLE"
+
+
+def test_inbox_public_worthy_enters_when_not_actionable(temporal):
+    service, market = temporal
+    baseline = tight_context_market(market, original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"})
+    service.replace_inputs([baseline])
+    service.replace_inputs([later(baseline, yes_bid=0.43, yes_ask=0.45)])
+
+    item = service.inbox()["items"][0]
+    assert item["attention_class"] == AttentionClass.PUBLIC_WORTHY
+    assert item["actionability"] == "NOT_ACTIONABLE"
+
+
+@pytest.mark.parametrize(
+    "signal_type,previous,current",
+    [
+        (SignalType.PRICE_MOVE, 0.32, 0.45),
+        (SignalType.SPREAD_MOVE, 0.12, 0.03),
+    ],
+)
+def test_inbox_high_fresh_price_or_spread_watch_can_enter_priority_watch(
+    temporal, signal_type, previous, current
+):
+    service, market = temporal
+    active_market = tight_context_market(
+        market,
+        status="ACTIVE",
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([active_market])
+    append_signal(service, active_market, signal_type, previous=previous, current=current)
+
+    item = service.inbox()["items"][0]
+    assert item["attention_class"] == AttentionClass.PRIORITY_WATCH
+    assert item["verdict"] == "WATCH"
+
+
+def test_inbox_liquidity_material_stale_wide_and_missing_context_suppressed(temporal):
+    service, market = temporal
+    base = tight_context_market(
+        market,
+        status="ACTIVE",
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    material = replace(base, venue_market_id="material", slug="material")
+    stale = replace(base, venue_market_id="stale", slug="stale")
+    wide = replace(base, venue_market_id="wide", slug="wide", yes_bid=0.05, yes_ask=0.88)
+    missing = replace(base, venue_market_id="missing", slug="missing", event_title=None)
+    service.replace_inputs([base, material, stale, wide, missing])
+    append_signal(service, base, SignalType.LIQUIDITY_MOVE, previous=100, current=700)
+    append_signal(
+        service,
+        material,
+        significance=SignalSignificance.MATERIAL,
+    )
+    append_signal(
+        service,
+        stale,
+        detected_at=utcnow() - timedelta(minutes=6),
+    )
+    append_signal(
+        service,
+        wide,
+    )
+    append_signal(
+        service,
+        missing,
+    )
+
+    payload = service.inbox()
+    assert payload["items"] == []
+    assert payload["summary"]["suppressed"] == 5
+
+
+def test_inbox_dedupe_upgrade_and_no_downgrade(temporal):
+    service, market = temporal
+    active_market = tight_context_market(
+        market,
+        status="ACTIVE",
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([active_market])
+    append_signal(service, active_market)
+    assert service.inbox()["items"][0]["attention_class"] == AttentionClass.PRIORITY_WATCH
+
+    open_market = replace(active_market, status="OPEN")
+    service.replace_inputs([open_market])
+    append_signal(service, open_market, current=0.46)
+    items = service.inbox(include_expired=True)["items"]
+    active = [item for item in items if item["status"] == InboxStatus.ACTIVE]
+    assert len(active) == 1
+    assert active[0]["attention_class"] == AttentionClass.PUBLIC_WORTHY
+
+    now = utcnow() - timedelta(seconds=30)
+    buy_market = replace(
+        open_market,
+        yes_bid=0.30,
+        yes_ask=0.32,
+        data_timestamp=now.isoformat(),
+        book_timestamp=now.isoformat(),
+        mechanics=no_fee_binary_mechanics(),
+        executable_depth={"YES": ((0.32, 1000),)},
+    )
+    service.replace_inputs(
+        [buy_market],
+        evidence={(buy_market.venue, buy_market.venue_market_id): reviewed_evidence(buy_market)},
+    )
+    append_signal(service, buy_market, current=0.47)
+    append_signal(service, buy_market, SignalType.LIQUIDITY_MOVE, previous=100, current=700)
+    active = service.inbox()["items"]
+    assert len(active) == 1
+    assert active[0]["attention_class"] == AttentionClass.ACTIONABLE_PLAY
+    assert active[0]["verdict"] == "BUY YES"
+
+
+def test_inbox_max_active_items_ordering_seen_and_api(temporal):
+    service, market = temporal
+    markets = [
+        tight_context_market(
+            market,
+            venue_market_id=f"inbox-{idx}",
+            slug=f"inbox-{idx}",
+            title=f"Market {idx}",
+            status="OPEN",
+            original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+        )
+        for idx in range(12)
+    ]
+    service.replace_inputs(markets)
+    for idx, row in enumerate(markets):
+        signal_type = SignalType.PRICE_MOVE if idx < 4 else SignalType.SPREAD_MOVE
+        append_signal(
+            service,
+            row,
+            signal_type=signal_type,
+            detected_at=utcnow() + timedelta(seconds=idx),
+        )
+    service.inbox_store.expire_missing_active(set())
+    priority_market = replace(markets[0], status="ACTIVE", venue_market_id="priority", slug="priority")
+    service.replace_inputs([*markets, priority_market])
+    append_signal(service, priority_market, detected_at=utcnow() + timedelta(seconds=20))
+
+    payload = service.inbox()
+    assert len(payload["items"]) == 10
+    assert payload["items"][0]["attention_class"] == AttentionClass.PUBLIC_WORTHY
+    assert payload["items"][-1]["attention_class"] in {
+        AttentionClass.PUBLIC_WORTHY,
+        AttentionClass.PRIORITY_WATCH,
+    }
+    assert payload["items"][0]["seen"] is False
+    inbox_id = payload["items"][0]["inbox_id"]
+
+    api = server(service, port=0, resolve_plan=lambda headers: Plan.PRO)
+    thread = Thread(target=api.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urlopen(f"http://127.0.0.1:{api.server_port}/inbox") as response:
+            get_payload = json.load(response)
+        assert response.status == 200
+        assert get_payload["summary"]["unseen"] == 10
+        request = Request(
+            f"http://127.0.0.1:{api.server_port}/inbox/{inbox_id}/seen",
+            method="POST",
+        )
+        with urlopen(request) as response:
+            seen_payload = json.load(response)
+        assert response.status == 200
+        assert seen_payload["seen"] is True
+        with urlopen(request) as response:
+            second_seen_payload = json.load(response)
+        assert response.status == 200
+        assert second_seen_payload["seen_at"] == seen_payload["seen_at"]
+    finally:
+        api.shutdown()
+        api.server_close()
+        thread.join(timeout=2)
+
+
+def test_inbox_persistence_expiry_and_include_expired(temporal, tmp_path):
+    service, market = temporal
+    store_path = tmp_path / "survives.sqlite"
+    service.inbox_store = InboxStore(store_path)
+    watched = tight_context_market(
+        market,
+        status="ACTIVE",
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([watched])
+    append_signal(service, watched)
+    active = service.inbox()["items"]
+    assert len(active) == 1
+
+    reopened = InboxStore(store_path)
+    assert reopened.items()[0]["inbox_id"] == active[0]["inbox_id"]
+
+    service.signal_history[0] = replace(
+        service.signal_history[0],
+        detected_at=(utcnow() - timedelta(minutes=6)).isoformat(),
+    )
+    assert service.inbox()["items"] == []
+    expired = service.inbox(include_expired=True)["items"]
+    assert expired[0]["status"] == InboxStatus.EXPIRED
+
+
+def test_inbox_200_liquidity_only_signals_suppress_without_changing_routes(temporal):
+    service, market = temporal
+    markets = [
+        tight_context_market(
+            market,
+            venue_market_id=f"liq-{idx}",
+            slug=f"liq-{idx}",
+            title=f"Liquidity Market {idx}",
+            original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+        )
+        for idx in range(200)
+    ]
+    service.replace_inputs(markets)
+    detected = utcnow()
+    for idx, row in enumerate(markets):
+        append_signal(
+            service,
+            row,
+            SignalType.LIQUIDITY_MOVE,
+            previous=100,
+            current=700,
+            detected_at=detected + timedelta(microseconds=idx),
+        )
+
+    explained_before = service.explained_signals(Plan.PRO)
+    publishable_before = service.publishable_signals(Plan.PRO)
+    raw_before = service.signals(Plan.PRO)
+    payload = service.inbox()
+    explained_after = service.explained_signals(Plan.PRO)
+    publishable_after = service.publishable_signals(Plan.PRO)
+    raw_after = service.signals(Plan.PRO)
+    health = service.health()
+
+    assert payload["items"] == []
+    assert payload["summary"] == {
+        "actionable_plays": 0,
+        "public_worthy": 0,
+        "priority_watch": 0,
+        "unseen": 0,
+        "suppressed": 200,
+    }
+    assert explained_after["total"] == explained_before["total"] == 200
+    assert [
+        item["id"] for item in explained_after["items"]
+    ] == [item["id"] for item in explained_before["items"]]
+    assert publishable_after["items"] == publishable_before["items"] == []
+    assert raw_after["items"] == raw_before["items"]
+    assert "retail_interpretation" not in raw_after["items"][0]
+    assert health["live_orders"] == 0
+    assert health["execution_enabled"] is False
 
 
 def test_publishable_liquidity_and_new_market_guards(temporal):
