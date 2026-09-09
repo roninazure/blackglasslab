@@ -9,6 +9,7 @@ from hashlib import sha256
 from threading import RLock
 from typing import Any
 
+from .alerts import AlertDeliveryStore, AlertDispatcher
 from .engine import MAX_SPREAD, qualify
 from .entitlements import Feature, Plan, entitlement
 from .inbox import (
@@ -320,9 +321,17 @@ def _economics(price: float | None, label: str) -> dict[str, Any]:
 
 
 class PlayService:
-    def __init__(self, store: TrackRecord, inbox_store: InboxStore | None = None):
+    def __init__(
+        self,
+        store: TrackRecord,
+        inbox_store: InboxStore | None = None,
+        alert_dispatcher: AlertDispatcher | None = None,
+    ):
         self.store = store
         self.inbox_store = inbox_store or default_inbox_store()
+        self.alert_dispatcher = alert_dispatcher or AlertDispatcher(
+            AlertDeliveryStore(self.inbox_store.path)
+        )
         self.lock = RLock()
         self.markets: list[NormalizedMarket] = []
         self.evidence: dict[tuple[Venue, str], Evidence] = {}
@@ -1318,6 +1327,7 @@ class PlayService:
         }
         self.inbox_store.expire_missing_active(active_ids)
         self.inbox_suppressed = suppressed
+        self.alert_dispatcher.dispatch(self.inbox_store.items())
 
     def inbox(self, *, include_expired: bool = False) -> dict[str, Any]:
         self.refresh_inbox()
@@ -1350,6 +1360,19 @@ class PlayService:
 
     def mark_inbox_seen(self, inbox_id: str) -> dict[str, Any]:
         return self.inbox_store.mark_seen(inbox_id)
+
+    def alerts_status(self) -> dict[str, Any]:
+        return self.alert_dispatcher.status()
+
+    def alerts_recent(self, *, limit: int = 20) -> dict[str, Any]:
+        items = self.alert_dispatcher.recent(limit)
+        return {
+            "mode": self.alert_dispatcher.config.mode,
+            "total": len(items),
+            "limit": limit,
+            "items": items,
+            "as_of": utcnow().isoformat(),
+        }
 
     def _publishable_rows(
         self,
@@ -1459,6 +1482,15 @@ class PlayService:
                 ),
             }
         )
+        alert_status = self.alerts_status()
+        metrics.update(
+            {
+                "alerts_pending": alert_status["pending"],
+                "alerts_sent": alert_status["sent"],
+                "alerts_failed": alert_status["failed"],
+                "alerts_unknown": alert_status["unknown"],
+            }
+        )
         for play in plays:
             metrics[play.suggested_action] += 1
             for code in play.verdict.failed_gates:
@@ -1484,6 +1516,8 @@ class PlayService:
             "mode": self.mode,
             "last_refresh": self.last_refresh,
             "metrics": dict(metrics),
+            "alert_mode": alert_status["mode"],
+            "last_alert_delivery_at": alert_status["last_delivery_at"],
             "collection": self.collection,
             "live_orders": 0,
             "execution_enabled": False,

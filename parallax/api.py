@@ -43,6 +43,15 @@ def handler_for(service: PlayService, resolve_plan=None):
                     if filters:
                         raise ValueError("Signals do not accept filters")
                     payload = service.signals(plan)
+                elif route.path == "/alerts/status":
+                    if filters:
+                        raise ValueError("Alert status does not accept filters")
+                    payload = service.alerts_status()
+                elif route.path == "/alerts/recent":
+                    limit = int(filters.pop("limit", "20"))
+                    if filters:
+                        raise ValueError("Recent alerts do not accept unknown filters")
+                    payload = service.alerts_recent(limit=limit)
                 elif route.path.startswith("/plays/"):
                     payload = service.play(route.path.removeprefix("/plays/"), plan)
                 elif route.path == "/markets":

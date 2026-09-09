@@ -10,6 +10,12 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from parallax.alerts import (
+    AlertConfig,
+    AlertDeliveryStore,
+    AlertDispatcher,
+    DeliveryResult,
+)
 from parallax.api import server
 from parallax.demo import demo_inputs
 from parallax.entitlements import Plan
@@ -133,6 +139,35 @@ def append_signal(
             percent_change=600 if signal_type == SignalType.LIQUIDITY_MOVE else None,
         )
     )
+
+
+class FakeAlertTransport:
+    def __init__(self, *results):
+        self.results = list(results)
+        self.calls = []
+
+    def post_json(self, url, payload):
+        self.calls.append((url, payload))
+        if self.results:
+            return self.results.pop(0)
+        return DeliveryResult("SENT", http_status=204)
+
+
+def alert_service(tmp_path, mode="dry_run", webhook_url="https://example.com/hook", *results):
+    inbox_store = InboxStore(tmp_path / "alerts-inbox.sqlite")
+    delivery_store = AlertDeliveryStore(inbox_store.path)
+    transport = FakeAlertTransport(*results)
+    dispatcher = AlertDispatcher(
+        delivery_store,
+        AlertConfig(mode=mode, webhook_url=webhook_url),
+        transport,
+    )
+    service = PlayService(
+        TrackRecord(tmp_path / "alerts-record.sqlite"),
+        inbox_store,
+        dispatcher,
+    )
+    return service, transport
 
 
 def test_source_event_metadata_and_url_survive_normalization():
@@ -1265,6 +1300,333 @@ def test_inbox_200_liquidity_only_signals_suppress_without_changing_routes(tempo
     assert publishable_after["items"] == publishable_before["items"] == []
     assert raw_after["items"] == raw_before["items"]
     assert "retail_interpretation" not in raw_after["items"][0]
+    assert health["live_orders"] == 0
+    assert health["execution_enabled"] is False
+
+
+def test_alert_priority_mapping_and_dry_run_delivery_state(tmp_path):
+    service, transport = alert_service(tmp_path, "dry_run")
+    base = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        status="ACTIVE",
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([base])
+    append_signal(service, base)
+    service.refresh_inbox()
+    priority = service.alerts_recent()["items"][0]
+    assert priority["attention_class"] == "PRIORITY_WATCH"
+    assert priority["priority"] == "NORMAL"
+    assert priority["status"] == "SENT"
+
+    open_market = replace(base, status="OPEN")
+    service.replace_inputs([open_market])
+    append_signal(service, open_market, current=0.46)
+    service.refresh_inbox()
+    recent = service.alerts_recent()["items"]
+    priorities = {item["attention_class"]: item["priority"] for item in recent}
+    assert priorities["PRIORITY_WATCH"] == "NORMAL"
+    assert priorities["PUBLIC_WORTHY"] == "HIGH"
+
+    now = utcnow() - timedelta(seconds=30)
+    buy_market = replace(
+        open_market,
+        yes_bid=0.30,
+        yes_ask=0.32,
+        data_timestamp=now.isoformat(),
+        book_timestamp=now.isoformat(),
+        mechanics=no_fee_binary_mechanics(),
+        executable_depth={"YES": ((0.32, 1000),)},
+    )
+    service.replace_inputs(
+        [buy_market],
+        evidence={(buy_market.venue, buy_market.venue_market_id): reviewed_evidence(buy_market)},
+    )
+    append_signal(service, buy_market, current=0.47)
+    service.refresh_inbox()
+    recent = service.alerts_recent()["items"]
+    priorities = {item["attention_class"]: item["priority"] for item in recent}
+    assert priorities["ACTIONABLE_PLAY"] == "CRITICAL"
+    assert priorities["PUBLIC_WORTHY"] == "HIGH"
+    assert priorities["PRIORITY_WATCH"] == "NORMAL"
+    assert service.alerts_status()["sent"] == 3
+    assert transport.calls == []
+
+
+def test_alert_suppressed_and_liquidity_only_create_no_delivery(tmp_path):
+    service, transport = alert_service(tmp_path, "dry_run")
+    market = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        status="ACTIVE",
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([market])
+    append_signal(
+        service,
+        market,
+        significance=SignalSignificance.MATERIAL,
+    )
+    service.refresh_inbox()
+    assert service.inbox()["items"] == []
+    assert service.alerts_recent()["items"] == []
+
+    append_signal(service, market, SignalType.LIQUIDITY_MOVE, previous=100, current=700)
+    service.refresh_inbox()
+    assert service.inbox()["items"] == []
+    assert service.alerts_recent()["items"] == []
+    assert transport.calls == []
+
+
+def test_alert_same_item_dedupes_and_sent_never_resends(tmp_path):
+    service, transport = alert_service(tmp_path, "webhook")
+    market = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([market])
+    service.replace_inputs([later(market, yes_bid=0.43, yes_ask=0.45)])
+    service.refresh_inbox()
+    service.refresh_inbox()
+
+    assert len(transport.calls) == 1
+    assert service.alerts_status()["sent"] == 1
+    assert service.alerts_recent()["items"][0]["attempt_count"] == 1
+
+
+def test_alert_success_does_not_mark_inbox_seen(tmp_path):
+    service, transport = alert_service(tmp_path, "webhook")
+    market = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([market])
+    service.replace_inputs([later(market, yes_bid=0.43, yes_ask=0.45)])
+
+    item = service.inbox()["items"][0]
+    assert len(transport.calls) == 1
+    assert item["seen"] is False
+    assert item["seen_at"] is None
+
+
+def test_alert_webhook_4xx_5xx_timeout_unknown_and_missing_config(tmp_path):
+    market = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+
+    service, transport = alert_service(
+        tmp_path / "fourxx",
+        "webhook",
+        "https://example.com/hook",
+        DeliveryResult("FAILED", http_status=400, error_code="HTTP_4XX"),
+    )
+    service.replace_inputs([market])
+    service.replace_inputs([later(market, yes_bid=0.43, yes_ask=0.45)])
+    service.refresh_inbox()
+    assert len(transport.calls) == 1
+    recent = service.alerts_recent()["items"][0]
+    assert recent["status"] == "FAILED"
+    assert recent["attempt_count"] == 1
+
+    service, transport = alert_service(
+        tmp_path / "fivexx",
+        "webhook",
+        "https://example.com/hook",
+        DeliveryResult("FAILED", http_status=503, error_code="HTTP_5XX"),
+        DeliveryResult("FAILED", http_status=503, error_code="HTTP_5XX"),
+    )
+    service.replace_inputs([market])
+    service.replace_inputs([later(market, yes_bid=0.43, yes_ask=0.45)])
+    service.refresh_inbox()
+    assert len(transport.calls) == 2
+    recent = service.alerts_recent()["items"][0]
+    assert recent["status"] == "FAILED"
+    assert recent["attempt_count"] == 2
+
+    service, transport = alert_service(
+        tmp_path / "timeout",
+        "webhook",
+        "https://example.com/hook",
+        DeliveryResult("FAILED", error_code="TIMEOUT"),
+        DeliveryResult("FAILED", error_code="TIMEOUT"),
+    )
+    service.replace_inputs([market])
+    service.replace_inputs([later(market, yes_bid=0.43, yes_ask=0.45)])
+    service.refresh_inbox()
+    service.refresh_inbox()
+    assert len(transport.calls) == 2
+    assert service.alerts_recent()["items"][0]["attempt_count"] == 2
+
+    service, transport = alert_service(
+        tmp_path / "unknown",
+        "webhook",
+        "https://example.com/hook",
+        DeliveryResult("UNKNOWN", error_code="NETWORK_UNKNOWN"),
+    )
+    service.replace_inputs([market])
+    service.replace_inputs([later(market, yes_bid=0.43, yes_ask=0.45)])
+    service.refresh_inbox()
+    assert len(transport.calls) == 1
+    assert service.alerts_recent()["items"][0]["status"] == "UNKNOWN"
+
+    service, transport = alert_service(tmp_path / "missing", "webhook", None)
+    service.replace_inputs([market])
+    service.replace_inputs([later(market, yes_bid=0.43, yes_ask=0.45)])
+    assert transport.calls == []
+    recent = service.alerts_recent()["items"][0]
+    assert recent["status"] == "FAILED"
+    assert "PARALLAX_ALERT_WEBHOOK_URL" in recent["error_summary"]
+
+
+def test_alert_disabled_endpoints_redact_url_logs_and_health_metrics(tmp_path, capsys):
+    service, transport = alert_service(
+        tmp_path,
+        "disabled",
+        "https://secret.example.com/hook-token",
+    )
+    market = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([market])
+    service.replace_inputs([later(market, yes_bid=0.43, yes_ask=0.45)])
+    status = service.alerts_status()
+    health = service.health()
+
+    assert transport.calls == []
+    assert status == {
+        "mode": "disabled",
+        "pending": 0,
+        "sent": 0,
+        "failed": 0,
+        "unknown": 0,
+        "last_delivery_at": None,
+    }
+    assert health["alert_mode"] == "disabled"
+    assert health["metrics"]["alerts_pending"] == 0
+    assert health["metrics"]["alerts_sent"] == 0
+    assert health["metrics"]["alerts_failed"] == 0
+    assert health["metrics"]["alerts_unknown"] == 0
+    assert health["last_alert_delivery_at"] is None
+    assert health["live_orders"] == 0
+    assert health["execution_enabled"] is False
+
+    api = server(service, port=0, resolve_plan=lambda headers: Plan.PRO)
+    thread = Thread(target=api.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urlopen(f"http://127.0.0.1:{api.server_port}/alerts/status") as response:
+            status_payload = json.load(response)
+        with urlopen(f"http://127.0.0.1:{api.server_port}/alerts/recent") as response:
+            recent_payload = json.load(response)
+    finally:
+        api.shutdown()
+        api.server_close()
+        thread.join(timeout=2)
+
+    serialized = json.dumps({"status": status_payload, "recent": recent_payload})
+    captured = capsys.readouterr()
+    assert "secret.example.com" not in serialized
+    assert "secret.example.com" not in captured.out
+    assert "secret.example.com" not in captured.err
+
+
+def test_alert_delivery_state_survives_reopen_and_lower_after_actionable_suppressed(
+    tmp_path,
+):
+    service, _ = alert_service(tmp_path, "dry_run")
+    market = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    now = utcnow() - timedelta(seconds=30)
+    buy_market = replace(
+        market,
+        yes_bid=0.30,
+        yes_ask=0.32,
+        data_timestamp=now.isoformat(),
+        book_timestamp=now.isoformat(),
+        mechanics=no_fee_binary_mechanics(),
+        executable_depth={"YES": ((0.32, 1000),)},
+    )
+    service.replace_inputs([buy_market])
+    service.replace_inputs(
+        [buy_market],
+        evidence={(buy_market.venue, buy_market.venue_market_id): reviewed_evidence(buy_market)},
+    )
+    append_signal(service, buy_market)
+    service.refresh_inbox()
+    assert service.alerts_status()["sent"] == 1
+
+    reopened = AlertDeliveryStore(service.inbox_store.path)
+    assert reopened.status("dry_run")["sent"] == 1
+
+    service.signal_history.clear()
+    lower_market = replace(buy_market, status="OPEN")
+    service.evidence = {}
+    append_signal(service, lower_market, current=0.45)
+    service.refresh_inbox()
+    assert service.alerts_status()["sent"] == 1
+
+
+def test_alert_routes_do_not_change_existing_read_routes(tmp_path):
+    service, _ = alert_service(tmp_path, "dry_run")
+    market = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([market])
+    service.replace_inputs([later(market, yes_bid=0.43, yes_ask=0.45)])
+    inbox_before = service.inbox()
+    explained_before = service.explained_signals(Plan.PRO)
+    publishable_before = service.publishable_signals(Plan.PRO)
+
+    service.alerts_status()
+    service.alerts_recent()
+
+    assert [item["inbox_id"] for item in service.inbox()["items"]] == [
+        item["inbox_id"] for item in inbox_before["items"]
+    ]
+    assert [item["id"] for item in service.explained_signals(Plan.PRO)["items"]] == [
+        item["id"] for item in explained_before["items"]
+    ]
+    assert [item["id"] for item in service.publishable_signals(Plan.PRO)["items"]] == [
+        item["id"] for item in publishable_before["items"]
+    ]
+
+
+def test_alert_200_suppressed_liquidity_observations_create_zero_deliveries(tmp_path):
+    service, transport = alert_service(tmp_path, "dry_run")
+    market = replace(demo_inputs()[0][0], demo=False)
+    markets = [
+        tight_context_market(
+            market,
+            venue_market_id=f"alert-liq-{idx}",
+            slug=f"alert-liq-{idx}",
+            title=f"Alert Liquidity Market {idx}",
+            original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+        )
+        for idx in range(200)
+    ]
+    service.replace_inputs(markets)
+    detected = utcnow()
+    for idx, row in enumerate(markets):
+        append_signal(
+            service,
+            row,
+            SignalType.LIQUIDITY_MOVE,
+            previous=100,
+            current=700,
+            detected_at=detected + timedelta(microseconds=idx),
+        )
+    payload = service.inbox()
+    health = service.health()
+
+    assert payload["items"] == []
+    assert payload["summary"]["suppressed"] == 200
+    assert service.alerts_status()["sent"] == 0
+    assert service.alerts_recent()["items"] == []
+    assert transport.calls == []
     assert health["live_orders"] == 0
     assert health["execution_enabled"] is False
 
