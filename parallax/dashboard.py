@@ -11,6 +11,7 @@ def render_dashboard(
     health: dict[str, Any],
     alerts: dict[str, Any],
     track_record: dict[str, Any],
+    social: dict[str, Any] | None = None,
 ) -> str:
     summary = inbox.get("summary", {})
     items = [
@@ -70,6 +71,7 @@ def render_dashboard(
       {_system_status(health)}
       {_alert_status(alerts)}
       {_track_record(track_record)}
+      {_social_status(social or health.get("social") or {})}
     </section>
   </main>
   <script>{_js()}</script>
@@ -282,6 +284,25 @@ def _track_record(track_record: dict[str, Any]) -> str:
     <section class="panel">
       <h2>Track Record</h2>
       {body}
+    </section>
+    """
+
+
+def _social_status(social: dict[str, Any]) -> str:
+    platforms = social.get("platforms") or {}
+    def state(name: str) -> str:
+        return str((platforms.get(name) or {}).get("status", "disabled")).upper()
+    return f"""
+    <section class="panel social-status">
+      <h2>SOCIAL PUBLISHER</h2>
+      <dl class="facts compact">
+        <dt>mode</dt><dd>{escape(str(social.get("mode", "disabled")))}</dd>
+        <dt>X</dt><dd>{escape(state("x"))}</dd>
+        <dt>LinkedIn</dt><dd>{escape(state("linkedin"))}</dd>
+        <dt>Instagram</dt><dd>{escape(state("instagram"))}</dd>
+        <dt>sent count</dt><dd>{escape(str(social.get("sent", 0)))}</dd>
+        <dt>failed count</dt><dd>{escape(str(social.get("failed", 0)))}</dd>
+      </dl>
     </section>
     """
 

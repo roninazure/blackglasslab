@@ -35,6 +35,7 @@ from .models import (
     timestamp,
     utcnow,
 )
+from .social import SocialPublisher
 from .track_record import TrackRecord
 
 PRICE_MOVE_THRESHOLD = 0.05
@@ -326,12 +327,14 @@ class PlayService:
         store: TrackRecord,
         inbox_store: InboxStore | None = None,
         alert_dispatcher: AlertDispatcher | None = None,
+        social_publisher: SocialPublisher | None = None,
     ):
         self.store = store
         self.inbox_store = inbox_store or default_inbox_store()
         self.alert_dispatcher = alert_dispatcher or AlertDispatcher(
             AlertDeliveryStore(self.inbox_store.path)
         )
+        self.social = social_publisher or SocialPublisher()
         self.lock = RLock()
         self.markets: list[NormalizedMarket] = []
         self.evidence: dict[tuple[Venue, str], Evidence] = {}
@@ -1328,6 +1331,11 @@ class PlayService:
         self.inbox_store.expire_missing_active(active_ids)
         self.inbox_suppressed = suppressed
         self.alert_dispatcher.dispatch(self.inbox_store.items())
+        if self.mode != "demo":
+            for stored_item in self.inbox_store.items():
+                if stored_item.get("status") == InboxStatus.ACTIVE.value:
+                    self.social.enqueue(stored_item)
+            self.social.publish_pending()
 
     def inbox(self, *, include_expired: bool = False) -> dict[str, Any]:
         self.refresh_inbox()
@@ -1373,6 +1381,15 @@ class PlayService:
             "items": items,
             "as_of": utcnow().isoformat(),
         }
+
+    def social_status(self) -> dict[str, Any]:
+        return self.social.status()
+
+    def social_outbox(self, *, limit: int = 20) -> dict[str, Any]:
+        return {"items": self.social.store.outbox(limit), "limit": min(max(limit, 1), 100)}
+
+    def social_publications(self, *, limit: int = 20) -> dict[str, Any]:
+        return {"items": self.social.store.publications(limit), "limit": min(max(limit, 1), 100)}
 
     def _publishable_rows(
         self,
@@ -1482,13 +1499,21 @@ class PlayService:
                 ),
             }
         )
+        metrics = dict(metrics)
         alert_status = self.alerts_status()
+        social_status = self.social_status()
         metrics.update(
             {
                 "alerts_pending": alert_status["pending"],
                 "alerts_sent": alert_status["sent"],
                 "alerts_failed": alert_status["failed"],
                 "alerts_unknown": alert_status["unknown"],
+                "social_mode": social_status["mode"],
+                "social_pending": social_status["pending"],
+                "social_dry_run": social_status["dry_run"],
+                "social_sent": social_status["sent"],
+                "social_failed": social_status["failed"],
+                "social_unknown": social_status["unknown"],
             }
         )
         for play in plays:
@@ -1518,6 +1543,7 @@ class PlayService:
             "metrics": dict(metrics),
             "alert_mode": alert_status["mode"],
             "last_alert_delivery_at": alert_status["last_delivery_at"],
+            "social": social_status,
             "collection": self.collection,
             "live_orders": 0,
             "execution_enabled": False,

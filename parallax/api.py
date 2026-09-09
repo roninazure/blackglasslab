@@ -31,6 +31,7 @@ def handler_for(service: PlayService, resolve_plan=None):
                         service.health(),
                         service.alerts_status(),
                         service.store.summary(),
+                        service.social_status(),
                     )
                     self.respond_html(200, payload)
                     return
@@ -74,6 +75,13 @@ def handler_for(service: PlayService, resolve_plan=None):
                     payload = service.store.summary()
                 elif route.path == "/health":
                     payload = service.health()
+                elif route.path == "/social/status":
+                    if filters: raise ValueError("Social status does not accept filters")
+                    payload = service.social_status()
+                elif route.path in {"/social/outbox", "/social/publications"}:
+                    limit = int(filters.pop("limit", "20"))
+                    if filters: raise ValueError("Social ledger does not accept unknown filters")
+                    payload = service.social_outbox(limit=limit) if route.path.endswith("outbox") else service.social_publications(limit=limit)
                 else:
                     raise KeyError(route.path)
                 self.respond(200, payload)
