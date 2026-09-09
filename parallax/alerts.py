@@ -23,6 +23,17 @@ ALERT_PRIORITIES = {
     AttentionClass.PUBLIC_WORTHY.value: "HIGH",
     AttentionClass.PRIORITY_WATCH.value: "NORMAL",
 }
+NTFY_PRIORITIES = {
+    "CRITICAL": 5,
+    "HIGH": 4,
+    "NORMAL": 3,
+}
+ALERT_TITLES = {
+    AttentionClass.ACTIONABLE_PLAY.value: "PARALLAX ACTIONABLE PLAY",
+    AttentionClass.PUBLIC_WORTHY.value: "PARALLAX PUBLIC-WORTHY",
+    AttentionClass.PRIORITY_WATCH.value: "PARALLAX PRIORITY WATCH",
+}
+DEFAULT_NTFY_SERVER = "https://ntfy.sh"
 MAX_ATTEMPTS = 2
 WEBHOOK_TIMEOUT_SECONDS = 5
 MAX_RESPONSE_BYTES = 4096
@@ -32,6 +43,8 @@ MAX_RESPONSE_BYTES = 4096
 class AlertConfig:
     mode: str = "disabled"
     webhook_url: str | None = None
+    ntfy_topic: str | None = None
+    ntfy_server: str = DEFAULT_NTFY_SERVER
 
     @classmethod
     def load(cls, path: Path = ALERT_CONFIG_PATH) -> AlertConfig:
@@ -47,14 +60,27 @@ class AlertConfig:
             {
                 key: value
                 for key, value in os.environ.items()
-                if key in {"PARALLAX_ALERT_MODE", "PARALLAX_ALERT_WEBHOOK_URL"}
+                if key
+                in {
+                    "PARALLAX_ALERT_MODE",
+                    "PARALLAX_ALERT_WEBHOOK_URL",
+                    "PARALLAX_ALERT_NTFY_TOPIC",
+                    "PARALLAX_ALERT_NTFY_SERVER",
+                }
             }
         )
         mode = values.get("PARALLAX_ALERT_MODE", "disabled").strip().casefold()
-        if mode not in {"disabled", "dry_run", "webhook"}:
+        if mode not in {"disabled", "dry_run", "webhook", "ntfy"}:
             mode = "disabled"
         webhook_url = values.get("PARALLAX_ALERT_WEBHOOK_URL")
-        return cls(mode=mode, webhook_url=webhook_url.strip() if webhook_url else None)
+        ntfy_topic = values.get("PARALLAX_ALERT_NTFY_TOPIC")
+        ntfy_server = values.get("PARALLAX_ALERT_NTFY_SERVER", DEFAULT_NTFY_SERVER)
+        return cls(
+            mode=mode,
+            webhook_url=webhook_url.strip() if webhook_url else None,
+            ntfy_topic=ntfy_topic.strip() if ntfy_topic else None,
+            ntfy_server=ntfy_server.strip() or DEFAULT_NTFY_SERVER,
+        )
 
 
 @dataclass(frozen=True)
@@ -383,6 +409,27 @@ class AlertDispatcher:
                     DeliveryResult("SENT"),
                 )
                 continue
+            if self.config.mode == "ntfy":
+                if not self.config.ntfy_topic:
+                    self.store.record_attempt(
+                        delivery["delivery_id"],
+                        DeliveryResult(
+                            "FAILED",
+                            error_code="CONFIGURATION_ERROR",
+                            error_summary="ntfy mode requires PARALLAX_ALERT_NTFY_TOPIC.",
+                        ),
+                    )
+                    continue
+                result = self.transport.post_json(
+                    ntfy_publish_url(self.config.ntfy_server),
+                    ntfy_payload(pending_item, delivery["priority"], self.config.ntfy_topic),
+                )
+                retryable = result.error_code in {"TIMEOUT", "HTTP_5XX"}
+                final = not retryable or delivery["attempt_count"] + 1 >= MAX_ATTEMPTS
+                if result.status == "UNKNOWN":
+                    final = True
+                self.store.record_attempt(delivery["delivery_id"], result, final=final)
+                continue
             if not self.config.webhook_url:
                 self.store.record_attempt(
                     delivery["delivery_id"],
@@ -428,6 +475,19 @@ def alert_payload(item: dict[str, Any], priority: str | None = None) -> dict[str
         "sent_at": sent_at,
     }
     return payload
+
+
+def ntfy_payload(item: dict[str, Any], priority: str, topic: str) -> dict[str, Any]:
+    return {
+        "topic": topic,
+        "message": format_alert_message(item),
+        "title": ALERT_TITLES[str(item["attention_class"])],
+        "priority": NTFY_PRIORITIES[priority],
+    }
+
+
+def ntfy_publish_url(server: str) -> str:
+    return f"{server.rstrip('/')}/"
 
 
 def format_alert_message(item: dict[str, Any]) -> str:

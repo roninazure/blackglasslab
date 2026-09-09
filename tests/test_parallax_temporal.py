@@ -153,13 +153,25 @@ class FakeAlertTransport:
         return DeliveryResult("SENT", http_status=204)
 
 
-def alert_service(tmp_path, mode="dry_run", webhook_url="https://example.com/hook", *results):
+def alert_service(
+    tmp_path,
+    mode="dry_run",
+    webhook_url="https://example.com/hook",
+    *results,
+    ntfy_topic=None,
+    ntfy_server="https://ntfy.example.com/base",
+):
     inbox_store = InboxStore(tmp_path / "alerts-inbox.sqlite")
     delivery_store = AlertDeliveryStore(inbox_store.path)
     transport = FakeAlertTransport(*results)
     dispatcher = AlertDispatcher(
         delivery_store,
-        AlertConfig(mode=mode, webhook_url=webhook_url),
+        AlertConfig(
+            mode=mode,
+            webhook_url=webhook_url,
+            ntfy_topic=ntfy_topic,
+            ntfy_server=ntfy_server,
+        ),
         transport,
     )
     service = PlayService(
@@ -1351,6 +1363,131 @@ def test_alert_priority_mapping_and_dry_run_delivery_state(tmp_path):
     assert priorities["PRIORITY_WATCH"] == "NORMAL"
     assert service.alerts_status()["sent"] == 3
     assert transport.calls == []
+
+
+def test_alert_ntfy_payload_priority_title_message_topic_and_sent(tmp_path):
+    topic = "private-test-topic"
+    service, transport = alert_service(tmp_path, "ntfy", ntfy_topic=topic)
+    base = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        status="ACTIVE",
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([base])
+    append_signal(service, base)
+    service.refresh_inbox()
+
+    open_market = replace(base, status="OPEN")
+    service.replace_inputs([open_market])
+    append_signal(service, open_market, current=0.46)
+    service.refresh_inbox()
+
+    now = utcnow() - timedelta(seconds=30)
+    buy_market = replace(
+        open_market,
+        yes_bid=0.30,
+        yes_ask=0.32,
+        data_timestamp=now.isoformat(),
+        book_timestamp=now.isoformat(),
+        mechanics=no_fee_binary_mechanics(),
+        executable_depth={"YES": ((0.32, 1000),)},
+    )
+    service.replace_inputs(
+        [buy_market],
+        evidence={(buy_market.venue, buy_market.venue_market_id): reviewed_evidence(buy_market)},
+    )
+    append_signal(service, buy_market, current=0.47)
+    service.refresh_inbox()
+
+    recent = {
+        item["attention_class"]: item for item in service.alerts_recent()["items"]
+    }
+    calls = {
+        payload["title"]: (url, payload)
+        for url, payload in transport.calls
+    }
+    expected = {
+        "ACTIONABLE_PLAY": ("PARALLAX ACTIONABLE PLAY", 5),
+        "PUBLIC_WORTHY": ("PARALLAX PUBLIC-WORTHY", 4),
+        "PRIORITY_WATCH": ("PARALLAX PRIORITY WATCH", 3),
+    }
+    assert set(recent) == set(expected)
+    assert service.alerts_status()["sent"] == 3
+    for attention_class, (title, priority) in expected.items():
+        url, payload = calls[title]
+        assert url == "https://ntfy.example.com/base/"
+        assert payload["topic"] == topic
+        assert payload["title"] == title
+        assert payload["priority"] == priority
+        assert payload["message"].splitlines()[0] == (
+            "PARALLAX PUBLIC-WORTHY SIGNAL"
+            if attention_class == "PUBLIC_WORTHY"
+            else title
+        )
+        assert "Market: Villarreal CF vs Real Betis — Both Teams To Score" in payload[
+            "message"
+        ]
+        assert recent[attention_class]["status"] == "SENT"
+
+
+def test_alert_ntfy_topic_redacted_from_status_recent_health_and_logs(
+    tmp_path,
+    capsys,
+):
+    topic = "private-topic-do-not-expose"
+    service, transport = alert_service(
+        tmp_path,
+        "ntfy",
+        "https://example.com/hook",
+        DeliveryResult(
+            "FAILED",
+            error_code="INVALID_WEBHOOK_URL",
+            error_summary="Delivery URL must use HTTPS.",
+        ),
+        ntfy_topic=topic,
+        ntfy_server="http://ntfy.example.com/private-path",
+    )
+    market = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([market])
+    service.replace_inputs([later(market, yes_bid=0.43, yes_ask=0.45)])
+    status = service.alerts_status()
+    recent = service.alerts_recent()
+    health = service.health()
+
+    assert len(transport.calls) == 1
+    assert recent["items"][0]["status"] == "FAILED"
+    assert topic not in json.dumps({"status": status, "recent": recent, "health": health})
+    assert topic not in (recent["items"][0]["error_summary"] or "")
+
+    api = server(service, port=0, resolve_plan=lambda headers: Plan.PRO)
+    thread = Thread(target=api.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urlopen(f"http://127.0.0.1:{api.server_port}/alerts/status") as response:
+            status_payload = json.load(response)
+        with urlopen(f"http://127.0.0.1:{api.server_port}/alerts/recent") as response:
+            recent_payload = json.load(response)
+        with urlopen(f"http://127.0.0.1:{api.server_port}/health") as response:
+            health_payload = json.load(response)
+    finally:
+        api.shutdown()
+        api.server_close()
+        thread.join(timeout=2)
+
+    serialized = json.dumps(
+        {
+            "status": status_payload,
+            "recent": recent_payload,
+            "health": health_payload,
+        }
+    )
+    captured = capsys.readouterr()
+    assert topic not in serialized
+    assert topic not in captured.out
+    assert topic not in captured.err
 
 
 def test_alert_suppressed_and_liquidity_only_create_no_delivery(tmp_path):
