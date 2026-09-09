@@ -4,6 +4,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from .dashboard import render_dashboard
 from .entitlements import Plan
 from .service import PlayService
 
@@ -22,6 +23,17 @@ def handler_for(service: PlayService, resolve_plan=None):
                 if any(len(v) != 1 for v in query.values()):
                     raise ValueError("Filters cannot be repeated")
                 filters = {k: v[0] for k, v in query.items()}
+                if route.path == "/dashboard":
+                    if filters:
+                        raise ValueError("Dashboard does not accept filters")
+                    payload = render_dashboard(
+                        service.inbox(),
+                        service.health(),
+                        service.alerts_status(),
+                        service.store.summary(),
+                    )
+                    self.respond_html(200, payload)
+                    return
                 if route.path == "/plays":
                     payload = service.plays(plan, **filters)
                 elif route.path == "/inbox":
@@ -100,6 +112,15 @@ def handler_for(service: PlayService, resolve_plan=None):
             body = json.dumps(payload, allow_nan=False).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def respond_html(self, status, payload):
+            body = payload.encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()

@@ -17,6 +17,7 @@ from parallax.alerts import (
     DeliveryResult,
 )
 from parallax.api import server
+from parallax.dashboard import render_dashboard
 from parallax.demo import demo_inputs
 from parallax.entitlements import Plan
 from parallax.inbox import InboxStore
@@ -180,6 +181,15 @@ def alert_service(
         dispatcher,
     )
     return service, transport
+
+
+def dashboard_html(service):
+    return render_dashboard(
+        service.inbox(),
+        service.health(),
+        service.alerts_status(),
+        service.store.summary(),
+    )
 
 
 def test_source_event_metadata_and_url_survive_normalization():
@@ -1314,6 +1324,248 @@ def test_inbox_200_liquidity_only_signals_suppress_without_changing_routes(tempo
     assert "retail_interpretation" not in raw_after["items"][0]
     assert health["live_orders"] == 0
     assert health["execution_enabled"] is False
+
+
+def test_dashboard_route_empty_state_suppressed_count_and_safe_status(temporal):
+    service, market = temporal
+    markets = [
+        tight_context_market(
+            market,
+            venue_market_id=f"dashboard-liq-{idx}",
+            slug=f"dashboard-liq-{idx}",
+            title=f"Dashboard Liquidity Market {idx}",
+            original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+        )
+        for idx in range(12)
+    ]
+    service.replace_inputs(markets)
+    detected = utcnow()
+    for idx, row in enumerate(markets):
+        append_signal(
+            service,
+            row,
+            SignalType.LIQUIDITY_MOVE,
+            previous=100,
+            current=700,
+            detected_at=detected + timedelta(microseconds=idx),
+        )
+
+    api = server(service, port=0, resolve_plan=lambda headers: Plan.PRO)
+    thread = Thread(target=api.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urlopen(f"http://127.0.0.1:{api.server_port}/dashboard") as response:
+            body = response.read().decode()
+        assert response.status == 200
+        assert response.headers["Content-Type"] == "text/html; charset=utf-8"
+        assert "NOTHING NEEDS YOUR ATTENTION" in body
+        assert "PARALLAX is monitoring the markets and filtering routine activity." in body
+        assert "FILTERED" in body
+        assert ">12<" in body
+        assert "LIVE ORDERS" in body
+        assert "<dd>0</dd>" in body
+        assert "EXECUTION ENABLED" in body
+        assert "<dd>false</dd>" in body
+        assert "NO PUBLISHED PARALLAX PLAYS YET" in body
+        assert "/signals/explained" not in body
+        assert service.health()["live_orders"] == 0
+        assert service.health()["execution_enabled"] is False
+    finally:
+        api.shutdown()
+        api.server_close()
+        thread.join(timeout=2)
+
+
+def test_dashboard_actionable_buy_yes_uses_backend_economics(temporal):
+    service, market = temporal
+    now = utcnow() - timedelta(seconds=30)
+    baseline = tight_context_market(
+        market,
+        yes_bid=0.24,
+        yes_ask=0.26,
+        no_bid=0.68,
+        no_ask=0.70,
+        data_timestamp=now.isoformat(),
+        book_timestamp=now.isoformat(),
+        mechanics=no_fee_binary_mechanics(),
+        executable_depth={"YES": ((0.32, 1000),)},
+    )
+    current = replace(
+        baseline,
+        yes_bid=0.30,
+        yes_ask=0.32,
+        data_timestamp=(now + timedelta(seconds=30)).isoformat(),
+        book_timestamp=(now + timedelta(seconds=30)).isoformat(),
+    )
+    service.replace_inputs([baseline])
+    service.replace_inputs(
+        [current],
+        evidence={(current.venue, current.venue_market_id): reviewed_evidence(current)},
+    )
+
+    item = service.inbox()["items"][0]
+    item["economics"]["examples"][0]["gross_profit_if_correct"] = 53.13
+    item["economics"]["examples"][0]["maximum_loss"] = 25.0
+    html = render_dashboard(
+        {"summary": service.inbox()["summary"], "items": [item]},
+        service.health(),
+        service.alerts_status(),
+        service.store.summary(),
+    )
+
+    assert "PARALLAX ACTIONABLE PLAY" in html
+    assert "BUY YES" in html
+    assert "32¢" in html
+    assert "$53.13" in html
+    assert "$25.00" in html
+    assert "before fees/costs" in html
+
+
+def test_dashboard_actionable_buy_no_renders_buy_no(temporal):
+    service, market = temporal
+    now = utcnow() - timedelta(seconds=30)
+    baseline = tight_context_market(
+        market,
+        yes_bid=0.68,
+        yes_ask=0.70,
+        no_bid=0.24,
+        no_ask=0.26,
+        data_timestamp=now.isoformat(),
+        book_timestamp=now.isoformat(),
+        mechanics=no_fee_binary_mechanics(),
+        executable_depth={"NO": ((0.32, 1000),)},
+    )
+    current = replace(
+        baseline,
+        no_bid=0.30,
+        no_ask=0.32,
+        data_timestamp=(now + timedelta(seconds=30)).isoformat(),
+        book_timestamp=(now + timedelta(seconds=30)).isoformat(),
+    )
+    service.replace_inputs([baseline])
+    service.replace_inputs(
+        [current],
+        evidence={
+            (current.venue, current.venue_market_id): reviewed_evidence(
+                current, fair_probability=0.35
+            )
+        },
+    )
+
+    html = dashboard_html(service)
+
+    assert "PARALLAX ACTIONABLE PLAY" in html
+    assert "BUY NO" in html
+    assert "32¢" in html
+
+
+def test_dashboard_public_worthy_and_priority_watch_do_not_create_buy_language(
+    temporal, tmp_path
+):
+    service, market = temporal
+    public_market = tight_context_market(
+        market,
+        venue_market_id="dashboard-public",
+        slug="dashboard-public",
+        title="Dashboard Public Market",
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([public_market])
+    service.replace_inputs([later(public_market, yes_bid=0.43, yes_ask=0.45)])
+    public_html = dashboard_html(service)
+    assert "PARALLAX PUBLIC-WORTHY" in public_html
+    assert "NOT A BUY RECOMMENDATION" in public_html
+    assert "BUY YES" not in public_html
+    assert "BUY NO" not in public_html
+
+    watch_service = PlayService(
+        TrackRecord(tmp_path / "dashboard-watch-record.sqlite"),
+        InboxStore(tmp_path / "dashboard-watch-inbox.sqlite"),
+    )
+    watch_market = tight_context_market(
+        replace(demo_inputs()[0][0], demo=False),
+        status="ACTIVE",
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    watch_service.replace_inputs([watch_market])
+    append_signal(watch_service, watch_market)
+    watch_html = dashboard_html(watch_service)
+    assert "PARALLAX PRIORITY WATCH" in watch_html
+    assert "BUY YES" not in watch_html
+    assert "BUY NO" not in watch_html
+
+
+def test_dashboard_mark_seen_script_calls_existing_seen_endpoint(temporal):
+    service, market = temporal
+    active_market = tight_context_market(
+        market,
+        status="ACTIVE",
+        original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
+    )
+    service.replace_inputs([active_market])
+    append_signal(service, active_market)
+
+    html = dashboard_html(service)
+
+    assert "MARK SEEN" in html
+    assert "fetch(`/inbox/${encodeURIComponent(inboxId)}/seen`, { method: 'POST' })" in html
+
+
+def test_dashboard_does_not_expose_alert_secrets(tmp_path):
+    topic = "secret-ntfy-topic"
+    webhook = "https://example.com/secret-webhook"
+    service, _ = alert_service(
+        tmp_path,
+        "ntfy",
+        webhook_url=webhook,
+        ntfy_topic=topic,
+    )
+
+    html = dashboard_html(service)
+
+    assert "ntfy" in html
+    assert topic not in html
+    assert webhook not in html
+    assert "PARALLAX_ALERT_NTFY_TOPIC" not in html
+    assert "PARALLAX_ALERT_WEBHOOK_URL" not in html
+
+
+def test_dashboard_preserves_existing_json_routes(temporal):
+    service, _ = temporal
+    api = server(service, port=0, resolve_plan=lambda headers: Plan.PRO)
+    thread = Thread(target=api.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urlopen(f"http://127.0.0.1:{api.server_port}/dashboard") as response:
+            assert response.status == 200
+        with urlopen(f"http://127.0.0.1:{api.server_port}/inbox") as response:
+            inbox_payload = json.load(response)
+        with urlopen(f"http://127.0.0.1:{api.server_port}/alerts/status") as response:
+            alerts_payload = json.load(response)
+        with urlopen(f"http://127.0.0.1:{api.server_port}/health") as response:
+            health_payload = json.load(response)
+
+        assert inbox_payload["summary"] == {
+            "actionable_plays": 0,
+            "public_worthy": 0,
+            "priority_watch": 0,
+            "unseen": 0,
+            "suppressed": 0,
+        }
+        assert set(alerts_payload) == {
+            "mode",
+            "pending",
+            "sent",
+            "failed",
+            "unknown",
+            "last_delivery_at",
+        }
+        assert health_payload["live_orders"] == 0
+        assert health_payload["execution_enabled"] is False
+    finally:
+        api.shutdown()
+        api.server_close()
+        thread.join(timeout=2)
 
 
 def test_alert_priority_mapping_and_dry_run_delivery_state(tmp_path):
