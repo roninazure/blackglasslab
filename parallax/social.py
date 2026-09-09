@@ -5,13 +5,20 @@ import json
 import os
 import sqlite3
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .models import timestamp, utcnow
+from .x_auth import (
+    TOKEN_EXPIRING_SECONDS,
+    OAuthTransport,
+    XCredentials,
+    XCredentialStore,
+    XOAuthClient,
+)
 
 SOCIAL_DB_PATH = Path.home() / "Library" / "Application Support" / "SwarmEdge" / "state" / "parallax_social.sqlite"
 SOCIAL_CONFIG_PATH = Path.home() / "Library" / "Application Support" / "SwarmEdge" / "parallax-social.env"
@@ -52,12 +59,17 @@ class SocialConfig:
     instagram_token: str | None = None
     instagram_account: str | None = None
     instagram_media_base_url: str | None = None
+    x_client_id: str | None = None
+    x_client_secret: str | None = None
+    x_refresh_token: str | None = None
+    x_expires_at: float | None = None
 
     @classmethod
     def load(cls) -> SocialConfig:
         keys = {
             "PARALLAX_SOCIAL_MODE", "PARALLAX_SOCIAL_X_ENABLED", "PARALLAX_SOCIAL_LINKEDIN_ENABLED",
             "PARALLAX_SOCIAL_INSTAGRAM_ENABLED", "PARALLAX_X_ACCESS_TOKEN", "PARALLAX_LINKEDIN_ACCESS_TOKEN",
+            "PARALLAX_X_CLIENT_ID", "PARALLAX_X_CLIENT_SECRET", "PARALLAX_X_REFRESH_TOKEN", "PARALLAX_X_TOKEN_EXPIRES_AT",
             "PARALLAX_LINKEDIN_ORGANIZATION_URN", "PARALLAX_LINKEDIN_VERSION", "PARALLAX_INSTAGRAM_ACCESS_TOKEN",
             "PARALLAX_INSTAGRAM_ACCOUNT_ID", "PARALLAX_INSTAGRAM_MEDIA_BASE_URL",
         }
@@ -69,7 +81,8 @@ class SocialConfig:
         if mode not in {"disabled", "dry_run", "live"}:
             mode = "disabled"
         flag = lambda key: values.get(key, "false").casefold() in {"1", "true", "yes", "on"}
-        return cls(mode, flag("PARALLAX_SOCIAL_X_ENABLED"), flag("PARALLAX_SOCIAL_LINKEDIN_ENABLED"), flag("PARALLAX_SOCIAL_INSTAGRAM_ENABLED"), values.get("PARALLAX_X_ACCESS_TOKEN"), values.get("PARALLAX_LINKEDIN_ACCESS_TOKEN"), values.get("PARALLAX_LINKEDIN_ORGANIZATION_URN"), values.get("PARALLAX_LINKEDIN_VERSION"), values.get("PARALLAX_INSTAGRAM_ACCESS_TOKEN"), values.get("PARALLAX_INSTAGRAM_ACCOUNT_ID"), values.get("PARALLAX_INSTAGRAM_MEDIA_BASE_URL"))
+        expires = float(values["PARALLAX_X_TOKEN_EXPIRES_AT"]) if values.get("PARALLAX_X_TOKEN_EXPIRES_AT") else None
+        return cls(mode, flag("PARALLAX_SOCIAL_X_ENABLED"), flag("PARALLAX_SOCIAL_LINKEDIN_ENABLED"), flag("PARALLAX_SOCIAL_INSTAGRAM_ENABLED"), values.get("PARALLAX_X_ACCESS_TOKEN"), values.get("PARALLAX_LINKEDIN_ACCESS_TOKEN"), values.get("PARALLAX_LINKEDIN_ORGANIZATION_URN"), values.get("PARALLAX_LINKEDIN_VERSION"), values.get("PARALLAX_INSTAGRAM_ACCESS_TOKEN"), values.get("PARALLAX_INSTAGRAM_ACCOUNT_ID"), values.get("PARALLAX_INSTAGRAM_MEDIA_BASE_URL"), values.get("PARALLAX_X_CLIENT_ID"), values.get("PARALLAX_X_CLIENT_SECRET"), values.get("PARALLAX_X_REFRESH_TOKEN"), expires)
 
 
 class SocialTransport(Protocol):
@@ -104,11 +117,44 @@ class HttpSocialTransport:
 
 class XAdapter:
     endpoint = "https://api.x.com/2/tweets"
-    def __init__(self, config: SocialConfig | None = None, transport: SocialTransport | None = None):
-        self.config = config or SocialConfig.load(); self.transport = transport or HttpSocialTransport()
+    def __init__(self, config: SocialConfig | None = None, transport: SocialTransport | None = None, oauth_transport: OAuthTransport | None = None, credential_store: XCredentialStore | None = None, now=None):
+        self.config = config or SocialConfig.load(); self.transport = transport or HttpSocialTransport(); self.credential_store = credential_store or XCredentialStore(SOCIAL_CONFIG_PATH); self.auth_error: str | None = None
+        self.oauth = XOAuthClient(oauth_transport, now=now) if now is not None else XOAuthClient(oauth_transport)
+
+    def _credentials(self) -> XCredentials:
+        c = self.config
+        return XCredentials(c.x_client_id, c.x_client_secret, c.x_token, c.x_refresh_token, c.x_expires_at)
+
+    def _refresh(self) -> TransportResult:
+        credentials, error = self.oauth.refresh(self._credentials())
+        if credentials is None:
+            self.auth_error = error or "X authorization refresh failed."
+            return TransportResult("FAILED", error_code="X_AUTH_REFRESH_FAILED", error_summary=error)
+        updates = {"PARALLAX_X_ACCESS_TOKEN": credentials.access_token or "", "PARALLAX_X_TOKEN_EXPIRES_AT": str(int(credentials.expires_at or 0))}
+        if credentials.refresh_token:
+            updates["PARALLAX_X_REFRESH_TOKEN"] = credentials.refresh_token
+        try:
+            self.credential_store.update(updates)
+        except OSError:
+            self.auth_error = "X authorization could not be stored safely."
+            return TransportResult("FAILED", error_code="X_AUTH_STORAGE_FAILED", error_summary="X authorization could not be stored safely.")
+        self.config = replace(self.config, x_token=credentials.access_token, x_refresh_token=credentials.refresh_token, x_expires_at=credentials.expires_at)
+        self.auth_error = None
+        return TransportResult("SENT")
+
     def publish(self, text: str) -> TransportResult:
-        if not self.config.x_token: return TransportResult("FAILED", error_code="MISSING_X_ACCESS_TOKEN", error_summary="X access token is not configured.")
-        return self.transport.post_json(self.endpoint, {"text": text}, {"Authorization": f"Bearer {self.config.x_token}", "Content-Type": "application/json"})
+        if not self.config.x_token:
+            refreshed = self._refresh()
+            if refreshed.status == "FAILED": return TransportResult("FAILED", error_code="MISSING_X_ACCESS_TOKEN", error_summary="X access token is not configured.")
+        if self.config.x_expires_at is not None and self.config.x_expires_at - self.oauth.now() <= TOKEN_EXPIRING_SECONDS:
+            refreshed = self._refresh()
+            if refreshed.status == "FAILED": return refreshed
+        result = self.transport.post_json(self.endpoint, {"text": text}, {"Authorization": f"Bearer {self.config.x_token}", "Content-Type": "application/json"})
+        if result.status == "FAILED" and result.http_status == 401:
+            refreshed = self._refresh()
+            if refreshed.status == "FAILED": return refreshed
+            result = self.transport.post_json(self.endpoint, {"text": text}, {"Authorization": f"Bearer {self.config.x_token}", "Content-Type": "application/json"})
+        return result
 
 
 class LinkedInAdapter:
@@ -201,8 +247,8 @@ class SocialStore:
 
 
 class SocialPublisher:
-    def __init__(self, store: SocialStore | None = None, config: SocialConfig | None = None, transport: SocialTransport | None = None):
-        self.store = store or SocialStore(); self.config = config or SocialConfig.load(); self.transport = transport or HttpSocialTransport(); self.started_at = utcnow().isoformat()
+    def __init__(self, store: SocialStore | None = None, config: SocialConfig | None = None, transport: SocialTransport | None = None, oauth_transport: OAuthTransport | None = None, credential_store: XCredentialStore | None = None, now=None):
+        self.store = store or SocialStore(); self.config = config or SocialConfig.load(); self.transport = transport or HttpSocialTransport(); self.x_adapter = XAdapter(self.config, self.transport, oauth_transport, credential_store, now); self.started_at = utcnow().isoformat()
 
     def enqueue(self, item: dict[str, Any]) -> None:
         if self.config.mode == "disabled" or item.get("demo") is True: return
@@ -222,14 +268,23 @@ class SocialPublisher:
 
     def _platform_config(self, platform: str) -> tuple[bool, bool, str | None]:
         c = self.config
-        if platform == "x": return c.x_enabled, bool(c.x_token), None
+        if platform == "x": return c.x_enabled, bool(c.x_token and c.x_refresh_token and c.x_client_id and c.x_client_secret), None
         if platform == "linkedin": return c.linkedin_enabled, bool(c.linkedin_token and c.linkedin_org and c.linkedin_version), None
         return c.instagram_enabled, bool(c.instagram_token and c.instagram_account and c.instagram_media_base_url), "MEDIA_HOST_NOT_CONFIGURED"
 
     def status(self) -> dict[str, Any]:
         counts = self.store.counts(); platforms = {}
         for p in PLATFORMS:
-            enabled, configured, blocker = self._platform_config(p); platforms[p] = {"enabled": enabled, "configured": configured, "status": "disabled" if not enabled else "ready" if configured else "blocked", **({"blocker": blocker} if blocker and enabled and not configured else {})}
+            enabled, configured, blocker = self._platform_config(p)
+            if p == "x" and enabled:
+                if not configured: x_status = "needs_authorization"
+                elif self.config.x_expires_at is not None and self.config.x_expires_at - self.x_adapter.oauth.now() <= TOKEN_EXPIRING_SECONDS: x_status = "token_expiring"
+                elif self.x_adapter.auth_error: x_status = "auth_error"
+                else: x_status = "ready"
+                platform_status = x_status
+            else:
+                platform_status = "disabled" if not enabled else "ready" if configured else "blocked"
+            platforms[p] = {"enabled": enabled, "configured": configured, "status": platform_status, **({"blocker": blocker} if blocker and enabled and not configured else {})}
         pubs = self.store.publications(1); last = pubs[0].get("sent_at") if pubs and pubs[0].get("status") == "SENT" else None
         return {"mode": self.config.mode, "platforms": platforms, "pending": counts.get("pending", 0), "dry_run": counts.get("dry_run", 0), "sent": counts.get("sent", 0), "failed": counts.get("failed", 0), "unknown": counts.get("unknown", 0), "expired": counts.get("expired", 0), "last_publication_at": last}
 
@@ -258,7 +313,7 @@ class SocialPublisher:
                 url = "https://api.x.com/2/tweets" if platform == "x" else "https://api.linkedin.com/rest/posts"
                 headers = {"Authorization": f"Bearer {self.config.x_token if platform == 'x' else self.config.linkedin_token}", "Content-Type": "application/json"}
                 if platform == "linkedin": headers.update({"Linkedin-Version": str(self.config.linkedin_version), "X-Restli-Protocol-Version": "2.0.0"})
-                result = self.transport.post_json(url, {"text": content} if platform == "x" else {"author": self.config.linkedin_org, "commentary": {"text": content}}, headers)
+                result = self.x_adapter.publish(cast(str, content)) if platform == "x" else self.transport.post_json(url, {"author": self.config.linkedin_org, "commentary": {"text": content}}, headers)
                 status = result.status; attempts = 1
                 if status == "FAILED" and result.error_code == "HTTP_5XX":
                     result = self.transport.post_json(url, {"text": content} if platform == "x" else {"author": self.config.linkedin_org, "commentary": {"text": content}}, headers); status = result.status; attempts = 2
