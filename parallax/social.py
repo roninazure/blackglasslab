@@ -245,6 +245,20 @@ class SocialStore:
             db.execute("INSERT OR IGNORE INTO social_outbox VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (oid, source_type, source_id, str(item.get("venue", "")), str(item.get("market_id", "")), cls, now, now, item.get("expires_at"), "PENDING", fingerprint, json.dumps(item, sort_keys=True, default=str)))
         return oid
 
+    def add_operator_smoke(self, text: str, now: str) -> str:
+        """Create an isolated, operator-originated outbox entry."""
+        source_type = "OPERATOR_SMOKE"
+        source_id = "operator-smoke-" + hashlib.sha256(f"{now}:{text}".encode()).hexdigest()[:24]
+        oid = "outbox-" + hashlib.sha256(f"{source_type}:{source_id}".encode()).hexdigest()[:24]
+        payload = {"text": text, "source_type": source_type}
+        fingerprint = hashlib.sha256(text.encode()).hexdigest()
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "INSERT INTO social_outbox VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (oid, source_type, source_id, "x", "", "OPERATOR_SMOKE", now, now, None, "PENDING", fingerprint, json.dumps(payload, sort_keys=True)),
+            )
+        return oid
+
 
 class SocialPublisher:
     def __init__(self, store: SocialStore | None = None, config: SocialConfig | None = None, transport: SocialTransport | None = None, oauth_transport: OAuthTransport | None = None, credential_store: XCredentialStore | None = None, now=None):
@@ -265,6 +279,21 @@ class SocialPublisher:
                     status = "DRY_RUN" if platform != "instagram" or configured else "BLOCKED"
                     error_code = None if status == "DRY_RUN" else blocker
                     db.execute("INSERT OR IGNORE INTO social_publications VALUES (?,?,?,?,?,?,?,?,?,?,?)", (publication_id, oid, platform, status, 0, now, None, None, None, error_code, "Media host is not configured." if error_code else None))
+
+    def publish_operator_smoke(self, text: str) -> TransportResult:
+        if self.config.mode != "live":
+            return TransportResult("FAILED", error_code="LIVE_MODE_REQUIRED", error_summary="Operator smoke requires live social mode.")
+        enabled, configured, _ = self._platform_config("x")
+        if not enabled or not configured:
+            return TransportResult("FAILED", error_code="X_NOT_READY", error_summary="X must be enabled and fully configured.")
+        now = utcnow().isoformat()
+        oid = self.store.add_operator_smoke(text, now)
+        result = self.x_adapter.publish(text)
+        pid = "pub-" + hashlib.sha256(f"{oid}:x".encode()).hexdigest()[:24]
+        with sqlite3.connect(self.store.path) as db:
+            db.execute("INSERT INTO social_publications VALUES (?,?,?,?,?,?,?,?,?,?,?)", (pid, oid, "x", result.status, 1, now, now, now if result.status == "SENT" else None, result.external_post_id, result.error_code, result.error_summary))
+            db.execute("UPDATE social_outbox SET status=? WHERE outbox_id=?", (result.status, oid))
+        return result
 
     def _platform_config(self, platform: str) -> tuple[bool, bool, str | None]:
         c = self.config
