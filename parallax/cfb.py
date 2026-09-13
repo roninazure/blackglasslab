@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from statistics import mean
@@ -26,6 +27,8 @@ SEASON_REGRESSION = 0.67
 HOME_FIELD_POINTS = 65.0
 ELO_K = 20.0
 ELO_SCALE = 400.0
+VALIDATION_ECE = 0.063732
+VALIDITY_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True)
@@ -209,3 +212,172 @@ def validate(games: list[CFBGame], *, holdout_season: int = 2025) -> dict[str, A
             "calibration_parameters": {"intercept": platt[0], "slope": platt[1], "fit_only_on": [2024]},
             "safety_checks": {"season_transition": "PASS", "new_returning_team_initialization": "PASS", "home_field": "PASS", "neutral_site": "PASS", "fbs_fcs_policy": "FBS vs FBS only; FCS excluded", "aliases_renames": "Stable CFBD numeric team IDs used", "chronological_update": "PASS", "target_game_leakage": "PASS"},
             "leakage_check": "PASS: target final scores are read only after prediction; no odds, rankings, postgame features, or future games used."}
+
+
+def _team_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+# Only unambiguous, deterministic venue-name aliases belong here. CFBD IDs
+# remain authoritative whenever a venue supplies them.
+CFB_TEAM_ALIASES = {
+    "olemiss": "mississippi", "miss": "mississippi", "miami": "miami", "miamifl": "miami",
+    "umich": "michigan", "uconn": "connecticut", "appstate": "appalachianstate",
+    "utsa": "texassanantonio", "ucf": "centralflorida", "usf": "southflorida",
+    "pitt": "pittsburgh", "lsu": "lsu", "usc": "southerncalifornia",
+}
+
+
+def _canonical_team(value: Any) -> str:
+    key = _team_key(value)
+    return CFB_TEAM_ALIASES.get(key, key)
+
+
+def _cfb_metadata(market: Any) -> dict[str, str] | None:
+    """Extract explicit full-game CFB winner semantics from normalized data."""
+    raw = market.original_metadata.get("market", {})
+    event = market.original_metadata.get("event", {})
+    text = " ".join(str(x or "") for x in (market.title, market.description, market.resolution_rules, raw.get("marketType"), raw.get("market_type"), raw.get("sportsMarketType"), event.get("title"), event.get("name"))).lower()
+    banned = ("spread", "total", "over/under", "first half", "quarter", "prop", "future", "playoff berth", "season win", "championship")
+    if any(term in text for term in banned) or not any(term in text for term in ("moneyline", "game winner", "winner", "wins")):
+        return None
+    sides = raw.get("marketSides") or []
+    home = str(raw.get("homeTeam") or raw.get("home_team") or "").strip()
+    away = str(raw.get("awayTeam") or raw.get("away_team") or "").strip()
+    if isinstance(sides, list) and len(sides) == 2:
+        for side in sides:
+            team = side.get("team") if isinstance(side, dict) else None
+            if not isinstance(team, dict):
+                continue
+            ordering = str(team.get("ordering") or "").lower()
+            name = str(team.get("safeName") or team.get("name") or team.get("alias") or team.get("abbreviation") or "").strip()
+            if ordering == "home": home = name or home
+            elif ordering == "away": away = name or away
+    selected = str(raw.get("yes_sub_title") or raw.get("title") or "").strip()
+    if not home or not away:
+        # Rules are accepted only for the deterministic, labelled "wins the"
+        # form; generic title splitting is intentionally not used.
+        match = re.search(r"(?:wins the|winner of)\s+(?:the\s+)?(.+?)\s+vs\.?\s+(.+?)\s+(?:college football|football) game", market.resolution_rules, re.I)
+        if match:
+            away, home = match.group(1).strip(), match.group(2).strip()
+    if (not home or not away) and isinstance(event, dict):
+        event_text = str(event.get("title") or event.get("name") or "")
+        match = re.search(r"(.+?)\s+(?:at|vs\.?|@)\s+(.+?)(?:\s+football)?$", event_text, re.I)
+        if match:
+            away, home = match.group(1).strip(), match.group(2).strip()
+    start = str(raw.get("gameStartTime") or raw.get("game_start_time") or raw.get("scheduled_start") or raw.get("start_time") or event.get("game_start_time") or event.get("start_time") or event.get("open_time") or "").strip()
+    if not start:
+        date_match = re.search(r"originally scheduled for ([A-Z][a-z]{2} \d{1,2}, \d{4})", market.resolution_rules, re.I)
+        if date_match:
+            try:
+                start = datetime.strptime(date_match.group(1), "%b %d, %Y").replace(tzinfo=UTC).isoformat()
+            except ValueError:
+                pass
+    if not start:
+        return None
+    sides_have_fcs = isinstance(sides, list) and any(
+        isinstance(s, dict) and isinstance(s.get("team"), dict) and str(s["team"].get("league") or s["team"].get("classification") or "").lower() == "fcs"
+        for s in sides
+    )
+    if sides_have_fcs:
+        return {"status": "FCS_EXCLUDED"}
+    if not home or not away or _canonical_team(home) == _canonical_team(away):
+        return None
+    return {"home_team": home, "away_team": away, "selected_team": selected, "start_time": start, "home_key": _canonical_team(home), "away_key": _canonical_team(away), "orientation_explicit": bool(raw.get("homeTeam") or raw.get("home_team") or raw.get("awayTeam") or raw.get("away_team") or sides)}
+
+
+def is_supported_market(market: Any) -> bool:
+    metadata = _cfb_metadata(market)
+    raw = market.original_metadata.get("market", {})
+    sides = raw.get("marketSides") or []
+    explicit_cfb = isinstance(sides, list) and len(sides) == 2 and all(
+        isinstance(side, dict) and isinstance(side.get("team"), dict)
+        and str(side["team"].get("league") or "").lower() in {"cfb", "ncaa", "fbs", "fcs"}
+        for side in sides
+    )
+    event = market.original_metadata.get("event", {})
+    text = " ".join(str(x or "").lower() for x in (market.title, market.description, market.resolution_rules, raw.get("ticker"), raw.get("sport"), raw.get("league"), raw.get("market_type"), raw.get("sportsMarketType"), event.get("title"), event.get("name")))
+    return market.venue.value in {"POLYMARKET", "KALSHI"} and metadata is not None and (explicit_cfb or "cfb" in text or "college football" in text or "ncaaf" in text)
+
+
+@dataclass(frozen=True)
+class CFBMapping:
+    status: str
+    game: CFBGame | None
+    reason: str
+    selected_team: str | None = None
+
+
+def map_market_to_game(market: Any, games: list[CFBGame], *, now: datetime | None = None) -> CFBMapping:
+    raw = market.original_metadata.get("market", {})
+    if not is_supported_market(market):
+        text = " ".join(str(x or "").lower() for x in (market.title, market.description, market.resolution_rules, raw.get("marketType"), raw.get("market_type")))
+        if any(x in text for x in ("spread", "total", "prop", "first half", "quarter", "future", "championship")):
+            return CFBMapping("DERIVATIVE", None, "derivative or futures market excluded")
+        return CFBMapping("NOT_CFB_MONEYLINE", None, "not an FBS pregame game-winner market")
+    metadata = _cfb_metadata(market)
+    if metadata is None:
+        return CFBMapping("AMBIGUOUS_ALIAS", None, "team or kickoff identity is ambiguous")
+    if metadata.get("status") == "FCS_EXCLUDED":
+        return CFBMapping("FCS_EXCLUDED", None, "FCS involvement is excluded")
+    pair = {metadata["home_key"], metadata["away_key"]}
+    start = metadata["start_time"].replace("Z", "+00:00")
+    try:
+        market_dt = datetime.fromisoformat(start).astimezone(UTC)
+    except ValueError:
+        return CFBMapping("DATE_MISMATCH", None, "invalid kickoff timestamp")
+    pair_matches = [g for g in games if { _canonical_team(g.home_team), _canonical_team(g.away_team) } == pair]
+    if not pair_matches:
+        return CFBMapping("TEAM_PAIR_MISMATCH", None, "opponent pair did not match exactly")
+    date_matches = [g for g in pair_matches if g.kickoff[:10] == market_dt.date().isoformat()]
+    if not date_matches:
+        return CFBMapping("DATE_MISMATCH", None, "team pair matched but kickoff date did not")
+    orientation = [g for g in date_matches if _canonical_team(g.home_team) == metadata["home_key"] and _canonical_team(g.away_team) == metadata["away_key"]]
+    if not metadata.get("orientation_explicit"):
+        orientation = date_matches
+    if len(orientation) != 1:
+        return CFBMapping("TEAM_PAIR_MISMATCH", None, "home/away orientation did not match exactly one fixture")
+    game = orientation[0]
+    observed = now or datetime.now(UTC)
+    if datetime.fromisoformat(game.kickoff.replace("Z", "+00:00")) <= observed:
+        return CFBMapping("PAST_START", game, "official kickoff has passed")
+    if not (game.home_classification == "fbs" and game.away_classification == "fbs"):
+        return CFBMapping("FCS_EXCLUDED", None, "fixture is not FBS vs FBS")
+    selected = metadata.get("selected_team") or metadata.get("home_team")
+    return CFBMapping("MAPPED", game, "exact FBS team/date/orientation match", selected)
+
+
+def probability_for_game(game: CFBGame, games: list[CFBGame]) -> float:
+    ratings: dict[str, float] = {}
+    last_season: int | None = None
+    for prior in games:
+        if prior.kickoff >= game.kickoff:
+            break
+        if last_season is not None and prior.season != last_season:
+            ratings = season_transition(ratings)
+        last_season = prior.season
+        if eligible_game(prior):
+            p = probability(ratings.get(prior.home_id, INITIAL_RATING), ratings.get(prior.away_id, INITIAL_RATING), neutral_site=prior.neutral_site)
+            advance(ratings, prior, p)
+    return probability(ratings.get(game.home_id, INITIAL_RATING), ratings.get(game.away_id, INITIAL_RATING), neutral_site=game.neutral_site)
+
+
+class CFBEvidenceProvider:
+    def __init__(self, games_loader: Callable[[], list[CFBGame]]):
+        self.games_loader = games_loader
+
+    def supports(self, market: Any) -> bool:
+        return is_supported_market(market)
+
+    def assess(self, market: Any) -> Any:
+        from datetime import timedelta
+        from .models import Evidence, PlayType
+        from .normalization import rules_digest
+        games = self.games_loader()
+        mapping = map_market_to_game(market, games)
+        if mapping.status != "MAPPED" or mapping.game is None:
+            return None
+        observed = datetime.now(UTC)
+        p_home = probability_for_game(mapping.game, games)
+        p = p_home if _canonical_team(mapping.selected_team) == _canonical_team(mapping.game.home_team) else 1 - p_home
+        return Evidence(venue=market.venue, market_id=market.venue_market_id, fair_probability=p, source="CollegeFootballData", model_version=MODEL_VERSION, observed_at=observed.isoformat(), valid_until=(observed + timedelta(seconds=VALIDITY_SECONDS)).isoformat(), rules_digest=rules_digest(market), review_reference=json.dumps({"provider": "CFB V1", "holdout": [2025], "sample_size": 808, "validation_ece": VALIDATION_ECE}, sort_keys=True), rationale=f"Chronological rolling Elo using completed FBS-vs-FBS CFBD games before kickoff; no market price input. Frozen holdout ECE={VALIDATION_ECE:.6f}.", independent_sources=(SOURCE_URL,), validation_reference="CFB V1 validated 2025 holdout", source_independence="AUTHORITATIVE_PRIMARY", validation_status="CALIBRATED", play_type=PlayType.PARALLAX_EDGE)

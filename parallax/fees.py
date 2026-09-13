@@ -55,7 +55,7 @@ def attach_fees(market: NormalizedMarket, now: datetime, *, event=None, series=N
             and series
             and event.get("event_ticker") == market.event
             and market.event
-            and series.get("ticker") == "KXMLBGAME"
+            and series.get("ticker") in {"KXMLBGAME", "KXNCAAF", "KXCFB"}
             and event.get("series_ticker") == series.get("ticker")
         ):
             kind = event.get("fee_type_override")
@@ -118,7 +118,7 @@ def attach_fees(market: NormalizedMarket, now: datetime, *, event=None, series=N
                 )
                 proof["rounding_source"] = KALSHI_ROUNDING
                 proof["effective_multiplier"] = multiplier
-                proof["verified_series"] = "KXMLBGAME"
+                proof["verified_series"] = series.get("ticker")
                 proof["account_precision"] = (
                     "Unknown account: conservative $0.01 alignment (direct members use $0.0001)"
                 )
