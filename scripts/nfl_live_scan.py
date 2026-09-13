@@ -12,7 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from maker_spread_economics.polymarket_us import PolymarketUSPublicClient
 from parallax.discovery import MAX_ACTIVE_MARKETS_PER_VENUE, paginate, paginate_collection
-from parallax.nfl import VALIDATION_ECE, fetch_games, is_supported_market, map_market_to_game, probability_for_game
+from parallax.economics import retail_example
+from parallax.engine import qualify
+from parallax.fees import attach_fees
+from parallax.models import Side, utcnow
+from parallax.nfl import VALIDATION_ECE, NFLEvidenceProvider, fetch_games, is_supported_market, map_market_to_game, probability_for_game
 from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.sources import KalshiPublicClient
 
@@ -111,13 +115,7 @@ def _scan() -> dict:
             try:
                 event = raw.get("_discovery_event") if venue == "KALSHI" else None
                 if venue == "PMUS":
-                    # The shared MLB extractor is intentionally not changed.
-                    # NFL rows do not need its MLB rules regex during this scan.
-                    pmus_row = dict(raw)
-                    pmus_raw = dict(raw.get("raw") or {})
-                    pmus_raw.update({"description": "", "rules_primary": "", "rules_secondary": ""})
-                    pmus_row["raw"] = pmus_raw
-                    market = normalize_pmus(pmus_row, {}, "live-scan")
+                    market = normalize_pmus(raw, {}, utcnow().isoformat())
                 else:
                     market = normalize_kalshi(raw, {}, "live-scan", event=event)
             except (KeyError, TypeError, ValueError):
@@ -134,6 +132,35 @@ def _scan() -> dict:
                 row["kickoff"] = mapping.game.kickoff
             if mapping.status == "MAPPED_GAME_WINNER" and mapping.game:
                 row["model_probability"] = probability_for_game(mapping.game, games)
+                try:
+                    if venue == "PMUS":
+                        client = PolymarketUSPublicClient(timeout_seconds=8)
+                        try:
+                            book = client.book(raw["slug"])
+                        finally:
+                            client.close()
+                        market = attach_fees(normalize_pmus(raw, book, utcnow().isoformat()), utcnow())
+                    else:
+                        # Kalshi discovery rows are normalized with their public book
+                        # below when the venue exposes one; failures stay explicit.
+                        book = KalshiPublicClient().book(raw["ticker"])
+                        market = attach_fees(normalize_kalshi(raw, book, utcnow().isoformat(), event=event), utcnow(), event=event, series=raw.get("_discovery_series"))
+                    evidence = NFLEvidenceProvider(lambda: games).assess(market)
+                    if evidence is None:
+                        statuses["EVIDENCE_MISSING"] += 1
+                    else:
+                        statuses["EVIDENCE"] += 1
+                        for side in Side:
+                            play = qualify(market, side, evidence, now=utcnow())
+                            statuses[f"SCORED_{play.suggested_action}"] += 1
+                            scored = {"venue": venue, "market": market.title, "market_id": market.venue_market_id, "side": side.value, "game_start": mapping.game.kickoff, "nfl_v1_probability": play.model_probability, "executable_price": play.executable_price, "raw_edge": play.edge_points, "safety_margin": (play.edge_points / 100 - VALIDATION_ECE) if play.edge_points is not None else None, "fee": play.fees_estimate, "net_ev_25": play.expected_value, "net_ev_50": None, "net_ev_100": None, "liquidity": play.executable_size, "failed_gates": list(play.verdict.failed_gates), "verdict": play.suggested_action.value}
+                            for index, key in ((2, "net_ev_50"), (3, "net_ev_100")):
+                                example = play.retail_examples[index]
+                                scored[key] = (play.model_probability * example.estimated_payout_if_correct - example.total_cost) if play.model_probability is not None and example.available and example.total_cost is not None else None
+                            rows_out.append(scored)
+                except Exception as exc:
+                    statuses["BOOK_OR_SCORING_ERROR"] += 1
+                    row["scoring_error"] = type(exc).__name__
             rows_out.append(row)
     result["summary"] = {"nfl_markets_discovered": {"PMUS": len(pmus_rows), "KALSHI": len(kalshi_rows)}, "status_counts": dict(statuses), "rejection_counts": dict(rejection_reasons), "rows": rows_out[:50]}
     return result

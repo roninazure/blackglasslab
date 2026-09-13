@@ -8,6 +8,19 @@ def test_parse_nfl_schedule_results_filters_non_games_and_uses_scores_after_pars
     assert len(games) == 1 and games[0].game_id == "g1"
 
 
+def test_parse_nfl_schedule_retains_current_unresolved_fixture_without_target_result():
+    payload = "season,game_type,gameday,home_team,away_team,home_score,away_score,game_id\n2026,REG,2026-09-13,IND,BAL,,,future-1\n"
+    games = parse_games(payload)
+    assert len(games) == 1
+    assert games[0].kickoff == "2026-09-13T04:00:00+00:00"
+    assert games[0].home_score is None and games[0].away_score is None
+
+
+def test_parse_nfl_schedule_uses_existing_local_kickoff_time():
+    payload = "season,game_type,gameday,gametime,home_team,away_team,home_score,away_score,game_id\n2026,REG,2026-09-13,13:00,IND,BAL,,,future-2\n"
+    assert parse_games(payload)[0].kickoff == "2026-09-13T17:00:00+00:00"
+
+
 def test_nfl_holdout_is_chronological_and_reproducible():
     games = []
     for season in (2020, 2021, 2022, 2023, 2024, 2025):

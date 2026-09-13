@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from statistics import mean
 from typing import Any, Callable
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from .models import Evidence, NormalizedMarket, PlayType, Venue, utcnow
 from .normalization import rules_digest
@@ -27,6 +28,20 @@ VALIDITY_SECONDS = 15 * 60
 # Frozen from the accepted 2025 holdout; used only as a safety reference.
 VALIDATION_ECE = 0.075465
 
+NFL_TEAM_ALIASES = {
+    "arizonacardinals": "ARI", "atlantafalcons": "ATL", "baltimoreravens": "BAL",
+    "buffalobills": "BUF", "carolinapanthers": "CAR", "chicagobears": "CHI",
+    "cincinnatibengals": "CIN", "clevelandbrowns": "CLE", "dallascowboys": "DAL",
+    "denverbroncos": "DEN", "detroitlions": "DET", "greenbaypackers": "GB",
+    "houstontexans": "HOU", "indianapoliscolts": "IND", "jacksonvillejaguars": "JAX",
+    "kansascitychiefs": "KC", "lasvegasraiders": "LV", "losangeleschargers": "LAC",
+    "losangelesrams": "LA", "miamidolphins": "MIA", "minnesotavikings": "MIN",
+    "newenglandpatriots": "NE", "neworleanssaints": "NO", "newyorkgiants": "NYG",
+    "newyorkjets": "NYJ", "philadelphiaeagles": "PHI", "pittsburghsteelers": "PIT",
+    "sanfrancisco49ers": "SF", "seattleseahawks": "SEA", "tampabaybuccaneers": "TB",
+    "tennesseetitans": "TEN", "washingtoncommanders": "WAS",
+}
+
 
 @dataclass(frozen=True)
 class NFLGame:
@@ -36,8 +51,8 @@ class NFLGame:
     kickoff: str
     home_team: str
     away_team: str
-    home_score: int
-    away_score: int
+    home_score: int | None
+    away_score: int | None
 
 
 @dataclass(frozen=True)
@@ -79,6 +94,16 @@ def _date(value: Any) -> str:
         return text
 
 
+def _kickoff(raw: dict[str, Any]) -> str:
+    gameday, gametime = str(raw.get("gameday") or raw.get("game_date") or "").strip(), str(raw.get("gametime") or "").strip()
+    if gameday and gametime:
+        try:
+            return datetime.fromisoformat(f"{gameday}T{gametime}").replace(tzinfo=ZoneInfo("America/New_York")).astimezone(UTC).isoformat()
+        except ValueError:
+            pass
+    return _date(gameday)
+
+
 def parse_games(payload: str) -> list[NFLGame]:
     rows: list[NFLGame] = []
     for raw in csv.DictReader(io.StringIO(payload)):
@@ -86,8 +111,10 @@ def parse_games(payload: str) -> list[NFLGame]:
         home_score, away_score = _int(raw.get("home_score")), _int(raw.get("away_score"))
         home = str(raw.get("home_team") or "").strip()
         away = str(raw.get("away_team") or "").strip()
-        kickoff = _date(raw.get("gameday") or raw.get("game_date"))
-        if season is None or home_score is None or away_score is None or not home or not away or not kickoff:
+        kickoff = _kickoff(raw)
+        # Future schedule rows intentionally have blank scores.  They are
+        # valid fixture identity/state inputs, but are never state updates.
+        if season is None or not home or not away or not kickoff:
             continue
         game_type = str(raw.get("game_type") or "REG").upper()
         if game_type not in {"REG", "POST"}:
@@ -112,6 +139,8 @@ def _probability(home_rating: float, away_rating: float) -> float:
 
 
 def _advance(ratings: dict[str, float], game: NFLGame, probability: float) -> None:
+    if game.home_score is None or game.away_score is None:
+        return
     actual = 1.0 if game.home_score > game.away_score else 0.0
     home, away = ratings.get(game.home_team, 1500.0), ratings.get(game.away_team, 1500.0)
     delta = 20.0 * (actual - probability)
@@ -172,6 +201,8 @@ def validate(games: list[NFLGame], *, holdout_season: int | None = None) -> NFLV
     y_holdout: list[int] = []
     home_history: list[int] = []
     for game in games:
+        if game.home_score is None or game.away_score is None:
+            continue
         if game.season not in set(train) | set(calibration_seasons) | set(holdout_seasons):
             continue
         home_rating, away_rating = ratings.get(game.home_team, 1500.0), ratings.get(game.away_team, 1500.0)
@@ -213,9 +244,16 @@ def _apply_calibration(raw: float, intercept: float, slope: float) -> float:
 
 def is_supported_market(market: NormalizedMarket) -> bool:
     raw = market.original_metadata.get("market", {})
+    sides = raw.get("marketSides") or []
+    nfl_sides = isinstance(sides, list) and len(sides) == 2 and all(
+        isinstance(side, dict)
+        and isinstance(side.get("team"), dict)
+        and str(side["team"].get("league") or "").lower() == "nfl"
+        for side in sides
+    )
     text = " ".join((market.title, market.description, market.resolution_rules, str(raw.get("marketType") or ""))).lower()
     banned = ("spread", "total", "over/under", "first half", "quarter", "touchdown", "prop", "future", "super bowl", "playoff berth", "season win")
-    return market.venue in {Venue.POLYMARKET, Venue.KALSHI} and "nfl" in text and any(x in text for x in ("moneyline", "game winner", "wins", "winner")) and not any(x in text for x in banned)
+    return market.venue in {Venue.POLYMARKET, Venue.KALSHI} and ("nfl" in text or nfl_sides) and any(x in text for x in ("moneyline", "game winner", "wins", "winner")) and not any(x in text for x in banned)
 
 
 def nfl_calibration_safe(edge: float | None) -> bool:
@@ -224,7 +262,8 @@ def nfl_calibration_safe(edge: float | None) -> bool:
 
 
 def _team_key(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+    key = re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+    return NFL_TEAM_ALIASES.get(key, key.upper())
 
 
 def map_market_to_game(market: NormalizedMarket, games: list[NFLGame], *, now: datetime | None = None) -> NFLMapping:
@@ -234,6 +273,16 @@ def map_market_to_game(market: NormalizedMarket, games: list[NFLGame], *, now: d
     home = str(raw.get("home_team") or raw.get("homeTeam") or "").strip()
     away = str(raw.get("away_team") or raw.get("awayTeam") or "").strip()
     text = " ".join((market.title, market.description, market.resolution_rules))
+    sides = raw.get("marketSides") or []
+    if isinstance(sides, list) and len(sides) == 2:
+        for side in sides:
+            team = side.get("team") if isinstance(side, dict) else None
+            if not isinstance(team, dict):
+                continue
+            if str(team.get("ordering") or "").lower() == "home":
+                home = str(team.get("name") or team.get("alias") or home).strip()
+            elif str(team.get("ordering") or "").lower() == "away":
+                away = str(team.get("name") or team.get("alias") or away).strip()
     if not home or not away:
         match = re.search(r"(.+?)\s+vs\.?\s+(.+?)(?:\s+(?:game|match|scheduled|winner|wins)|$)", text, re.I)
         if match:
