@@ -44,6 +44,18 @@ class KalshiPublicClient:
             "/markets", status="open", limit=limit, cursor=cursor, mve_filter="exclude"
         )
 
+    def series_page(self, *, limit: int, cursor: str = "") -> dict:
+        return self.get("/series", status="open", limit=limit, cursor=cursor)
+
+    def events_page(self, *, series_ticker: str, limit: int, cursor: str = "") -> dict:
+        return self.get("/events", status="open", series_ticker=series_ticker, limit=limit, cursor=cursor)
+
+    def event_markets_page(self, *, event_ticker: str, limit: int, cursor: str = "") -> dict:
+        return self.get("/markets", status="open", event_ticker=event_ticker, limit=limit, cursor=cursor, mve_filter="exclude")
+
+    def mlb_markets_page(self, *, limit: int = 100, cursor: str = "") -> dict:
+        return self.get("/markets", status="open", limit=limit, cursor=cursor, series_ticker="KXMLBGAME")
+
     def book(self, ticker: str) -> dict:
         return self.get(f"/markets/{quote(ticker, safe='')}/orderbook", depth=20)
 
@@ -74,7 +86,21 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
     pmus = None
     try:
         pmus = PolymarketUSPublicClient()
-        rows = pmus.markets_page(limit=limit, offset=0)
+        # The venue orders globally by volume; low-volume MLB games are not
+        # reliably in the first `limit` rows. Search a bounded public window.
+        rows = []
+        for offset in range(0, 1000, 100):
+            page = pmus.markets_page(limit=100, offset=offset)
+            rows.extend(page)
+            if any(str(r.get("raw", {}).get("sportsMarketTypeV2") or "").lower().find("moneyline") >= 0 for r in page):
+                break
+        rows = [
+            r for r in rows
+            if r.get("active") and not r.get("closed") and r.get("accepting_orders")
+            and str(r.get("raw", {}).get("category") or "").lower() == "sports"
+            and str(r.get("raw", {}).get("marketType") or "").lower() in {"moneyline", "game winner", "game-winner"}
+            and ("baseball" in str(r.get("raw", {})).lower() or "-mlb-" in str(r.get("slug") or "").lower())
+        ]
         discovery_at = utcnow().isoformat()
         metrics["POLYMARKET.markets_discovered"] = len(rows)
         for row in rows:
@@ -98,15 +124,11 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
     kalshi = KalshiPublicClient()
     events, series = {}, {}
     try:
-        payload = kalshi.markets_page(limit=100)
+        payload = kalshi.mlb_markets_page(limit=100)
         rows = payload.get("markets", [])
         discovery_at = utcnow().isoformat()
         metrics["KALSHI.markets_discovered"] = len(rows)
-        rows = sorted(
-            rows,
-            key=lambda r: float(r.get("volume_24h_fp", r.get("volume_24h", 0)) or 0),
-            reverse=True,
-        )[:limit]
+        rows = sorted(rows, key=lambda r: float(r.get("volume_24h_fp", r.get("volume_24h", 0)) or 0), reverse=True)[: max(2, limit * 2)]
         for row in rows:
             book, trades = {}, None
             event, fee_series = None, None
@@ -156,5 +178,5 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
     return markets, {
         "metrics": dict(metrics),
         "errors": errors,
-        "scope": f"{limit} Polymarket US markets by volume; {limit} Kalshi markets by 24h volume from at most 100 newest open markets; not full catalog",
+        "scope": f"bounded current MLB moneyline scan: PMUS public pages up to 1000 rows; Kalshi KXMLBGAME series; {limit} venue-side rows retained",
     }

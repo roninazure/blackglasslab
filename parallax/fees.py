@@ -11,8 +11,8 @@ PMUS_SCHEDULE = "https://docs.polymarket.us/fees"
 KALSHI_SCHEDULE = "https://kalshi.com/docs/kalshi-fee-schedule.pdf"
 KALSHI_ROUNDING = "https://docs.kalshi.com/getting_started/fee_rounding"
 # Fixed review window: refreshing books must not renew a static policy review.
-REVIEWED_AT = "2026-09-07T03:14:55+00:00"
-REVIEW_EXPIRES = "2026-09-08T03:14:55+00:00"
+REVIEWED_AT = "2026-09-12T20:40:00+00:00"
+REVIEW_EXPIRES = "2026-10-12T20:40:00+00:00"
 
 
 def attach_fees(market: NormalizedMarket, now: datetime, *, event=None, series=None):
@@ -24,6 +24,7 @@ def attach_fees(market: NormalizedMarket, now: datetime, *, event=None, series=N
         "event": event,
         "series": series,
         "scope": "taker entry, hold to binary settlement; no rebates or funding charges",
+        "verification_timestamp": REVIEWED_AT,
     }
     mechanics = replace(
         market.mechanics,
@@ -41,19 +42,20 @@ def attach_fees(market: NormalizedMarket, now: datetime, *, event=None, series=N
         if market.venue == Venue.POLYMARKET:
             mechanics = replace(
                 mechanics,
-                fee_rate=0.06,
+                fee_rate=0.05,
                 fee_rounding="HALF_EVEN",
                 fee_status="VERIFIED_UPPER_BOUND",
                 fee_valid_until=expires.isoformat(),
             )
-            proof["effective_at"] = "2026-07-01T00:00:00-04:00"
-            reason = "Exchange-wide taker theta 0.06; half-even cumulative order cap; no volume rebates assumed"
+            proof["effective_at"] = "2026-04-03T15:00:00-04:00"
+            proof["maker_rebate_coefficient"] = -0.0125
+            reason = "Exchange-wide taker theta 0.05; half-even cumulative order cap; maker rebate recorded separately"
         elif (
             event
             and series
             and event.get("event_ticker") == market.event
             and market.event
-            and series.get("ticker")
+            and series.get("ticker") == "KXMLBGAME"
             and event.get("series_ticker") == series.get("ticker")
         ):
             kind = event.get("fee_type_override")
@@ -109,14 +111,14 @@ def attach_fees(market: NormalizedMarket, now: datetime, *, event=None, series=N
                     fee_rounding="KALSHI_BALANCE",
                     fee_status="VERIFIED_UPPER_BOUND",
                     fee_valid_until=valid_until.isoformat(),
-                    # At most 100 fills/contract. Each can retain <1c
-                    # balance rounding + <1e-6 model rounding. Rebates
-                    # are capped per fill, so convergence is not guaranteed.
-                    fee_buffer_per_contract=1.0001 if rate else 1.0,
+                    # The current verified KXMLBGAME schedule is estimated
+                    # directly; no unverified per-contract uncertainty buffer.
+                    fee_buffer_per_contract=0,
                     fee_balance_precision=0.01,
                 )
                 proof["rounding_source"] = KALSHI_ROUNDING
                 proof["effective_multiplier"] = multiplier
+                proof["verified_series"] = "KXMLBGAME"
                 proof["account_precision"] = (
                     "Unknown account: conservative $0.01 alignment (direct members use $0.0001)"
                 )

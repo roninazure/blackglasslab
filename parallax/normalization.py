@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from .models import Mechanics, NormalizedMarket, Venue
@@ -20,6 +23,44 @@ def first_text(*values: Any) -> str | None:
         result = text(value)
         if result:
             return result
+    return None
+
+
+def _mlb_metadata(raw: dict[str, Any], *, event: dict[str, Any] | None = None) -> dict[str, str] | None:
+    """Extract only explicit full-game MLB winner semantics from venue payloads."""
+    sides = raw.get("marketSides")
+    teams = [s.get("team", {}) for s in sides or [] if isinstance(s, dict) and isinstance(s.get("team"), dict)]
+    league = first_text(raw.get("sport"), raw.get("league"), raw.get("category"))
+    home = first_text(raw.get("homeTeam"), raw.get("home_team"))
+    away = first_text(raw.get("awayTeam"), raw.get("away_team"))
+    if len(teams) == 2 and all(str(t.get("league") or "").lower() == "mlb" for t in teams):
+        # PMUS explicitly labels ordering as home/away; never infer from side order.
+        for team in teams:
+            ordering = str(team.get("ordering") or "").lower()
+            if ordering == "home": home = first_text(team.get("name"), team.get("alias"))
+            elif ordering == "away": away = first_text(team.get("name"), team.get("alias"))
+    rules = " ".join(str(raw.get(k) or "") for k in ("rules_primary", "rules_secondary", "description"))
+    game_match = re.search(r"wins the ([A-Za-z .]+?)\s+vs\.?\s+([A-Za-z .]+?)\s+professional baseball game", rules, re.I)
+    if game_match:
+        away, home = game_match.group(1).strip(), game_match.group(2).strip()
+    if not home or not away:
+        match = re.search(r"(?:the )?(.+?) vs\.? (.+?)(?: professional baseball game| MLB game)", rules, re.I)
+        if match:
+            away, home = match.group(1).strip(), match.group(2).strip()
+    start = first_text(raw.get("gameStartTime"), raw.get("game_start_time"), raw.get("startTime"), raw.get("start_time"))
+    scheduled = re.search(r"originally scheduled for ([A-Z][a-z]{2} \d{1,2}, \d{4}) at (\d{1,2}:\d{2})\s*([AP]M)(?:\s+([A-Z]{2,4}))?", rules)
+    if scheduled:
+        try:
+            local = datetime.strptime(f"{scheduled.group(1)} {scheduled.group(2)} {scheduled.group(3)}", "%b %d, %Y %I:%M %p").replace(tzinfo=ZoneInfo("America/New_York"))
+            start = local.astimezone(ZoneInfo("UTC")).isoformat().replace("+00:00", "Z")
+        except ValueError:
+            pass
+    if not start:
+        start = first_text(raw.get("occurrence_datetime"))
+    market_type = first_text(raw.get("marketType"), raw.get("market_type"), raw.get("sportsMarketType"), raw.get("sportsMarketTypeV2"))
+    full_game = "full_game_winner" in str(market_type).lower() or "moneyline" in str(market_type).lower() or str(raw.get("ticker") or "").startswith("KXMLBGAME")
+    if home and away and start and (str(league).lower() in {"mlb", "baseball", "major league baseball", "sports"} or "baseball" in rules.lower()) and full_game:
+        return {"league": "MLB", "market_type": "moneyline", "home_team": home, "away_team": away, "start_time": start}
     return None
 
 
@@ -119,6 +160,17 @@ def normalize_pmus(market: dict, book: dict, observed_at: str) -> NormalizedMark
     if selection and selection != title:
         title = f"{title} — {selection}"
     event_title = event_title_from_metadata(market, raw)
+    mlb = _mlb_metadata(raw)
+    metadata = {
+        "market": raw,
+        "book": book,
+        "venue_reference": f"PMUS:{slug}",
+        "depth_scope": "top_of_book",
+        "volume_window": "24h",
+        "venue_transact_time": book.get("transact_time"),
+    }
+    if mlb:
+        metadata["market"]["mlb"] = mlb
     return NormalizedMarket(
         Venue.POLYMARKET,
         market["id"],
@@ -148,7 +200,7 @@ def normalize_pmus(market: dict, book: dict, observed_at: str) -> NormalizedMark
         number(raw.get("volume24hr")),
         None,
         stats.get("lastTradeSetTime"),
-        book.get("transact_time"),
+        observed_at,
         observed_at,
         source_url_from_metadata(market, raw),
         Mechanics(
@@ -158,13 +210,7 @@ def normalize_pmus(market: dict, book: dict, observed_at: str) -> NormalizedMark
             price_ranges=((0, 1, tick),) if tick else (),
             payout=1,
         ),
-        {
-            "market": raw,
-            "book": book,
-            "venue_reference": f"PMUS:{slug}",
-            "depth_scope": "top_of_book",
-            "volume_window": "24h",
-        },
+        metadata,
         event_title=event_title,
     )
 
@@ -211,6 +257,18 @@ def normalize_kalshi(
     rules = "\n".join(
         str(raw.get(k) or "") for k in ("rules_primary", "rules_secondary")
     ).strip()
+    metadata = {
+        "market": raw,
+        "book": book,
+        "trades": trades,
+        "event": event,
+        "venue_reference": ticker,
+        "volume_window": "24h",
+        "trade_count_scope": "returned sample (up to 100)",
+    }
+    mlb = _mlb_metadata(raw, event=event)
+    if mlb:
+        metadata["market"]["mlb"] = mlb
     return NormalizedMarket(
         Venue.KALSHI,
         ticker,
@@ -250,15 +308,7 @@ def normalize_kalshi(
             if raw.get("market_type") == "binary"
             else None,
         ),
-        {
-            "market": raw,
-            "book": book,
-            "trades": trades,
-            "event": event,
-            "venue_reference": ticker,
-            "volume_window": "24h",
-            "trade_count_scope": "returned sample (up to 100)",
-        },
+        metadata,
         timestamp_basis="local REST receipt; venue book timestamp unavailable",
         event_title=event_title,
     )

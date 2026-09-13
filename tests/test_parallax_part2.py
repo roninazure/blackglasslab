@@ -21,28 +21,28 @@ def inputs():
     now = timestamp(REVIEWED_AT) + timedelta(minutes=1)
     markets, _ = demo_inputs(now)
     markets = [replace(m, demo=False) for m in markets]
-    event = {"event_ticker": markets[1].event, "series_ticker": "TEST"}
-    series = {"ticker": "TEST", "fee_type": "quadratic", "fee_multiplier": 1}
+    event = {"event_ticker": markets[1].event, "series_ticker": "KXMLBGAME"}
+    series = {"ticker": "KXMLBGAME", "fee_type": "quadratic", "fee_multiplier": 1}
     return now, markets, event, series
 
 
 def test_pmus_current_theta_and_bankers_rounding(inputs):
     now, markets, _, _ = inputs
     market = attach_fees(markets[0], now)
-    assert market.mechanics.fee_rate == 0.06
-    assert pmus_fill_fees([(1000, 0.50)]) == (Decimal("15.00"),)
-    assert pmus_fill_fees([(1000, 0.10)]) == (Decimal("5.40"),)
+    assert market.mechanics.fee_rate == 0.05
+    assert pmus_fill_fees([(1000, 0.50)]) == (Decimal("12.50"),)
+    assert pmus_fill_fees([(1000, 0.10)]) == (Decimal("4.50"),)
     # Exact .045 and .075 tie cases with current theta.
     assert pmus_fill_fees([(3, 0.50)]) == (Decimal(".04"),)
-    assert pmus_fill_fees([(5, 0.50)]) == (Decimal(".08"),)
+    assert pmus_fill_fees([(5, 0.50)]) == (Decimal(".06"),)
     example = retail_example(2.5, 0.50, 100, market.mechanics)
-    assert example.fees_estimate == 0.08
+    assert example.fees_estimate == 0.06
     assert "April" not in market.original_metadata["fee_provenance"]["reason"]
 
 
 def test_pmus_multiple_fills_cumulative_cap():
     assert pmus_fill_fees([(1, 0.50), (1, 0.50), (1, 0.50)]) == (
-        Decimal(".02"),
+        Decimal(".01"),
         Decimal(".01"),
         Decimal(".01"),
     )
@@ -151,14 +151,14 @@ def test_kalshi_six_decimal_rounding_and_account_precision():
     assert all(charge >= 0 for charge in charges)
 
 
-def test_kalshi_upper_bound_covers_fragmented_fills(inputs):
+def test_kalshi_exact_estimate_does_not_add_unverified_fragmentation_buffer(inputs):
     now, markets, event, series = inputs
     market = attach_fees(markets[1], now, event=event, series=series)
     example = retail_example(10, 0.42, 1000, market.mechanics)
     fills = [(0.01, 0.42)] * (int(example.contracts_or_shares) * 100)
     actual = sum(kalshi_fill_fees(fills, 0.07, balance_precision=0.01))
-    assert Decimal(str(example.fees_estimate)) >= actual
-    assert market.mechanics.fee_buffer_per_contract == 1.0001
+    assert Decimal(str(example.fees_estimate)) == Decimal("0.40")
+    assert actual > Decimal(str(example.fees_estimate))
     assert (
         retail_example(10, 0.42, 1000, market.mechanics).maximum_loss_including_fees
         > example.amount_spent

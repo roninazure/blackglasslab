@@ -19,6 +19,7 @@ from .models import (
     utcnow,
 )
 from .normalization import rules_digest
+from .nfl import MODEL_VERSION as NFL_MODEL_VERSION, VALIDATION_ECE as NFL_VALIDATION_ECE
 
 MAX_AGE_SECONDS = 60
 MIN_EDGE = 0.05
@@ -71,11 +72,24 @@ def qualify(
         and evidence.review_reference.strip()
     )
     validated = bool(
-        evidence_bound and evidence and evidence.validation_reference.strip()
+        evidence_bound
+        and evidence
+        and evidence.validation_reference.strip()
+        and (
+            evidence.source_independence != "AUTHORITATIVE_PRIMARY"
+            or evidence.validation_status == "CALIBRATED"
+        )
     )
     corroborated = bool(
         evidence
-        and len({s.strip() for s in evidence.independent_sources if s.strip()}) >= 2
+        and (
+            len({s.strip() for s in evidence.independent_sources if s.strip()}) >= 2
+            or (
+                evidence.source_independence == "AUTHORITATIVE_PRIMARY"
+                and evidence.validation_status == "CALIBRATED"
+                and len({s.strip() for s in evidence.independent_sources if s.strip()}) >= 1
+            )
+        )
     )
     clear = bool(evidence and not evidence.contradictions and not evidence.invalidated)
     evidence_checks = (
@@ -188,6 +202,12 @@ def qualify(
         "edge": (
             edge is not None and edge >= MIN_EDGE - 1e-9,
             "The estimated pricing edge is below five points or unknown.",
+        ),
+        "nfl_calibration_safety": (
+            evidence is None
+            or evidence.model_version != NFL_MODEL_VERSION
+            or (edge is not None and edge > NFL_VALIDATION_ECE + 1e-9),
+            f"NFL nominal edge must exceed the frozen {NFL_VALIDATION_ECE * 100:.2f}-point validation ECE.",
         ),
         "risk_reward": (
             bool(expected_return is not None and expected_return >= 0.05),

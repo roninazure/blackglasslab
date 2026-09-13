@@ -144,6 +144,8 @@ class Evidence:
     new_information: bool = False
     demo: bool = False
     play_type: PlayType = PlayType.PARALLAX_EDGE
+    source_independence: str = ""
+    validation_status: str = ""
 
 
 @dataclass(frozen=True)

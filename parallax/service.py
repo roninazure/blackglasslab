@@ -11,6 +11,7 @@ from typing import Any
 
 from .alerts import AlertDeliveryStore, AlertDispatcher
 from .engine import MAX_SPREAD, qualify
+from .evidence import EvidenceEngine
 from .entitlements import Feature, Plan, entitlement
 from .inbox import (
     ATTENTION_PRIORITY,
@@ -328,6 +329,7 @@ class PlayService:
         inbox_store: InboxStore | None = None,
         alert_dispatcher: AlertDispatcher | None = None,
         social_publisher: SocialPublisher | None = None,
+        evidence_engine: EvidenceEngine | None = None,
     ):
         self.store = store
         self.inbox_store = inbox_store or default_inbox_store()
@@ -335,6 +337,7 @@ class PlayService:
             AlertDeliveryStore(self.inbox_store.path)
         )
         self.social = social_publisher or SocialPublisher()
+        self.evidence_engine = evidence_engine or EvidenceEngine()
         self.lock = RLock()
         self.markets: list[NormalizedMarket] = []
         self.evidence: dict[tuple[Venue, str], Evidence] = {}
@@ -384,6 +387,11 @@ class PlayService:
             self.observation_times.append(detected_at)
             self.markets = list(current.values())
             self.evidence = dict(evidence or {})
+            if mode == "live" and evidence is None:
+                for market in self.markets:
+                    proof = self.evidence_engine.assess(market)
+                    if proof is not None:
+                        self.evidence[(market.venue, market.venue_market_id)] = proof
             self.collection = collection or {}
             self.mode = mode
             self.last_refresh = detected_at.isoformat()
