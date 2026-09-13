@@ -82,6 +82,18 @@ def test_retail_stakes(sample, stake, quantity):
     assert row.unspent == pytest.approx(stake - row.amount_spent)
 
 
+def test_expected_value_is_probability_weighted_not_win_profit(sample):
+    _, market, proof = sample
+    play = qualify(market, Side.YES, proof, now=utcnow())
+    example = play.retail_examples[1]
+    independent_ev = (
+        play.model_probability * example.net_profit_if_correct
+        - (1 - play.model_probability) * example.maximum_loss_including_fees
+    )
+    assert play.expected_value == pytest.approx(independent_ev)
+    assert play.expected_value != pytest.approx(example.net_profit_if_correct)
+
+
 def test_fractional_quantity():
     row = retail_example(10, 0.32, 100, Mechanics(0.01, 0.01, ((0, 1, 0.01),), 1))
     assert row.contracts_or_shares == 31.25
@@ -202,7 +214,7 @@ def test_no_fair_value_invented(sample):
     now, market, _ = sample
     play = qualify(market, Side.YES, now=now)
     assert play.parallax_fair_value is None and play.expected_value is None
-    assert play.suggested_action == Action.PASS
+    assert play.suggested_action == Action.WATCH
 
 
 def test_rule_binding_covers_outcomes(sample):
