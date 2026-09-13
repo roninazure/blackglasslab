@@ -369,6 +369,11 @@ class PlayService:
         ):
             raise ValueError("Live and synthetic inputs must never be mixed")
         with self.lock:
+            collected_evidence = {}
+            if evidence is None and isinstance(collection, dict):
+                collected_evidence = collection.pop("_evidence", {})
+                if not isinstance(collected_evidence, dict):
+                    collected_evidence = {}
             current = {(m.venue, m.venue_market_id): m for m in markets}
             detected_at = utcnow()
             if self.observation_history:
@@ -386,9 +391,11 @@ class PlayService:
             self.observation_history.append(current)
             self.observation_times.append(detected_at)
             self.markets = list(current.values())
-            self.evidence = dict(evidence or {})
+            self.evidence = dict(evidence or collected_evidence)
             if mode == "live" and evidence is None:
                 for market in self.markets:
+                    if (market.venue, market.venue_market_id) in self.evidence:
+                        continue
                     proof = self.evidence_engine.assess(market)
                     if proof is not None:
                         self.evidence[(market.venue, market.venue_market_id)] = proof

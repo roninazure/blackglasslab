@@ -10,10 +10,56 @@ from maker_spread_economics.polymarket_us import PolymarketUSPublicClient
 
 from .fair_value import assess_value
 from .fees import attach_fees
+from .mlb import MLBEvidenceProvider
 from .models import NormalizedMarket, utcnow
 from .normalization import normalize_kalshi, normalize_pmus
 
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
+
+
+def _is_mlb_moneyline(row: dict) -> bool:
+    """Recognize current MLB full-game winners from venue metadata and rules."""
+    raw = row.get("raw", row)
+    if not isinstance(raw, dict):
+        return False
+    market_type = " ".join(
+        str(raw.get(key) or "").lower()
+        for key in ("marketType", "market_type", "sportsMarketType", "sportsMarketTypeV2")
+    )
+    teams = raw.get("marketSides")
+    nested_mlb = bool(
+        isinstance(teams, list)
+        and len(teams) == 2
+        and all(
+            isinstance(side, dict)
+            and isinstance(side.get("team"), dict)
+            and str(side["team"].get("league") or "").lower() == "mlb"
+            for side in teams
+        )
+    )
+    text = " ".join(
+        str(raw.get(key) or "").lower()
+        for key in ("question", "title", "description", "rules_primary", "rules_secondary")
+    )
+    return (
+        "moneyline" in market_type
+        and (nested_mlb or "mlb" in text or "baseball" in text)
+        and any(term in text for term in ("winner", "wins", "win"))
+        and not any(term in market_type + " " + text for term in ("spread", "total", "prop", "future"))
+    )
+
+
+def _dedupe_rows(rows: list[dict], key: str) -> list[dict]:
+    seen: set[str] = set()
+    result: list[dict] = []
+    for row in rows:
+        identity = str(row.get(key) or row.get("id") or row.get("slug") or "")
+        if identity and identity in seen:
+            continue
+        if identity:
+            seen.add(identity)
+        result.append(row)
+    return result
 
 
 class KalshiPublicClient:
@@ -73,6 +119,7 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
     if not 1 <= limit <= 100:
         raise ValueError("Scan limit must be between 1 and 100 per venue")
     markets: list[NormalizedMarket] = []
+    collected_evidence = {}
     metrics: Counter = Counter()
     errors: list[dict] = []
 
@@ -92,30 +139,34 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
         for offset in range(0, 1000, 100):
             page = pmus.markets_page(limit=100, offset=offset)
             rows.extend(page)
-            if any(str(r.get("raw", {}).get("sportsMarketTypeV2") or "").lower().find("moneyline") >= 0 for r in page):
-                break
         rows = [
             r for r in rows
             if r.get("active") and not r.get("closed") and r.get("accepting_orders")
-            and str(r.get("raw", {}).get("category") or "").lower() == "sports"
-            and str(r.get("raw", {}).get("marketType") or "").lower() in {"moneyline", "game winner", "game-winner"}
-            and ("baseball" in str(r.get("raw", {})).lower() or "-mlb-" in str(r.get("slug") or "").lower())
+            and _is_mlb_moneyline(r)
         ]
+        rows = _dedupe_rows(rows, "slug")
         discovery_at = utcnow().isoformat()
         metrics["POLYMARKET.markets_discovered"] = len(rows)
+        provider = MLBEvidenceProvider()
         for row in rows:
-            book = {}
             try:
+                # Mapping/evidence is deliberately attempted before the book.
+                candidate = normalize_pmus(row, {}, discovery_at)
+                proof = provider.assess(candidate)
+                if proof is None:
+                    failure("POLYMARKET", "mapping_or_evidence", ValueError("no exact MLB match or evidence"))
+                    continue
                 book = pmus.book(row["slug"])
-            except Exception as exc:  # noqa: BLE001 - isolate SDK failures by market
-                failure("POLYMARKET", "book", exc)
-            try:
-                markets.append(
-                    attach_fees(normalize_pmus(row, book, discovery_at), utcnow())
-                )
+                market = normalize_pmus(row, book, utcnow().isoformat())
+                market = attach_fees(market, utcnow())
+                markets.append(market)
+                collected_evidence[(market.venue, market.venue_market_id)] = proof
                 metrics["POLYMARKET.markets_observed"] += 1
+                metrics["POLYMARKET.evidence_produced"] += 1
             except (ValueError, TypeError, KeyError) as exc:
-                failure("POLYMARKET", "normalization", exc)
+                failure("POLYMARKET", "market", exc)
+            except Exception as exc:  # noqa: BLE001 - isolate one live market
+                failure("POLYMARKET", "market", exc)
     except Exception as exc:  # noqa: BLE001 - isolate SDK discovery failures by venue
         failure("POLYMARKET", "discovery", exc)
     finally:
@@ -129,6 +180,8 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
         discovery_at = utcnow().isoformat()
         metrics["KALSHI.markets_discovered"] = len(rows)
         rows = sorted(rows, key=lambda r: float(r.get("volume_24h_fp", r.get("volume_24h", 0)) or 0), reverse=True)[: max(2, limit * 2)]
+        rows = _dedupe_rows(rows, "ticker")
+        provider = MLBEvidenceProvider()
         for row in rows:
             book, trades = {}, None
             event, fee_series = None, None
@@ -145,23 +198,25 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
                 failure("KALSHI", "fees", exc)
             observed_at = utcnow().isoformat()
             try:
+                # Exact mapping/evidence precedes executable-book retrieval.
+                candidate = normalize_kalshi(row, {}, discovery_at, None, event)
+                proof = provider.assess(candidate)
+                if proof is None:
+                    failure("KALSHI", "mapping_or_evidence", ValueError("no exact MLB match or evidence"))
+                    continue
                 book = kalshi.book(row["ticker"])
                 observed_at = utcnow().isoformat()
-            except (OSError, ValueError, KeyError) as exc:
-                failure("KALSHI", "book", exc)
-            try:
-                trades = kalshi.trades(row["ticker"])
-            except (OSError, ValueError, KeyError) as exc:
-                failure("KALSHI", "activity", exc)
-            try:
                 market = normalize_kalshi(row, book, observed_at, trades, event)
                 market = replace(market, data_timestamp=discovery_at)
-                markets.append(
-                    attach_fees(market, utcnow(), event=event, series=fee_series)
-                )
+                market = attach_fees(market, utcnow(), event=event, series=fee_series)
+                markets.append(market)
+                collected_evidence[(market.venue, market.venue_market_id)] = proof
                 metrics["KALSHI.markets_observed"] += 1
+                metrics["KALSHI.evidence_produced"] += 1
             except (ValueError, TypeError, KeyError) as exc:
-                failure("KALSHI", "normalization", exc)
+                failure("KALSHI", "market", exc)
+            except Exception as exc:  # noqa: BLE001 - isolate one live market
+                failure("KALSHI", "market", exc)
     except (OSError, ValueError, KeyError) as exc:
         failure("KALSHI", "discovery", exc)
     now = utcnow()
@@ -179,4 +234,7 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
         "metrics": dict(metrics),
         "errors": errors,
         "scope": f"bounded current MLB moneyline scan: PMUS public pages up to 1000 rows; Kalshi KXMLBGAME series; {limit} venue-side rows retained",
+        # Request-local transport for the normal service scorer.  This is
+        # consumed immediately by PlayService and is never persisted.
+        "_evidence": collected_evidence,
     }
