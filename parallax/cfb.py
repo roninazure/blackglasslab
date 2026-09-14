@@ -238,8 +238,9 @@ def _cfb_metadata(market: Any) -> dict[str, str] | None:
     raw = market.original_metadata.get("market", {})
     event = market.original_metadata.get("event", {})
     text = " ".join(str(x or "") for x in (market.title, market.description, market.resolution_rules, raw.get("marketType"), raw.get("market_type"), raw.get("sportsMarketType"), event.get("title"), event.get("name"))).lower()
-    banned = ("spread", "total", "over/under", "first half", "quarter", "prop", "future", "playoff berth", "season win", "championship")
-    if any(term in text for term in banned) or not any(term in text for term in ("moneyline", "game winner", "winner", "wins")):
+    banned = ("spread", "total", "over/under", "first half", "quarter", "future", "playoff berth", "season win", "championship")
+    has_banned_term = any(term in text for term in banned) or re.search(r"\\bprop\\b", text) is not None
+    if has_banned_term or not any(term in text for term in ("moneyline", "game winner", "winner", "wins")):
         return None
     sides = raw.get("marketSides") or []
     home = str(raw.get("homeTeam") or raw.get("home_team") or "").strip()
@@ -265,7 +266,7 @@ def _cfb_metadata(market: Any) -> dict[str, str] | None:
         match = re.search(r"(.+?)\s+(?:at|vs\.?|@)\s+(.+?)(?:\s+football)?$", event_text, re.I)
         if match:
             away, home = match.group(1).strip(), match.group(2).strip()
-    start = str(raw.get("gameStartTime") or raw.get("game_start_time") or raw.get("scheduled_start") or raw.get("start_time") or event.get("game_start_time") or event.get("start_time") or event.get("open_time") or "").strip()
+    start = str(raw.get("gameStartTime") or raw.get("game_start_time") or raw.get("scheduled_start") or raw.get("start_time") or raw.get("occurrence_datetime") or event.get("game_start_time") or event.get("start_time") or event.get("occurrence_datetime") or event.get("open_time") or "").strip()
     if not start:
         date_match = re.search(r"originally scheduled for ([A-Z][a-z]{2} \d{1,2}, \d{4})", market.resolution_rules, re.I)
         if date_match:

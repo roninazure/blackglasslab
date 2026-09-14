@@ -66,3 +66,56 @@ def test_cfb_evidence_and_fee_economics_bind():
     scored = qualify(m, Side.YES, evidence, now=datetime(2026, 9, 13, tzinfo=UTC))
     assert scored.retail_examples[1].maximum_loss == 25
     assert scored.evidence is not None
+
+
+def test_current_kalshi_cfb_schema_is_supported():
+    raw = {
+        "ticker": "KXNCAAFGAME-26SEP17SYRPITT-SYR",
+        "event_ticker": "KXNCAAFGAME-26SEP17SYRPITT",
+        "title": "Syracuse wins",
+        "yes_sub_title": "Syracuse",
+        "occurrence_datetime": "2026-09-18T02:30:00Z",
+        "rules_primary": "If Syracuse wins the Syracuse vs Pittsburgh college football game originally scheduled for Sep 17, 2026, then the market resolves to Yes.",
+        "status": "active",
+    }
+    event = {
+        "event_ticker": "KXNCAAFGAME-26SEP17SYRPITT",
+        "series_ticker": "KXNCAAFGAME",
+        "title": "Syracuse vs Pittsburgh",
+        "product_metadata": {
+            "competition": "NCAA Football",
+            "competition_scope": "Game",
+        },
+    }
+    m = normalize_kalshi(raw, {}, "2026-09-13T21:00:00+00:00", event=event)
+    assert is_supported_market(m)
+
+
+def test_kalshi_cfb_disclaimer_property_does_not_trigger_prop_rejection():
+    raw = {
+        "ticker": "KXNCAAFGAME-26SEP26NAUMTST-NAU",
+        "event_ticker": "KXNCAAFGAME-26SEP26NAUMTST",
+        "title": "Northern Arizona wins",
+        "yes_sub_title": "Northern Arizona",
+        "no_sub_title": "Northern Arizona",
+        "occurrence_datetime": "2026-09-27T05:30:00Z",
+        "market_type": "binary",
+        "rules_primary": (
+            "If Northern Arizona wins the Northern Arizona vs Montana St. college football game "
+            "originally scheduled for Sep 26, 2026, then the market resolves to Yes. "
+            "All trademarks, logos, and brand names are the property of their respective owners."
+        ),
+    }
+    event = {
+        "event_ticker": "KXNCAAFGAME-26SEP26NAUMTST",
+        "series_ticker": "KXNCAAFGAME",
+        "title": "Northern Arizona vs Montana St.",
+        "product_metadata": {
+            "competition": "NCAA Football",
+            "competition_scope": "Game",
+        },
+    }
+
+    market = normalize_kalshi(raw, {}, "test", event=event)
+
+    assert is_supported_market(market)

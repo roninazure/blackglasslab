@@ -59,3 +59,39 @@ def test_nfl_evidence_exposes_frozen_calibration_reference():
     market = NormalizedMarket(title="BAL vs KC NFL game winner", **{**dict(venue=Venue.KALSHI, venue_market_id="nfl-meta", slug="nfl-meta", description="NFL game winner", category="NFL", event="e", outcomes={"YES":"YES","NO":"NO"}, resolution_rules="NFL game winner", resolution_time="2027-09-20T00:00:00Z", status="OPEN", yes_bid=.4, yes_ask=.5, no_bid=.4, no_ask=.5, best_bid_size=1, best_ask_size=1, executable_depth={}, recent_volume=None, recent_trade_count=None, last_trade_time=None, book_timestamp=None, data_timestamp="2027-01-01T00:00:00Z", source_url=None, mechanics=Mechanics()), "original_metadata":{"market":{"away_team":"BAL","home_team":"KC","marketType":"moneyline"}}})
     evidence = NFLEvidenceProvider(lambda: [game]).assess(market)
     assert evidence is not None and str(VALIDATION_ECE) in evidence.review_reference
+
+
+def test_current_kalshi_nfl_game_family_is_supported():
+    raw = {
+        "ticker": "KXNFLGAME-26SEP13ARILAC-LAC",
+        "event_ticker": "KXNFLGAME-26SEP13ARILAC",
+    }
+    market = NormalizedMarket(
+        venue=Venue.KALSHI,
+        venue_market_id=raw["ticker"],
+        slug=raw["ticker"],
+        title="Arizona vs Los Angeles C Pro Football game: Los Angeles C wins?",
+        description="Los Angeles C",
+        category="Uncategorized",
+        event=raw["event_ticker"],
+        outcomes={"YES": "YES", "NO": "NO"},
+        resolution_rules="If Los Angeles C wins the Arizona vs Los Angeles C professional football game, then the market resolves to Yes.",
+        resolution_time="2026-09-14T02:25:00Z",
+        status="OPEN",
+        yes_bid=.4,
+        yes_ask=.5,
+        no_bid=.4,
+        no_ask=.5,
+        best_bid_size=1,
+        best_ask_size=1,
+        executable_depth={},
+        recent_volume=None,
+        recent_trade_count=None,
+        last_trade_time=None,
+        book_timestamp=None,
+        data_timestamp="2026-09-13T21:00:00Z",
+        source_url=None,
+        mechanics=Mechanics(),
+        original_metadata={"market": raw},
+    )
+    assert is_supported_market(market)

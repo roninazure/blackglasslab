@@ -252,8 +252,12 @@ def is_supported_market(market: NormalizedMarket) -> bool:
         for side in sides
     )
     text = " ".join((market.title, market.description, market.resolution_rules, str(raw.get("marketType") or ""))).lower()
+    kalshi_nfl_family = market.venue == Venue.KALSHI and any(
+        str(value or "").upper().startswith("KXNFLGAME")
+        for value in (raw.get("ticker"), raw.get("event_ticker"), market.event)
+    )
     banned = ("spread", "total", "over/under", "first half", "quarter", "touchdown", "prop", "future", "super bowl", "playoff berth", "season win")
-    return market.venue in {Venue.POLYMARKET, Venue.KALSHI} and ("nfl" in text or nfl_sides) and any(x in text for x in ("moneyline", "game winner", "wins", "winner")) and not any(x in text for x in banned)
+    return market.venue in {Venue.POLYMARKET, Venue.KALSHI} and ("nfl" in text or nfl_sides or kalshi_nfl_family) and any(x in text for x in ("moneyline", "game winner", "wins", "winner")) and not any(x in text for x in banned)
 
 
 def nfl_calibration_safe(edge: float | None) -> bool:
