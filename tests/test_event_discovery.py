@@ -7,9 +7,11 @@ import pytest
 
 from parallax.event_discovery import (
     DiscoveryStatus,
+    EnrichmentStatus,
     MatchStatus,
     classify_event_family,
     discover_event_candidate,
+    enrich_event_candidate,
     match_event_contract,
     normalized_for_exact_match,
 )
@@ -279,3 +281,289 @@ def test_only_exact_candidate_can_feed_existing_generic_binding_path():
     mismatch_result = match_event_contract(target, mismatch)
     with pytest.raises(ValueError, match="non-exact"):
         normalized_for_exact_match(mismatch, mismatch_result)
+
+
+def clarity_inventory_candidate():
+    return candidate(
+        pmus(
+            "Senate vote on CLARITY",
+            "This market resolves according to the venue's published rules.",
+            market_id="clarity-vague",
+        )
+    )
+
+
+def clarity_detail(**changes):
+    return {
+        "market": {
+            "id": "clarity-vague",
+            "slug": "clarity-vague",
+            "title": "Senate vote on CLARITY",
+            "description": RULES,
+            "active": True,
+            "closed": False,
+            "marketSides": [
+                {"long": True, "description": "YES"},
+                {"long": False, "description": "NO"},
+            ],
+            "updatedAt": "2026-09-14T12:01:00Z",
+            **changes,
+        }
+    }
+
+
+def test_authoritative_detail_enriches_without_erasing_provenance_or_fabricating():
+    inventory = clarity_inventory_candidate()
+    assert match_event_contract(inventory, inventory).status is MatchStatus.AMBIGUOUS
+    result = enrich_event_candidate(
+        inventory,
+        clarity_detail(),
+        fetched_at=NOW,
+        source_reference="https://venue.example/market/clarity-vague",
+    )
+    assert result.status is EnrichmentStatus.ENRICHED
+    enriched = result.candidate
+    assert enriched.raw_provenance == inventory.raw_provenance
+    assert enriched.enrichment_provenance["detail_response"] == clarity_detail()
+    assert enriched.enrichment_provenance["inventory_ambiguity_flags"] == inventory.ambiguity_flags
+    assert enriched.identity.subject == "hr:3633"
+    assert enriched.identity.stage == "motion_to_proceed_cloture"
+    assert enriched.identity.deadline == "2026-09-15"
+    assert enriched.identity.resolution_authority == "us_senate_roll_call"
+    assert enriched.open_time is None
+    assert enriched.close_time is None
+    assert enriched.resolution_time is None
+    assert enriched.executable_prices == {"YES": None, "NO": None}
+    assert enriched.liquidity is None
+    assert match_event_contract(enriched, candidate()).status is MatchStatus.EXACT
+
+
+@pytest.mark.parametrize(
+    ("question", "rules"),
+    [
+        (
+            "Will the Senate pass H.R. 3633 on Sep 15, 2026?",
+            "Resolves YES if the Senate passes H.R. 3633 on September 15, 2026 according to the official U.S. Senate roll call.",
+        ),
+        (
+            "Will H.R. 3633 be signed into law on Sep 15, 2026?",
+            "Resolves YES if H.R. 3633 is signed into law on September 15, 2026 according to the official U.S. Senate roll call.",
+        ),
+        (
+            "Will the Senate vote on H.R. 3633 on Sep 15, 2026?",
+            "Resolves YES if the Senate holds a vote on H.R. 3633 on September 15, 2026 according to the official U.S. Senate roll call.",
+        ),
+        (
+            "Will Senator Smith vote for H.R. 3633 on Sep 15, 2026?",
+            "Resolves YES if Senator Smith votes for H.R. 3633 on September 15, 2026 according to the official U.S. Senate roll call.",
+        ),
+    ],
+)
+def test_clarity_enrichment_remains_mismatch_for_different_contracts(question, rules):
+    enriched = enrich_event_candidate(clarity_inventory_candidate(), clarity_detail()).candidate
+    assert match_event_contract(enriched, candidate(pmus(question, rules))).status is MatchStatus.MISMATCH
+
+
+def test_clarity_enrichment_mismatches_vote_count_contract():
+    enriched = enrich_event_candidate(clarity_inventory_candidate(), clarity_detail()).candidate
+    count_contract = replace(candidate(), derivative_flags=("count_contract",))
+    result = match_event_contract(enriched, count_contract)
+    assert result.status is MatchStatus.MISMATCH
+    assert result.reasons == ("contract_type_mismatch:binary!=derivative",)
+
+
+def test_missing_or_partial_detail_leaves_candidate_present_and_ambiguous():
+    inventory = clarity_inventory_candidate()
+    malformed = enrich_event_candidate(inventory, {"market": []})
+    assert malformed.status is EnrichmentStatus.UNCHANGED
+    assert malformed.candidate is inventory
+    partial = enrich_event_candidate(
+        inventory,
+        {"market": {"id": "clarity-vague", "title": "Senate vote on CLARITY"}},
+    )
+    assert partial.status is EnrichmentStatus.UNCHANGED
+    assert match_event_contract(partial.candidate, partial.candidate).status is MatchStatus.AMBIGUOUS
+
+
+def test_detail_can_remain_ambiguous_or_prove_mismatch():
+    inventory = clarity_inventory_candidate()
+    vague = clarity_detail(description="The official result determines resolution.")
+    still = enrich_event_candidate(inventory, vague).candidate
+    assert match_event_contract(still, still).status is MatchStatus.AMBIGUOUS
+    target = candidate()
+    passage = clarity_detail(
+        title="Will the Senate pass H.R. 3633 on Sep 15, 2026?",
+        description="Resolves YES if the Senate passes H.R. 3633 on September 15, 2026 according to the official U.S. Senate roll call.",
+    )
+    proved = enrich_event_candidate(inventory, passage).candidate
+    assert match_event_contract(target, proved).status is MatchStatus.MISMATCH
+
+
+@pytest.mark.parametrize(
+    ("changes", "flag"),
+    [
+        (
+            {
+                "title": "Will the Senate pass H.R. 3633 on Sep 15, 2026?",
+                "description": RULES,
+            },
+            "conflicting_action",
+        ),
+        ({"close_time": "2026-09-16T00:00:00Z"}, "inventory_detail_close_time_conflict"),
+        ({"active": False, "status": "halted"}, "inventory_detail_status_conflict"),
+        (
+            {
+                "marketSides": [
+                    {"long": True, "description": "NO - event fails"},
+                    {"long": False, "description": "YES - event succeeds"},
+                ]
+            },
+            "reversed_binary_semantics",
+        ),
+        ({"eventSlug": "different-parent"}, "inventory_detail_event_conflict"),
+    ],
+)
+def test_detail_conflicts_are_explicit_and_never_exact(changes, flag):
+    inventory = clarity_inventory_candidate()
+    inventory = replace(
+        inventory,
+        close_time="2026-09-15T23:59:00Z",
+        raw_provenance={
+            **inventory.raw_provenance,
+            "market": {**inventory.raw_provenance["market"], "eventSlug": "inventory-parent"},
+        },
+    )
+    result = enrich_event_candidate(inventory, clarity_detail(**changes))
+    assert result.status is EnrichmentStatus.ENRICHED
+    assert flag in (*result.candidate.ambiguity_flags, *result.candidate.enrichment_conflict_flags)
+    assert match_event_contract(result.candidate, result.candidate).status is MatchStatus.AMBIGUOUS
+
+
+def test_parent_child_and_resolution_authority_conflicts_are_auditable():
+    inventory = clarity_inventory_candidate()
+    parent = {
+        "title": "Will the Senate finally pass H.R. 3633 on Sep 15, 2026?",
+        "description": "Resolution uses the official U.S. Senate roll call.",
+    }
+    result = enrich_event_candidate(inventory, clarity_detail(), event=parent)
+    assert "parent_child_action_conflict" in result.candidate.enrichment_conflict_flags
+    authority_inventory = replace(
+        inventory,
+        identity=replace(inventory.identity, resolution_authority="official_court_record"),
+    )
+    authority = enrich_event_candidate(authority_inventory, clarity_detail()).candidate
+    assert "inventory_detail_resolution_authority_conflict" in authority.enrichment_conflict_flags
+
+
+def test_different_vague_title_with_same_rules_can_be_exact():
+    detail = clarity_detail(title="Procedural contract for the chamber")
+    enriched = enrich_event_candidate(clarity_inventory_candidate(), detail).candidate
+    assert match_event_contract(enriched, candidate()).status is MatchStatus.EXACT
+
+
+def test_series_collision_and_close_time_are_audited_without_becoming_deadline():
+    inventory = clarity_inventory_candidate()
+    inventory = replace(
+        inventory,
+        raw_provenance={
+            **inventory.raw_provenance,
+            "market": {**inventory.raw_provenance["market"], "series_ticker": "SERIES-A"},
+        },
+    )
+    result = enrich_event_candidate(
+        inventory,
+        clarity_detail(series_ticker="SERIES-B", close_time="2026-09-16T00:00:00Z"),
+    )
+    assert "inventory_detail_series_conflict" in result.candidate.enrichment_conflict_flags
+    assert result.candidate.identity.deadline == "2026-09-15"
+    assert result.candidate.close_time == "2026-09-16T00:00:00Z"
+
+
+def test_inventory_detail_deadline_conflict_is_explicit():
+    inventory = candidate(
+        pmus(
+            "Will the Senate invoke cloture on the motion to proceed to H.R. 3633 on Sep 14, 2026?",
+            RULES.replace("September 15", "September 14"),
+            market_id="clarity-vague",
+        )
+    )
+    result = enrich_event_candidate(inventory, clarity_detail())
+    assert "inventory_detail_deadline_conflict" in result.candidate.enrichment_conflict_flags
+    assert match_event_contract(result.candidate, result.candidate).status is MatchStatus.AMBIGUOUS
+
+
+def test_missing_resolution_authority_remains_ambiguous_and_derivatives_unsupported():
+    detail = clarity_detail(description=RULES.replace("official U.S. Senate roll call", "published results"))
+    enriched = enrich_event_candidate(clarity_inventory_candidate(), detail).candidate
+    assert enriched.identity.resolution_authority is None
+    assert match_event_contract(enriched, enriched).status is MatchStatus.AMBIGUOUS
+    derivative = replace(candidate(), derivative_flags=("count_contract",))
+    assert match_event_contract(derivative, derivative).status is MatchStatus.UNSUPPORTED
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"updatedAt": "not-a-timestamp"}, "malformed_detail_timestamp:updatedAt"),
+        ({"strike_value": "sixty"}, "malformed_detail_threshold:strike_value"),
+        ({"yes_price": 1.2}, "malformed_detail_price"),
+        ({"liquidity": "unknown"}, "malformed_detail_liquidity"),
+    ],
+)
+def test_malformed_detail_is_rejected_without_overwriting_inventory(changes, reason):
+    inventory = clarity_inventory_candidate()
+    result = enrich_event_candidate(inventory, clarity_detail(**changes))
+    assert result.status is EnrichmentStatus.UNCHANGED
+    assert result.reasons == (reason,)
+    assert result.candidate is inventory
+
+
+def test_closed_detail_is_unsupported_but_keeps_both_provenances():
+    inventory = clarity_inventory_candidate()
+    result = enrich_event_candidate(inventory, clarity_detail(active=False, closed=True))
+    assert result.status is EnrichmentStatus.UNSUPPORTED
+    assert result.candidate.raw_provenance == inventory.raw_provenance
+    assert result.candidate.enrichment_provenance["detail_market"]["closed"] is True
+
+
+def test_markup_is_removed_and_detail_economics_only_populate_when_present():
+    detail = clarity_detail(
+        description=f"<p>{RULES}</p>",
+        yes_price="0.61",
+        liquidity="120.5",
+    )
+    enriched = enrich_event_candidate(clarity_inventory_candidate(), detail).candidate
+    assert "<p>" not in enriched.resolution_text
+    assert enriched.executable_prices == {"YES": 0.61, "NO": None}
+    assert enriched.liquidity == 120.5
+
+
+def test_enriched_exact_normalization_uses_detail_rules_and_guards_other_states():
+    target = candidate()
+    exact = enrich_event_candidate(clarity_inventory_candidate(), clarity_detail()).candidate
+    market = normalized_for_exact_match(exact, match_event_contract(target, exact))
+    assert market.resolution_rules == exact.resolution_text
+    ambiguous = clarity_inventory_candidate()
+    with pytest.raises(ValueError, match="non-exact"):
+        normalized_for_exact_match(ambiguous, match_event_contract(target, ambiguous))
+    mismatch = enrich_event_candidate(
+        clarity_inventory_candidate(),
+        clarity_detail(
+            title="Will the Senate pass H.R. 3633 on Sep 15, 2026?",
+            description="Resolves YES if the Senate passes H.R. 3633 on September 15, 2026 according to the official U.S. Senate roll call.",
+        ),
+    ).candidate
+    with pytest.raises(ValueError, match="non-exact"):
+        normalized_for_exact_match(mismatch, match_event_contract(target, mismatch))
+    unsupported = replace(exact, derivative_flags=("count_contract",))
+    with pytest.raises(ValueError, match="non-exact"):
+        normalized_for_exact_match(unsupported, match_event_contract(unsupported, unsupported))
+
+
+def test_sports_remain_excluded_before_detail_lookup():
+    sports = discover_event_candidate(
+        pmus("Will the Yankees win?", "Official MLB result.", category="MLB"),
+        venue=Venue.POLYMARKET,
+    )
+    assert sports.status is DiscoveryStatus.UNSUPPORTED
+    assert sports.candidate is None

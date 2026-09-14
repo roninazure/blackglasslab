@@ -8,11 +8,12 @@ not title similarity.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import math
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -90,6 +91,8 @@ class EventCandidate:
     derivative_flags: tuple[str, ...]
     discovery_timestamp: str
     raw_provenance: dict[str, Any] = field(repr=False)
+    enrichment_provenance: dict[str, Any] = field(default_factory=dict, repr=False)
+    enrichment_conflict_flags: tuple[str, ...] = ()
 
     @property
     def event_id(self) -> str:
@@ -108,6 +111,19 @@ class MatchResult:
     status: MatchStatus
     reasons: tuple[str, ...]
     compared_dimensions: tuple[str, ...] = ()
+
+
+class EnrichmentStatus(StrEnum):
+    ENRICHED = "ENRICHED"
+    UNCHANGED = "UNCHANGED"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
+@dataclass(frozen=True)
+class EnrichmentResult:
+    status: EnrichmentStatus
+    reasons: tuple[str, ...]
+    candidate: EventCandidate
 
 
 _MONTHS = {
@@ -136,6 +152,12 @@ _DERIVATIVE_TERMS = (
 
 def _text(value: Any) -> str:
     return str(value).strip() if value is not None else ""
+
+
+def _clean_rules(value: Any) -> str:
+    text = html.unescape(_text(value))
+    text = re.sub(r"<[^>]*>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _first(mapping: Mapping[str, Any], *keys: str) -> Any:
@@ -293,7 +315,7 @@ def _extract_one(text: str, family: EventFamily) -> dict[str, str | None]:
         action, stage, outcome = "enact", "enactment", "succeeds"
     elif re.search(r"\b(?:final passage|pass(?:es|ed)?)\b", lower):
         action, stage, outcome = "pass", "final_passage", "succeeds"
-    elif re.search(r"\b(?:vote occurs|hold(?:s)? a vote|vote on)\b", lower):
+    elif re.search(r"\b(?:vote occurs|hold(?:s)? a vote)\b|\bwill\b.{0,80}\bvote on\b", lower):
         action, stage, outcome = "hold_vote", "vote_occurrence", "occurs"
     elif re.search(r"\bsenator\s+[a-z][a-z .'-]+\s+vote(?:s)?\s+(?:for|against)\b", lower):
         action, stage = "individual_vote", "member_vote"
@@ -473,6 +495,228 @@ def discover_event_candidate(
     return DiscoveryDecision(DiscoveryStatus.CANDIDATE, (), candidate)
 
 
+_DETAIL_TIMESTAMPS = (
+    "open_time", "close_time", "resolution_time", "expected_expiration_time",
+    "expiration_time", "latest_expiration_time", "startDate", "endDate",
+    "created_time", "updated_time", "occurrence_datetime", "updated_at",
+    "updatedAt", "last_updated", "last_updated_ts",
+)
+_CLOSED_STATUSES = {"CLOSED", "SETTLED", "RESOLVED", "FINALIZED", "EXPIRED"}
+
+
+def _valid_timestamp(value: Any) -> bool:
+    if value in (None, ""):
+        return True
+    try:
+        datetime.fromisoformat(_text(value))
+    except ValueError:
+        return False
+    return True
+
+
+def _detail_rules(row: Mapping[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("rules_primary", "rules_secondary", "rules", "description"):
+        value = _clean_rules(row.get(key))
+        if value and value not in parts:
+            parts.append(value)
+    return "\n".join(parts)
+
+
+def _status(row: Mapping[str, Any]) -> str:
+    return _text(
+        row.get("status")
+        or ("CLOSED" if row.get("closed") is True else "OPEN" if row.get("active") is True else "UNKNOWN")
+    ).upper()
+
+
+def _identifier_values(row: Mapping[str, Any]) -> set[str]:
+    return {
+        _text(row.get(key))
+        for key in ("id", "ticker", "slug", "market_id", "marketSlug")
+        if _text(row.get(key))
+    }
+
+
+def _group_value(row: Mapping[str, Any], kind: str) -> str | None:
+    keys = ("event_ticker", "event_id", "eventSlug") if kind == "event" else ("series_ticker", "series_id")
+    return _text(_first(row, *keys)) or None
+
+
+def enrich_event_candidate(
+    candidate: EventCandidate,
+    detail: Mapping[str, Any],
+    *,
+    fetched_at: datetime | None = None,
+    source_reference: str | None = None,
+    event: Mapping[str, Any] | None = None,
+    series: Mapping[str, Any] | None = None,
+) -> EnrichmentResult:
+    """Merge one authoritative detail response without erasing inventory evidence."""
+    if not isinstance(detail, Mapping):
+        return EnrichmentResult(EnrichmentStatus.UNCHANGED, ("malformed_detail",), candidate)
+    wrapper = dict(detail)
+    nested = wrapper.get("market")
+    row = dict(nested) if isinstance(nested, Mapping) else wrapper
+    if not row or not _identifier_values(row):
+        return EnrichmentResult(EnrichmentStatus.UNCHANGED, ("malformed_detail",), candidate)
+    expected = {candidate.market_id, candidate.slug or ""} - {""}
+    if not expected.intersection(_identifier_values(row)):
+        return EnrichmentResult(EnrichmentStatus.UNCHANGED, ("detail_identifier_mismatch",), candidate)
+    malformed_times = tuple(
+        key for key in _DETAIL_TIMESTAMPS if key in row and not _valid_timestamp(row.get(key))
+    )
+    if malformed_times:
+        reasons = tuple(f"malformed_detail_timestamp:{key}" for key in malformed_times)
+        return EnrichmentResult(EnrichmentStatus.UNCHANGED, reasons, candidate)
+    for key in ("strike", "strike_value", "threshold", "floor_strike", "cap_strike"):
+        if key in row and row.get(key) not in (None, "") and _number(row.get(key)) is None:
+            return EnrichmentResult(
+                EnrichmentStatus.UNCHANGED, (f"malformed_detail_threshold:{key}",), candidate
+            )
+
+    detail_status = _status(row)
+    inventory_row = dict(candidate.raw_provenance.get("market") or {})
+    inventory_status = _status(inventory_row)
+    audit_conflicts: list[str] = []
+    if detail_status != "UNKNOWN" and inventory_status != "UNKNOWN" and detail_status != inventory_status:
+        audit_conflicts.append("inventory_detail_status_conflict")
+    if row.get("closed") is True or detail_status in _CLOSED_STATUSES:
+        provenance = {
+            "detail_response": wrapper,
+            "detail_market": row,
+            "event": dict(event or {}),
+            "series": dict(series or {}),
+            "lookup_reference": source_reference,
+            "fetched_at": (fetched_at or utcnow()).astimezone(UTC).isoformat(),
+            "inventory_ambiguity_flags": candidate.ambiguity_flags,
+        }
+        enriched = replace(
+            candidate,
+            enrichment_provenance=provenance,
+            enrichment_conflict_flags=tuple(audit_conflicts),
+        )
+        return EnrichmentResult(EnrichmentStatus.UNSUPPORTED, ("stale_or_closed_detail",), enriched)
+
+    detail_question = _clean_rules(_first(row, "question", "title", "subtitle"))
+    rules = _detail_rules(row)
+    if not detail_question or not rules:
+        return EnrichmentResult(EnrichmentStatus.UNCHANGED, ("detail_missing_question_or_rules",), candidate)
+    family = classify_event_family(row, event=event)
+    if family is EventFamily.OTHER_BINARY_EVENT:
+        family = candidate.event_family
+    authority_parts: list[str] = []
+    settlement_sources = (series or {}).get("settlement_sources") if isinstance(series, Mapping) else None
+    if isinstance(settlement_sources, list):
+        for item in settlement_sources:
+            if isinstance(item, Mapping):
+                authority_parts.extend((_text(item.get("name")), _text(item.get("url"))))
+    semantic_rules = "\n".join(x for x in (rules, *authority_parts) if x)
+    identity, ambiguity = extract_event_identity(detail_question, semantic_rules, family)
+
+    if event:
+        event_text = "\n".join(
+            x for x in (
+                _clean_rules(_first(event, "title", "name", "subtitle")),
+                _detail_rules(event),
+            ) if x
+        )
+        if event_text:
+            event_identity, _ = extract_event_identity(event_text, event_text, family)
+            for dimension in _IDENTITY_DIMENSIONS:
+                if dimension == "event_family":
+                    continue
+                parent_value = event_identity.fingerprint_fields()[dimension]
+                child_value = identity.fingerprint_fields()[dimension]
+                if parent_value is not None and child_value is not None and parent_value != child_value:
+                    audit_conflicts.append(f"parent_child_{dimension}_conflict")
+
+    before = candidate.identity.fingerprint_fields()
+    after = identity.fingerprint_fields()
+    for dimension in _IDENTITY_DIMENSIONS:
+        if dimension == "event_family":
+            continue
+        if before[dimension] is not None and after[dimension] is not None and before[dimension] != after[dimension]:
+            audit_conflicts.append(f"inventory_detail_{dimension}_conflict")
+    for kind in ("event", "series"):
+        inventory_group = _group_value(inventory_row, kind)
+        detail_group = _group_value(row, kind)
+        if inventory_group and detail_group and inventory_group != detail_group:
+            audit_conflicts.append(f"inventory_detail_{kind}_conflict")
+
+    outcomes = candidate.outcomes
+    detail_outcomes = _outcomes(row, candidate.venue)
+    if detail_outcomes is not None:
+        outcomes = detail_outcomes
+        if detail_outcomes != candidate.outcomes:
+            audit_conflicts.append("inventory_detail_outcome_conflict")
+    if outcomes["YES"].casefold().startswith("no") or outcomes["NO"].casefold().startswith("yes"):
+        ambiguity = (*ambiguity, "reversed_binary_semantics")
+
+    def promoted_time(*keys: str, current: str | None) -> str | None:
+        value = _text(_first(row, *keys)) or None
+        if value and current and value != current:
+            audit_conflicts.append(f"inventory_detail_{keys[0]}_conflict")
+        return value or current
+
+    detail_prices = dict(candidate.executable_prices)
+    for side, keys in (
+        ("YES", ("yes_ask", "yes_ask_dollars", "yes_price", "bestAsk")),
+        ("NO", ("no_ask", "no_ask_dollars", "no_price")),
+    ):
+        raw_value = _first(row, *keys)
+        if raw_value is not None:
+            value = _number(raw_value)
+            if value is None or not 0 <= value <= 1:
+                return EnrichmentResult(EnrichmentStatus.UNCHANGED, ("malformed_detail_price",), candidate)
+            detail_prices[side] = value
+    detail_liquidity = candidate.liquidity
+    if _first(row, "liquidity", "liquidity_dollars") is not None:
+        detail_liquidity = _number(_first(row, "liquidity", "liquidity_dollars"))
+        if detail_liquidity is None or detail_liquidity < 0:
+            return EnrichmentResult(EnrichmentStatus.UNCHANGED, ("malformed_detail_liquidity",), candidate)
+
+    source_at = _text(
+        _first(row, "updated_time", "updated_at", "updatedAt", "last_updated", "last_updated_ts")
+    ) or candidate.source_timestamp
+    provenance = {
+        "detail_response": wrapper,
+        "detail_market": row,
+        "event": dict(event or {}),
+        "series": dict(series or {}),
+        "lookup_reference": source_reference,
+        "fetched_at": (fetched_at or utcnow()).astimezone(UTC).isoformat(),
+        "inventory_ambiguity_flags": candidate.ambiguity_flags,
+    }
+    open_time = promoted_time("open_time", "startDate", current=candidate.open_time)
+    close_time = promoted_time("close_time", "endDate", "expiration_time", current=candidate.close_time)
+    resolution_time = promoted_time(
+        "resolution_time", "expected_expiration_time", "latest_expiration_time",
+        "expiration_time", current=candidate.resolution_time
+    )
+    conflicts = tuple(dict.fromkeys(audit_conflicts))
+    enriched = replace(
+        candidate,
+        event_title=_clean_rules(_first(event or {}, "title", "name") or detail_question),
+        contract_question=detail_question,
+        outcomes=outcomes,
+        executable_prices=detail_prices,
+        liquidity=detail_liquidity,
+        open_time=open_time,
+        close_time=close_time,
+        resolution_time=resolution_time,
+        source_timestamp=source_at,
+        resolution_text=semantic_rules,
+        source_reference=source_reference or _text(_first(row, "url", "rules_url")) or candidate.source_reference,
+        event_family=family,
+        identity=identity,
+        ambiguity_flags=tuple(dict.fromkeys((*ambiguity, *conflicts))),
+        enrichment_provenance=provenance,
+        enrichment_conflict_flags=conflicts,
+    )
+    return EnrichmentResult(EnrichmentStatus.ENRICHED, (), enriched)
+
+
 _IDENTITY_DIMENSIONS = (
     "event_family", "action", "subject", "actor", "body", "stage", "outcome",
     "deadline", "temporal_scope", "threshold", "resolution_authority",
@@ -486,7 +730,9 @@ _CONDITIONAL_EXACT = ("actor", "body", "stage", "threshold")
 
 def match_event_contract(target: EventCandidate, contract: EventCandidate) -> MatchResult:
     """Prove exact identity or fail closed with dimension-specific reasons."""
-    if target.derivative_flags or contract.derivative_flags:
+    if bool(target.derivative_flags) != bool(contract.derivative_flags):
+        return MatchResult(MatchStatus.MISMATCH, ("contract_type_mismatch:binary!=derivative",))
+    if target.derivative_flags and contract.derivative_flags:
         return MatchResult(MatchStatus.UNSUPPORTED, ("derivative_contract",))
     if target.ambiguity_flags or contract.ambiguity_flags:
         conflicting = tuple(flag for flag in (*target.ambiguity_flags, *contract.ambiguity_flags) if flag.startswith("conflicting_") or flag == "reversed_binary_semantics")
@@ -526,8 +772,12 @@ def normalized_for_exact_match(candidate: EventCandidate, match: MatchResult) ->
         raise ValueError(f"Cannot normalize non-exact candidate: {match.status.value}")
     raw = dict(candidate.raw_provenance["market"])
     raw.setdefault("id", candidate.market_id)
-    raw.setdefault("question", candidate.contract_question)
-    raw.setdefault("description", candidate.resolution_text)
+    if candidate.enrichment_provenance:
+        raw["question"] = candidate.contract_question
+        raw["description"] = candidate.resolution_text
+    else:
+        raw.setdefault("question", candidate.contract_question)
+        raw.setdefault("description", candidate.resolution_text)
     if candidate.venue is Venue.POLYMARKET:
         raw.setdefault("marketSides", [
             {"long": True, "description": candidate.outcomes["YES"]},
@@ -547,8 +797,9 @@ def normalized_for_exact_match(candidate: EventCandidate, match: MatchResult) ->
 
 
 __all__ = [
-    "DiscoveryDecision", "DiscoveryStatus", "EventCandidate", "EventIdentity",
+    "DiscoveryDecision", "DiscoveryStatus", "EnrichmentResult", "EnrichmentStatus",
+    "EventCandidate", "EventIdentity",
     "MatchResult", "MatchStatus", "classify_event_family", "discover_event_candidate",
-    "extract_event_identity", "is_sports_market", "match_event_contract",
+    "enrich_event_candidate", "extract_event_identity", "is_sports_market", "match_event_contract",
     "normalized_for_exact_match",
 ]
