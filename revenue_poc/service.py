@@ -2,9 +2,46 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
+
+
+# A category cap is a useful concentration backstop, but a short-lived,
+# independently themed contract should not be rejected merely because longer
+# dated positions occupy every category slot.  These are deliberately fixed
+# policy constants rather than tuning knobs: this exception is narrow and
+# auditable, and the portfolio-level limits remain the binding risk controls.
+_CATEGORY_VELOCITY_MAX_HOLDING_DAYS = 14.0
+_CATEGORY_VELOCITY_MIN_EXECUTABLE_EDGE = 0.03
+_THRESHOLD_ASSET_RE = re.compile(r"\b(bitcoin|btc|ethereum|ether|eth)\b", re.IGNORECASE)
+_THRESHOLD_MONTH_RE = re.compile(
+    r"\b(january|february|march|april|may|june|july|august|september|"
+    r"october|november|december)\b(?:\s+(20\d{2}))?",
+    re.IGNORECASE,
+)
+_THRESHOLD_MARKET_RE = re.compile(
+    r"\b(reach|hit|above|below|dip|price|trade|close|at least|at most)\b",
+    re.IGNORECASE,
+)
+
+
+def _threshold_market_theme(question: str) -> tuple[str, str] | None:
+    """Return an intentionally conservative correlation key for dated crypto thresholds.
+
+    A key is emitted only when both an underlying asset and an explicit month are
+    present in threshold-like wording.  Unknown relationships fail closed at the
+    category cap instead of being guessed.
+    """
+    if not _THRESHOLD_MARKET_RE.search(question):
+        return None
+    asset = _THRESHOLD_ASSET_RE.search(question)
+    month = _THRESHOLD_MONTH_RE.search(question)
+    if asset is None or month is None:
+        return None
+    aliases = {"bitcoin": "btc", "btc": "btc", "ethereum": "eth", "ether": "eth", "eth": "eth"}
+    return aliases[asset.group(1).lower()], f"{month.group(1).lower()}-{month.group(2) or 'unknown'}"
 
 from .config import RevenueConfig
 from .economics import adaptive_threshold, evaluate_execution
@@ -153,18 +190,39 @@ class RevenuePOCService:
         remaining = self.remaining_api_budget(date_utc)
         return remaining is not None and max(0.0, estimated_call_cost_usd) <= remaining
 
-    def ingest_shadow_forecasts(self) -> dict[str, int]:
+    def ingest_shadow_forecasts(
+        self,
+        *,
+        execution_quote_provider: Any = None,
+        source_run_id: str | None = None,
+    ) -> dict[str, int]:
         """Convert immutable shadow observations into executable paper decisions."""
         self.initialize()
-        rows = self.conn.execute(
-            """
-            SELECT id,run_id,timestamp_utc,venue,market_id,question,category,
-                   market_probability,model_probability,absolute_edge,
-                   production_decision,rejection_reason,time_to_resolution_days,
-                   market_end_date,llm_used,metadata
-            FROM shadow_forecasts ORDER BY timestamp_utc,id
-            """
-        ).fetchall()
+
+        if source_run_id is None:
+            rows = self.conn.execute(
+                """
+                SELECT id,run_id,timestamp_utc,venue,market_id,question,category,
+                       market_probability,model_probability,absolute_edge,
+                       production_decision,rejection_reason,time_to_resolution_days,
+                       market_end_date,llm_used,metadata
+                FROM shadow_forecasts
+                ORDER BY timestamp_utc,id
+                """
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT id,run_id,timestamp_utc,venue,market_id,question,category,
+                       market_probability,model_probability,absolute_edge,
+                       production_decision,rejection_reason,time_to_resolution_days,
+                       market_end_date,llm_used,metadata
+                FROM shadow_forecasts
+                WHERE run_id=?
+                ORDER BY timestamp_utc,id
+                """,
+                (source_run_id,),
+            ).fetchall()
         counts = {"source": len(rows), "evaluated": 0, "cache_hits": 0, "admitted": 0, "rejected": 0}
         candidates: list[tuple[float, int, Any, str]] = []
         for row in rows:
@@ -211,6 +269,108 @@ class RevenuePOCService:
                 slippage_bps=self.config.slippage_bps,
                 expected_holding_days=float(row[12]) if row[12] is not None else None,
             )
+            execution_validation_failure: str | None = None
+
+            if execution_quote_provider is not None:
+                try:
+                    quote = execution_quote_provider(
+                        market_id=str(row[4]),
+                        category=str(row[6]),
+                        model_probability=float(row[8]),
+                        expected_holding_days=(
+                            float(row[12]) if row[12] is not None else None
+                        ),
+                        position_size_usd=self.config.position_size_usd,
+                    )
+
+                    if not isinstance(quote, dict):
+                        raise ValueError(
+                            "execution quote provider returned no usable quote"
+                        )
+
+                    bid = float(quote["best_bid"])
+                    ask = float(quote["best_ask"])
+                    depth = float(quote["depth_usd"])
+
+                    fresh_market_probability = (bid + ask) / 2.0
+
+                    economics = evaluate_execution(
+                        model_probability=float(row[8]),
+                        market_probability=fresh_market_probability,
+                        stake_usd=self.config.position_size_usd,
+                        best_bid=bid,
+                        best_ask=ask,
+                        depth_usd=depth,
+                        fee_rate=_float_or_none(quote.get("fee_rate")),
+                        fee_bps=self.config.fee_bps,
+                        slippage_bps=self.config.slippage_bps,
+                        expected_holding_days=(
+                            float(row[12]) if row[12] is not None else None
+                        ),
+                    )
+
+                    validated_side = str(
+                        quote.get("validated_side") or ""
+                    ).upper()
+
+                    if validated_side and validated_side != economics.side:
+                        raise ValueError(
+                            "validated execution side does not match fresh economics"
+                        )
+
+                    spread = economics.spread
+                    depth_source = str(
+                        quote.get("depth_source")
+                        or "venue_clob_top_level"
+                    )
+
+                    sources = {
+                        "bid": bid,
+                        "ask": ask,
+                        "quote_timestamp_utc": str(
+                            quote.get("quote_timestamp_utc") or ""
+                        ),
+                        "quote_timestamp_source": "venue",
+                        "bid_source": "venue_top_of_book",
+                        "ask_source": "venue_top_of_book",
+                        "fee_source": str(
+                            quote.get("fee_source") or "unknown"
+                        ),
+                        "fee_rate": _float_or_none(
+                            quote.get("fee_rate")
+                        ),
+                        "fallback_fee_bps": self.config.fee_bps,
+                    }
+
+                    metadata["execution_validation"] = {
+                        "status": "FRESH_CLOB_VALIDATED",
+                        "quote_source": quote.get("quote_source"),
+                        "quote_timestamp_utc": quote.get(
+                            "quote_timestamp_utc"
+                        ),
+                        "quote_age_seconds": quote.get(
+                            "quote_age_seconds"
+                        ),
+                        "book_state_age_seconds": quote.get(
+                            "book_state_age_seconds"
+                        ),
+                        "depth_source": depth_source,
+                        "depth_usd": depth,
+                        "side": economics.side,
+                        "entry_price": economics.entry_price,
+                        "executable_edge": economics.executable_edge,
+                        "expected_value_usd": economics.expected_value_usd,
+                    }
+
+                except Exception as exc:
+                    execution_validation_failure = (
+                        f"{type(exc).__name__}:{exc}"
+                    )
+                    metadata["execution_validation"] = {
+                        "status": "FAILED",
+                        "error": execution_validation_failure,
+                    }
+
             state = {
                 "venue": row[3], "market_id": row[4],
                 "model_probability": round(float(row[8]), 8),
@@ -288,6 +448,21 @@ class RevenuePOCService:
                 counts["cache_hits"] += 1
                 with self.conn:
                     self._api_increment(date_utc, cache_hits=1, calls_avoided=int(row[14]))
+                continue
+
+            if execution_validation_failure is not None:
+                self._decision(
+                    evaluation_id,
+                    row[2],
+                    "REJECT",
+                    f"execution_validation_failed:{execution_validation_failure}",
+                    economics.expected_value_usd,
+                    details={
+                        "execution_validation_status": "FAILED",
+                        "execution_validation_error": execution_validation_failure,
+                    },
+                )
+                counts["rejected"] += 1
                 continue
 
             end_date = _datetime(row[13])
@@ -567,7 +742,7 @@ class RevenuePOCService:
 
     def _admit(self, evaluation_id: int) -> tuple[bool, str]:
         row = self.conn.execute(
-            "SELECT timestamp_utc,venue,market_id,question,category,side,entry_price,model_probability,fee_usd,slippage_usd,spread_cost_usd,expected_value_usd,expected_holding_days FROM revenue_poc_evaluations WHERE id=?",
+            "SELECT timestamp_utc,venue,market_id,question,category,side,entry_price,model_probability,fee_usd,slippage_usd,spread_cost_usd,expected_value_usd,executable_edge,expected_holding_days FROM revenue_poc_evaluations WHERE id=?",
             (evaluation_id,),
         ).fetchone()
         open_count, deployed = self.conn.execute(
@@ -577,13 +752,29 @@ class RevenuePOCService:
             return False, "max_open_positions"
         if float(deployed) + self.config.position_size_usd > self.config.max_capital_deployed_usd:
             return False, "max_capital_deployed"
+        # Check the immutable contract identity before any category exception.
+        # The database uniqueness constraint remains the concurrent-writer guard.
+        if self.conn.execute("SELECT 1 FROM revenue_poc_positions WHERE venue=? AND market_id=?", (row[1], row[2])).fetchone():
+            return False, "one_position_per_contract"
         category_count = self.conn.execute(
             "SELECT COUNT(*) FROM revenue_poc_positions WHERE status='OPEN' AND category=?", (row[4],)
         ).fetchone()[0]
         if int(category_count) >= self.config.max_category_positions:
-            return False, "max_category_exposure"
-        if self.conn.execute("SELECT 1 FROM revenue_poc_positions WHERE venue=? AND market_id=?", (row[1], row[2])).fetchone():
-            return False, "one_position_per_contract"
+            category_positions = self.conn.execute(
+                "SELECT question FROM revenue_poc_positions WHERE status='OPEN' AND category=?", (row[4],)
+            ).fetchall()
+            theme = _threshold_market_theme(str(row[3]))
+            if row[13] is None or float(row[13]) > _CATEGORY_VELOCITY_MAX_HOLDING_DAYS:
+                return False, "max_category_exposure_short_horizon_required"
+            if float(row[12]) < _CATEGORY_VELOCITY_MIN_EXECUTABLE_EDGE:
+                return False, "max_category_exposure_velocity_edge_required"
+            if theme is None:
+                return False, "max_category_exposure_unclassified_theme"
+            if any(_threshold_market_theme(str(position[0])) == theme for position in category_positions):
+                return False, "max_category_exposure_correlated_theme"
+            category_exception = True
+        else:
+            category_exception = False
         try:
             with self.conn:
                 self.conn.execute(
@@ -595,13 +786,13 @@ class RevenuePOCService:
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (evaluation_id,row[0],row[1],row[2],row[3],row[4],row[5],row[6],row[7],
-                     self.config.position_size_usd,row[8],row[9],row[10],row[11],row[12]),
+                     self.config.position_size_usd,row[8],row[9],row[10],row[11],row[13]),
                 )
                 position_id = int(self.conn.execute("SELECT last_insert_rowid()").fetchone()[0])
                 self._record_equity_point(str(row[0]), "OPEN", position_id)
         except sqlite3.IntegrityError:
             return False, "one_position_per_contract"
-        return True, "admitted_executable_edge"
+        return True, "admitted_category_velocity_exception" if category_exception else "admitted_executable_edge"
 
     def _portfolio_state(self) -> dict[str, float]:
         account = self.conn.execute(

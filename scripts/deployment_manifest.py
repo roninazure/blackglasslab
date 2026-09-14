@@ -20,9 +20,22 @@ def sha256_file(path: Path) -> str:
 
 
 def git_sha(root: Path) -> str:
-    return subprocess.check_output(
-        ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
-    ).strip()
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except subprocess.CalledProcessError:
+        # Immutable releases are produced with git archive and intentionally
+        # contain no .git directory. Their directory name is the authoritative
+        # full commit SHA.
+        candidate = root.resolve().name.lower()
+        if len(candidate) == 40 and all(
+            char in "0123456789abcdef" for char in candidate
+        ):
+            return candidate
+        raise
 
 
 def build_manifest(root: Path, runtime_env: Path, plist: Path, lock: Path) -> dict[str, object]:

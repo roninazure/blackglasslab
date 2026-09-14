@@ -63,6 +63,7 @@ class LoopEngineConfig:
     min_opportunity_score_for_llm: float = 55.0
     skeptic_near_threshold_ratio: float = 0.75
     skeptic_high_confidence: float = 0.85
+    skeptic_finalist_edge_threshold: float = 0.08
     estimated_cost_per_call_usd: float = 0.0
     threshold_buckets: tuple[float, ...] = DEFAULT_THRESHOLDS
     time_to_resolution_weight: float = 1.0
@@ -117,6 +118,10 @@ class LoopEngineConfig:
             skeptic_high_confidence=_env_float(
                 "BGL_SKEPTIC_HIGH_CONFIDENCE", 0.85
             ),
+            skeptic_finalist_edge_threshold=max(
+                0.0,
+                _env_float("BGL_SKEPTIC_FINALIST_EDGE_THRESHOLD", 0.08),
+            ),
             estimated_cost_per_call_usd=max(
                 0.0, _env_float("BGL_ESTIMATED_COST_PER_CALL_USD", 0.0)
             ),
@@ -152,6 +157,7 @@ class LoopEngineConfig:
             "min_opportunity_score_for_llm": self.min_opportunity_score_for_llm,
             "skeptic_near_threshold_ratio": self.skeptic_near_threshold_ratio,
             "skeptic_high_confidence": self.skeptic_high_confidence,
+            "skeptic_finalist_edge_threshold": self.skeptic_finalist_edge_threshold,
             "estimated_cost_per_call_usd": self.estimated_cost_per_call_usd,
             "threshold_buckets": list(self.threshold_buckets),
             "time_to_resolution_weight": self.time_to_resolution_weight,

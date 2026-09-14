@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import unittest
+from datetime import datetime, timezone
 
 from revenue_poc.config import RevenueConfig
 from revenue_poc.reporting import alpha_attribution_report, alpha_leaderboard_report
@@ -48,7 +49,11 @@ class AlphaAttributionTests(unittest.TestCase):
 
     def test_entry_and_completion_are_immutable_and_reconcile(self) -> None:
         self._add_forecast()
-        service = RevenuePOCService(self.conn, RevenueConfig())
+        service = RevenuePOCService(
+            self.conn,
+            RevenueConfig(),
+            now=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
         self.assertEqual(service.ingest_shadow_forecasts()["admitted"], 1)
         entry = self.conn.execute(
             "SELECT strategy_id,horizon_bucket,entry_benchmark_source FROM revenue_poc_attribution_entries"
@@ -70,7 +75,11 @@ class AlphaAttributionTests(unittest.TestCase):
 
     def test_missing_mark_is_explicit_proxy(self) -> None:
         self._add_forecast()
-        service = RevenuePOCService(self.conn, RevenueConfig())
+        service = RevenuePOCService(
+            self.conn,
+            RevenueConfig(),
+            now=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
         service.ingest_shadow_forecasts()
         self.assertTrue(service.resolve_position(1, "NO", "2026-08-03T00:00:00Z"))
         report = alpha_attribution_report(self.conn)
@@ -79,7 +88,11 @@ class AlphaAttributionTests(unittest.TestCase):
 
     def test_leaderboard_labels_unresolved_and_does_not_rank(self) -> None:
         self._add_forecast()
-        service = RevenuePOCService(self.conn, RevenueConfig())
+        service = RevenuePOCService(
+            self.conn,
+            RevenueConfig(),
+            now=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
         service.ingest_shadow_forecasts()
         report = alpha_leaderboard_report(self.conn)
         self.assertEqual(report["summary"]["resolved_positions"], 0)
@@ -102,7 +115,11 @@ class AlphaAttributionTests(unittest.TestCase):
                  0.10, "rejected", "test", 2.0, "2026-08-20T00:00:00Z", 0, metadata),
             )
         self.conn.commit()
-        service = RevenuePOCService(self.conn, RevenueConfig(max_category_positions=6))
+        service = RevenuePOCService(
+            self.conn,
+            RevenueConfig(max_category_positions=6),
+            now=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
         self.assertEqual(service.ingest_shadow_forecasts()["admitted"], 6)
         for position_id, outcome in ((1, "YES"), (2, "YES"), (3, "NO"), (4, "NO"), (5, "YES")):
             self.assertTrue(service.resolve_position(position_id, outcome, "2026-08-10T00:00:00Z"))

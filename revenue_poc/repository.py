@@ -17,6 +17,8 @@ UPGRADE_DISCOVERY_METADATA = ROOT / "migrations" / "008_discovery_source_metadat
 DOWNGRADE_DISCOVERY_METADATA = ROOT / "migrations" / "008_discovery_source_metadata_down.sql"
 UPGRADE_ALPHA_ATTRIBUTION = ROOT / "migrations" / "009_alpha_attribution_v1.sql"
 DOWNGRADE_ALPHA_ATTRIBUTION = ROOT / "migrations" / "009_alpha_attribution_v1_down.sql"
+UPGRADE_MARKET_RESOLUTIONS = ROOT / "migrations" / "010_market_resolutions_v1.sql"
+DOWNGRADE_MARKET_RESOLUTIONS = ROOT / "migrations" / "010_market_resolutions_v1_down.sql"
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
@@ -37,10 +39,12 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     if snapshot_columns and "source_event_category" not in snapshot_columns:
         conn.executescript(UPGRADE_DISCOVERY_METADATA.read_text(encoding="utf-8"))
     conn.executescript(UPGRADE_ALPHA_ATTRIBUTION.read_text(encoding="utf-8"))
+    conn.executescript(UPGRADE_MARKET_RESOLUTIONS.read_text(encoding="utf-8"))
     conn.commit()
 
 
 def downgrade_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(DOWNGRADE_MARKET_RESOLUTIONS.read_text(encoding="utf-8"))
     snapshot_columns = {
         str(row[1])
         for row in conn.execute("PRAGMA table_info(revenue_poc_discovery_snapshots)")

@@ -145,6 +145,24 @@ class PolymarketAdapter:
             )
         return data
 
+    def get_event(self, slug: str) -> Dict[str, Any]:
+        """Fetch one exact public Gamma event, including its child markets."""
+        slug = (slug or "").strip()
+        if not slug:
+            raise ValueError("get_event: slug is empty")
+        data = self._fetch_json(
+            f"{self.EVENTS_URL}/slug/{urllib.parse.quote(slug, safe='')}",
+            context=f"event slug={slug}",
+        )
+        if self._is_not_found(data):
+            raise LookupError(f"event slug not found in Polymarket: {slug}")
+        returned_slug = str(data.get("slug") or "").strip()
+        if returned_slug != slug:
+            raise LookupError(
+                f"event slug mismatch: requested={slug} returned={returned_slug}"
+            )
+        return data
+
     def get_order_book(self, token_id: Any) -> Dict[str, Any]:
         """Read public CLOB depth. This method cannot place or authenticate orders."""
         token = str(token_id or "").strip()

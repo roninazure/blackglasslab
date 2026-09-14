@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sqlite3
 import time
@@ -42,6 +43,11 @@ from market_universe.policy import (
 from market_universe.discovery import discover_markets
 from revenue_poc.market_health import is_quarantined, record_market_fetch
 from revenue_poc.repository import persist_discovery_snapshots
+from microstructure_snapshots import (
+    ensure_microstructure_schema,
+    persist_snapshots,
+    snapshot_from_market,
+)
 from models.baseline import score_market, market_yes_price
 from loop_engine.config import DEFAULT_LLM_USAGE_PATH
 from swarm_edge_runtime import RUNTIME_PATHS
@@ -54,8 +60,6 @@ UNIVERSE_REPORT_PATH = RUNTIME_PATHS.report_dir / "phase3_2_universe_expansion.j
 
 PIPELINE_SUMMARY_FIELDS = (
     "watchlist_total",
-    "blocked_existing_position",
-    "skipped_category_cap",
     "fetch_attempted",
     "fetch_failed",
     "inactive_or_closed",
@@ -95,6 +99,9 @@ PIPELINE_SUMMARY_FIELDS = (
     "modeled_ev_skipped_budget",
     "unchanged_markets",
 )
+
+SHORT_HORIZON_PRIORITY_DAYS = 30.0
+EVALUATION_EXPLORATION_FRACTION = 0.20
 
 
 def _candidates_path(mode: str) -> Path:
@@ -173,36 +180,7 @@ def _new_pipeline_report(watchlist: List[str], venue: str) -> Dict[str, Any]:
         "source": venue,
         "summary": summary,
         "markets": [
-            {
-                "market_id": slug,
-                "final_stage": "watchlist_loaded",
-                "decision": "SKIP",
-                "reason": "unclassified",
-                "details": {},
-                "brain": {
-                    "market_id": slug,
-                    "question": slug,
-                    "category": "novelty/other",
-                    "opportunity_score": None,
-                    "opportunity_grade": None,
-                    "p_yes_market": None,
-                    "p_yes_model": None,
-                    "edge": None,
-                    "llm_used": False,
-                    "skeptic_used": False,
-                    "temporal_status": "not_evaluated",
-                    "budget_status": "not_applicable",
-                    "scoring_components": {},
-                    "short_rationale_summary": None,
-                    "policy_allowed": None,
-                    "policy_reason": "not_evaluated",
-                    "policy_classification": "UNKNOWN_REQUIRES_REVIEW",
-                    "policy_tier": "NOT_EVALUATED",
-                    "institutional_category": "novelty/other",
-                    "institutional_quality_score": None,
-                    "banned_class": None,
-                },
-            }
+            _pipeline_market_record(slug)
             for slug in watchlist
         ],
     }
@@ -393,7 +371,6 @@ def _print_pipeline_funnel(report: Dict[str, Any]) -> None:
     )
     print(
         "SKIPS "
-        f"existing={s['blocked_existing_position']} category={s['skipped_category_cap']} "
         f"fetch_failed={s['fetch_failed']} inactive={s['inactive_or_closed']} "
         f"quality={s.get('weak_market_quality', 0)} opportunity={s.get('low_opportunity_score', 0)} "
         f"policy={s.get('banned_market_class', 0) + s.get('malformed_market', 0) + s.get('weak_resolution_quality', 0) + s.get('low_institutional_quality', 0)} "
@@ -649,6 +626,290 @@ def _infer_pick_slugs_batch(conn: sqlite3.Connection, watchlist: list[str], batc
     return (slugs, next_cursor)
 
 
+def _merge_inference_slugs(
+    fixed_slugs: list[str],
+    dynamic_slugs: list[str],
+    batch: int,
+) -> list[str]:
+    """Build a deterministic bounded inference pool.
+
+    Ranked dynamic discovery receives priority while retaining one fixed
+    watchlist slot for coverage when both sources are available.
+    """
+    limit = max(1, int(batch))
+
+    fixed = list(dict.fromkeys(
+        str(slug).strip() for slug in fixed_slugs if str(slug).strip()
+    ))
+    dynamic = list(dict.fromkeys(
+        str(slug).strip() for slug in dynamic_slugs if str(slug).strip()
+    ))
+
+    if not dynamic:
+        return fixed[:limit]
+    if not fixed:
+        return dynamic[:limit]
+
+    result: list[str] = []
+
+    # Preserve one fixed-watchlist coverage slot while allowing discovery
+    # to consume the rest of the existing bounded inference capacity.
+    dynamic_limit = max(0, limit - 1)
+
+    for slug in dynamic[:dynamic_limit]:
+        if slug not in result:
+            result.append(slug)
+
+    for slug in fixed:
+        if len(result) >= limit:
+            break
+        if slug not in result:
+            result.append(slug)
+            break
+
+    # Fill any unused slots deterministically, dynamic first.
+    for pool in (dynamic, fixed):
+        for slug in pool:
+            if len(result) >= limit:
+                break
+            if slug not in result:
+                result.append(slug)
+
+    return result[:limit]
+
+
+def _llm_allocation_priority(
+    *,
+    opportunity_score: float,
+    baseline_probability: float,
+    market_probability: float,
+    liquidity: float,
+    spread: float,
+    time_to_resolution_days: float | None,
+) -> dict[str, float]:
+    """Rank scarce LLM forecast slots using pre-LLM revenue signals only."""
+
+    quality = min(1.0, max(0.0, float(opportunity_score) / 100.0))
+
+    baseline_edge_abs = abs(
+        float(baseline_probability) - float(market_probability)
+    )
+
+    # Baseline disagreement is useful for screening but is not ground truth.
+    # Keep a floor so near-zero baseline edge does not make priority zero.
+    edge_signal = 0.25 + 0.75 * min(
+        1.0,
+        baseline_edge_abs / 0.04,
+    )
+
+    liquidity_signal = min(
+        1.0,
+        max(0.0, float(liquidity)) / 250000.0,
+    )
+
+    spread_value = max(0.0, float(spread))
+    spread_signal = 1.0 / (1.0 + 50.0 * spread_value)
+
+    days = (
+        max(0.0, float(time_to_resolution_days))
+        if time_to_resolution_days is not None
+        else 90.0
+    )
+    velocity_signal = 1.0 / (1.0 + days / 30.0)
+
+    priority = (
+        0.40 * quality
+        + 0.30 * edge_signal
+        + 0.15 * liquidity_signal
+        + 0.10 * spread_signal
+        + 0.05 * velocity_signal
+    )
+
+    return {
+        "priority": min(1.0, max(0.0, priority)),
+        "opportunity_quality": quality,
+        "baseline_edge_abs": baseline_edge_abs,
+        "edge_signal": edge_signal,
+        "liquidity_signal": liquidity_signal,
+        "spread_signal": spread_signal,
+        "velocity_signal": velocity_signal,
+    }
+
+
+def _select_evaluation_candidates(
+    ranked: list[Dict[str, Any]],
+    *,
+    limit: int,
+    exploration_fraction: float = EVALUATION_EXPLORATION_FRACTION,
+) -> list[Dict[str, Any]]:
+    """Select a bounded forecast batch with short-horizon priority.
+
+    This is a priority policy, not a horizon gate.  Known <=30-day markets
+    occupy the majority of slots; a bounded exploration slice is reserved for
+    known longer-horizon markets.  Missing or malformed temporal values stay
+    eligible as a final safe fallback, but never receive short-horizon
+    priority.  All ordering uses already-computed pre-inference signals only.
+    """
+    capacity = max(0, int(limit))
+    if capacity == 0 or not ranked:
+        return []
+
+    short: list[Dict[str, Any]] = []
+    long: list[Dict[str, Any]] = []
+    unknown: list[Dict[str, Any]] = []
+    for item in ranked:
+        hours = (item.get("temporal_context") or {}).get("time_remaining_hours")
+        cohort = _evaluation_horizon_cohort(hours)
+        if cohort == "short":
+            short.append(item)
+        elif cohort == "long":
+            long.append(item)
+        else:
+            unknown.append(item)
+
+    for pool in (short, long, unknown):
+        pool.sort(key=_evaluation_priority_key)
+        unique_pool: list[Dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for item in pool:
+            slug = str(item["slug"])
+            if slug not in seen_ids:
+                unique_pool.append(item)
+                seen_ids.add(slug)
+        pool[:] = unique_pool
+
+    bounded_fraction = min(1.0, max(0.0, float(exploration_fraction)))
+    exploration_slots = min(
+        max(0, capacity - 1),
+        max(1, int(capacity * bounded_fraction)),
+    )
+    priority_slots = capacity - exploration_slots
+
+    selected = short[:priority_slots]
+    selected_ids = {str(item["slug"]) for item in selected}
+    for item in long[:exploration_slots]:
+        if len(selected) >= capacity:
+            break
+        if str(item["slug"]) not in selected_ids:
+            selected.append(item)
+            selected_ids.add(str(item["slug"]))
+
+    # Fill unused capacity when a cohort is smaller than its allocation.  This
+    # preserves eligibility without turning the priority into an exclusive
+    # filter, and de-duplicates defensively by market slug.
+    for pool in (short, long, unknown):
+        for item in pool:
+            if len(selected) >= capacity:
+                break
+            if str(item["slug"]) not in selected_ids:
+                selected.append(item)
+                selected_ids.add(str(item["slug"]))
+
+    return selected
+
+
+def _evaluation_horizon_cohort(time_remaining_hours: Any) -> str:
+    """Classify a candidate using only its pre-inference horizon."""
+    try:
+        hours = float(time_remaining_hours)
+    except (TypeError, ValueError):
+        hours = math.nan
+    if math.isfinite(hours) and 0.0 <= hours <= SHORT_HORIZON_PRIORITY_DAYS * 24.0:
+        return "short"
+    if math.isfinite(hours) and hours > SHORT_HORIZON_PRIORITY_DAYS * 24.0:
+        return "long"
+    return "unknown"
+
+
+def _evaluation_priority_key(item: Dict[str, Any]) -> tuple[float, float, str]:
+    """The existing production ordering, retained unchanged for production."""
+    return (
+        -float(item["llm_allocation"]["priority"]),
+        -float(item["opportunity"].opportunity_score),
+        str(item["slug"]),
+    )
+
+
+def _build_selection_audit(
+    *,
+    cycle_id: str,
+    ranked: list[Dict[str, Any]],
+    production_ranked: list[Dict[str, Any]],
+    shadow_selected: list[Dict[str, Any]],
+    capacity: int,
+) -> list[Dict[str, Any]]:
+    """Build deterministic, pre-inference-only production/shadow evidence."""
+    production_ids = {id(item) for item in production_ranked[:max(0, int(capacity))]}
+    shadow_ids = {id(item) for item in shadow_selected}
+    production_ranks = {id(item): rank for rank, item in enumerate(production_ranked, 1)}
+    shadow_ranks = {id(item): rank for rank, item in enumerate(shadow_selected, 1)}
+    evidence: list[Dict[str, Any]] = []
+    for item in ranked:
+        temporal = item.get("temporal_context") or {}
+        baseline = item["baseline"]
+        market = item.get("market") or {}
+        hours = temporal.get("time_remaining_hours")
+        evidence.append(
+            {
+                "cycle_id": cycle_id,
+                "market_id": str(item["slug"]),
+                "slug": str(item["slug"]),
+                "horizon": {
+                    "time_remaining_hours": hours,
+                    "cohort": _evaluation_horizon_cohort(hours),
+                },
+                "baseline_priority_inputs": {
+                    "opportunity_score": float(item["opportunity"].opportunity_score),
+                    "baseline_probability": float(baseline.p_yes_model),
+                    "market_probability": float(item["p_yes_market"]),
+                    "liquidity": float(market.get("liquidity") or 0.0),
+                    "spread": float(item["spread"]),
+                    "llm_allocation": dict(item["llm_allocation"]),
+                },
+                "production_selected": id(item) in production_ids,
+                "shadow_selected": id(item) in shadow_ids,
+                "production_rank": production_ranks[id(item)],
+                "shadow_rank": shadow_ranks.get(id(item)),
+                "evaluation_capacity": int(capacity),
+            }
+        )
+    return evidence
+
+
+def _pipeline_market_record(slug: str) -> Dict[str, Any]:
+    """Create the canonical pipeline record for any inference candidate."""
+    return {
+        "market_id": slug,
+        "final_stage": "watchlist_loaded",
+        "decision": "SKIP",
+        "reason": "unclassified",
+        "details": {},
+        "brain": {
+            "market_id": slug,
+            "question": slug,
+            "category": "novelty/other",
+            "opportunity_score": None,
+            "opportunity_grade": None,
+            "p_yes_market": None,
+            "p_yes_model": None,
+            "edge": None,
+            "llm_used": False,
+            "skeptic_used": False,
+            "temporal_status": "not_evaluated",
+            "budget_status": "not_applicable",
+            "scoring_components": {},
+            "short_rationale_summary": None,
+            "policy_allowed": None,
+            "policy_reason": "not_evaluated",
+            "policy_classification": "UNKNOWN_REQUIRES_REVIEW",
+            "policy_tier": "NOT_EVALUATED",
+            "institutional_category": "novelty/other",
+            "institutional_quality_score": None,
+            "banned_class": None,
+        },
+    }
+
+
 def _topic_label(question: str) -> str:
     """Classify market question for ranking, prompts, and concentration tracking."""
     return classify_market(question)
@@ -667,12 +928,6 @@ def _category_exposure_count(conn: sqlite3.Connection, category: str) -> int:
         except Exception:
             pass
     return count
-
-
-def _category_cap_ok(conn: sqlite3.Connection, category: str) -> bool:
-    """Return True if opening another position in this category is within the cap."""
-    max_per = int(os.environ.get("BGL_MAX_PER_CATEGORY", "3") or "3")
-    return _category_exposure_count(conn, category) < max_per
 
 
 def _infer_one(
@@ -703,7 +958,16 @@ def _infer_one(
             backup_dir=backup_dir,
         )
         shadow_backup_path = str(backup_path) if backup_path else None
+    microstructure_schema_error: Optional[str] = None
+    if paper_mode:
+        try:
+            ensure_microstructure_schema(conn)
+        except Exception as exc:
+            # Telemetry setup must never alter the inference path.
+            microstructure_schema_error = f"{type(exc).__name__}: {str(exc)[:240]}"
+    microstructure_rows: list[Dict[str, Any]] = []
     infer_diag_rows: List[Dict[str, Any]] = []
+    selection_audit: list[Dict[str, Any]] = []
     infer_diag_counts: Dict[str, Any] = {
         "evaluated": 0,
         "passed": 0,
@@ -717,7 +981,6 @@ def _infer_one(
             "time_rejected": 0,
             "invalid_price": 0,
             "extreme_tail": 0,
-            "category_cap": 0,
             "max_disagree": 0,
             "min_edge_abs": 0,
             "min_edge_vs_market": 0,
@@ -791,7 +1054,7 @@ def _infer_one(
                 ),
                 "llm_used": llm_used,
                 "model_name": (
-                    os.environ.get("BGL_LLM_MODEL", "")
+                    str(item.get("llm_model") or os.environ.get("BGL_LLM_MODEL", ""))
                     if llm_used
                     else "baseline"
                 ),
@@ -811,6 +1074,17 @@ def _infer_one(
                     "temporal_context": item["temporal_context"],
                     "scoring_components": opportunity.scoring_components,
                     "anthropic_usage": item.get("anthropic_usage_events") or None,
+                    "llm_rationale": item.get("llm_rationale"),
+                    "llm_confidence": item.get("llm_confidence"),
+                    "llm_model": item.get("llm_model"),
+                    "llm_routing_tier": item.get("llm_routing_tier"),
+                    "llm_allocation": item.get("llm_allocation"),
+                    "temporal_validation_reason": item.get(
+                        "temporal_validation_reason"
+                    ),
+                    "temporal_validation_details": item.get(
+                        "temporal_validation_details"
+                    ),
                 },
             },
             thresholds=config.threshold_buckets,
@@ -846,6 +1120,15 @@ def _infer_one(
                 },
                 "summary": infer_diag_counts,
                 "rows": infer_diag_rows,
+                "selection_shadow": {
+                    "enabled": True,
+                    "cycle_id": report["run_id"],
+                    "policy": "short_horizon_priority_shadow_only",
+                    "short_horizon_priority_days": SHORT_HORIZON_PRIORITY_DAYS,
+                    "exploration_fraction": EVALUATION_EXPLORATION_FRACTION,
+                    "evaluation_capacity": config.evaluations_per_cycle,
+                },
+                "selection_audit": selection_audit,
             }
         )
         summary["diagnostics_written"] = len(infer_diag_rows)
@@ -900,6 +1183,12 @@ def _infer_one(
                 timestamp_utc=report["ts_utc"],
                 venue=report["source"],
             )
+        if paper_mode:
+            telemetry = persist_snapshots(conn, microstructure_rows)
+            if microstructure_schema_error is not None:
+                telemetry["error"] = microstructure_schema_error
+                telemetry["failed"] = telemetry["prepared"]
+            report["microstructure_persistence"] = telemetry
         report["optimization"] = {
             "budget": budget.as_dict(),
             "discovery": {
@@ -979,30 +1268,33 @@ def _infer_one(
                 "error": str(discovery_error)[:300],
             }
 
+    dynamic_slugs = [
+        str(row.get("market_id") or "").strip()
+        for row in discovery_result.get("selected", [])
+        if isinstance(row, dict)
+        and str(row.get("market_id") or "").strip()
+    ]
+
+    slugs = _merge_inference_slugs(
+        slugs,
+        dynamic_slugs,
+        batch,
+    )
+
+    # Dynamically discovered markets did not exist when the fixed-watchlist
+    # pipeline report was constructed. Add canonical records only for those
+    # that actually entered the bounded inference batch.
+    for slug in slugs:
+        if slug not in records:
+            record = _pipeline_market_record(slug)
+            record["details"]["candidate_source"] = "dynamic_discovery"
+            report["markets"].append(record)
+            records[slug] = record
+
     selected = set(slugs)
     for slug in watchlist:
         record = records[slug]
-        if slug in existing:
-            summary["blocked_existing_position"] += 1
-            _update_brain(
-                record,
-                opportunity_score=0.0,
-                opportunity_grade="F",
-                budget_status="not_eligible",
-                scoring_components={
-                    "raw": {
-                        "duplicate_position": True,
-                        "existing_exposure": True,
-                    }
-                },
-            )
-            _finalize_pipeline_market(
-                record,
-                final_stage="existing_position_filter",
-                decision="SKIP",
-                reason="existing_open_or_pending_position",
-            )
-        elif slug not in selected:
+        if slug not in selected:
             _finalize_pipeline_market(
                 record,
                 final_stage="batch_selection",
@@ -1014,8 +1306,6 @@ def _infer_one(
     ranked: List[Dict[str, Any]] = []
     for slug in slugs:
         record = records[slug]
-        if slug in existing:
-            continue
         if cooldown_n > 0 and slug in recent:
             _update_brain(
                 record,
@@ -1087,9 +1377,28 @@ def _infer_one(
         if "revenue_poc_market_health" in health_tables:
             record_market_fetch(conn, venue=venue, market_id=slug, ok=True)
 
+        if paper_mode:
+            microstructure_rows.append(
+                snapshot_from_market(
+                    m,
+                    timestamp_utc=report["ts_utc"],
+                    cycle_id=report["run_id"],
+                    venue=venue,
+                    slug=slug,
+                )
+            )
+
         question = str(m.get("question") or slug)
         category = _topic_label(question)
         _update_brain(record, question=question, category=category)
+        category_exposure = _category_exposure_count(conn, category)
+        _update_brain(
+            record,
+            existing_exposure=slug in existing,
+            category_exposure=category_exposure,
+            category_cap_reached=category_exposure
+            >= int(os.environ.get("BGL_MAX_PER_CATEGORY", "3") or "3"),
+        )
 
         policy = evaluate_market_policy(
             m,
@@ -1229,7 +1538,6 @@ def _infer_one(
             continue
 
         baseline = score_market(m)
-        category_exposure = _category_exposure_count(conn, category)
         opportunity = score_opportunity(
             m,
             category=category,
@@ -1321,30 +1629,6 @@ def _infer_one(
             )
             continue
 
-        if not _category_cap_ok(conn, category):
-            summary["skipped_category_cap"] += 1
-            infer_diag_counts["evaluated"] += 1
-            count_rejection("category_cap")
-            infer_diag_rows.append(
-                {
-                    "slug": slug,
-                    "question": question,
-                    "decision": "REJECT",
-                    "reason": "category_cap",
-                    "category": category,
-                    "opportunity_score": opportunity.opportunity_score,
-                }
-            )
-            print(f"  [infer] category cap reached for '{category}' - skipping {slug}", flush=True)
-            _finalize_pipeline_market(
-                record,
-                final_stage="category_cap",
-                decision="SKIP",
-                reason="category_cap_reached",
-                details={"category": category},
-            )
-            continue
-
         ranked.append(
             {
                 "slug": slug,
@@ -1361,9 +1645,36 @@ def _infer_one(
             }
         )
 
-    ranked.sort(
-        key=lambda item: item["opportunity"].opportunity_score,
-        reverse=True,
+    for item in ranked:
+        market = item["market"]
+        temporal_context = item["temporal_context"]
+        allocation = _llm_allocation_priority(
+            opportunity_score=item["opportunity"].opportunity_score,
+            baseline_probability=item["baseline"].p_yes_model,
+            market_probability=item["p_yes_market"],
+            liquidity=float(market.get("liquidity") or 0.0),
+            spread=item["spread"],
+            time_to_resolution_days=(
+                float(temporal_context["time_remaining_hours"]) / 24.0
+                if temporal_context.get("time_remaining_hours") is not None
+                else None
+            ),
+        )
+        item["llm_allocation"] = allocation
+        item["record"]["details"]["llm_allocation"] = allocation
+
+    ranked.sort(key=_evaluation_priority_key)
+    production_ranked = list(ranked)
+    shadow_selected = _select_evaluation_candidates(
+        ranked,
+        limit=config.evaluations_per_cycle,
+    )
+    selection_audit = _build_selection_audit(
+        cycle_id=report["run_id"],
+        ranked=ranked,
+        production_ranked=production_ranked,
+        shadow_selected=shadow_selected,
+        capacity=config.evaluations_per_cycle,
     )
     for item in ranked[config.evaluations_per_cycle :]:
         _finalize_pipeline_market(
@@ -1373,7 +1684,7 @@ def _infer_one(
             reason="evaluation_limit_reached",
             details={"evaluations_per_cycle": config.evaluations_per_cycle},
         )
-    ranked = ranked[: config.evaluations_per_cycle]
+    ranked = production_ranked[: config.evaluations_per_cycle]
     use_llm = (
         _env_bool("BGL_INFER_USE_LLM", False)
         and openai_enabled()
@@ -1435,12 +1746,15 @@ def _infer_one(
                 materially_changed=bool(m.get("updatedAt") or m.get("updated_at")),
                 config=config,
             )
-            priority = min(1.0, max(0.0, opportunity.opportunity_score / 100.0))
+            allocation = item["llm_allocation"]
+            priority = float(allocation["priority"])
             if not budget.reserve_primary(
                 model=route.model,
                 estimated_cost_usd=route.estimated_cost_usd,
                 priority=priority,
-                modeled_ev_usd=float(baseline.p_yes_model - p_yes_market),
+                # No executable dollar EV exists at this pre-LLM stage.
+                # Do not mislabel probability disagreement as USD EV.
+                modeled_ev_usd=0.0,
             ):
                 summary["budget_skipped"] += 1
                 summary["budget_skipped_by_cost"] += int(
@@ -1449,9 +1763,8 @@ def _infer_one(
                 summary["budget_skipped_by_emergency"] += int(
                     budget.emergency_ceiling_reached
                 )
-                summary["modeled_ev_skipped_budget"] += max(
-                    0.0, float(baseline.p_yes_model - p_yes_market)
-                )
+                # No executable dollar EV exists at this stage.
+                summary["modeled_ev_skipped_budget"] += 0.0
                 infer_diag_counts["evaluated"] += 1
                 count_rejection("budget_skipped")
                 budget_status = budget.primary_status()
@@ -1564,11 +1877,19 @@ def _infer_one(
                     use_llm = False
 
         if llm_used:
+            item["llm_rationale"] = llm_rationale
+            item["llm_confidence"] = float(llm_conf)
+            item["llm_model"] = route.model
+            item["llm_routing_tier"] = route.tier
+
             valid_temporal, temporal_reason, temporal_details = validate_temporal_rationale(
                 llm_rationale,
                 temporal_context,
                 question=question,
             )
+
+            item["temporal_validation_reason"] = temporal_reason
+            item["temporal_validation_details"] = temporal_details
             if not valid_temporal:
                 summary["temporal_inconsistency"] += 1
                 infer_diag_counts["evaluated"] += 1
@@ -1643,6 +1964,7 @@ def _infer_one(
                 opportunity_score=opportunity.opportunity_score,
                 materially_changed=False,
                 skeptic=True,
+                edge_abs=edge_abs,
                 config=config,
             )
             if review_forecast is None or not budget.reserve_skeptic(
@@ -1748,47 +2070,52 @@ def _infer_one(
                     usage["routing_tier"] = skeptic_route.tier
                     item["anthropic_usage_events"].append(usage)
                     budget.record_usage(usage)
+
                 summary["skeptic_failed"] += 1
-                summary["skeptic_reject"] += 1
                 infer_diag_counts["evaluated"] += 1
-                count_rejection("skeptic_reject")
+                count_rejection("skeptic_unavailable")
+
                 skeptic_payload = {
-                    "action": "REJECT",
+                    "action": "UNAVAILABLE",
                     "reason": "critic_call_failed",
                     "rationale": str(skeptic_err)[:300],
                     "trigger": skeptic_trigger_reason,
                 }
+
                 _update_brain(
                     record,
                     p_yes_model=p_yes_model,
                     edge=edge_abs,
                     budget_status="skeptic_failed",
                 )
+
                 record_shadow(
                     item=item,
                     model_probability=p_yes_model,
                     edge_abs=edge_abs,
                     side="YES" if edge_vs_market > 0 else "NO",
-                    production_decision="rejected",
-                    rejection_reason="skeptic_reject",
+                    production_decision="not_evaluated_for_production",
+                    rejection_reason="skeptic_unavailable",
                     temporal_validation="valid",
                     llm_used=llm_used,
                     skeptic_result=skeptic_payload,
                 )
+
                 infer_diag_rows.append(
                     {
                         "slug": slug,
                         "question": question,
-                        "decision": "REJECT",
-                        "reason": "skeptic_reject",
+                        "decision": "SKIP",
+                        "reason": "skeptic_unavailable",
                         "skeptic": skeptic_payload,
                     }
                 )
+
                 _finalize_pipeline_market(
                     record,
                     final_stage="skeptic_review",
-                    decision="REJECT",
-                    reason="skeptic_reject",
+                    decision="SKIP",
+                    reason="skeptic_unavailable",
                     details={"skeptic": skeptic_payload},
                 )
                 continue

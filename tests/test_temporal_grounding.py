@@ -106,6 +106,51 @@ class TemporalGroundingTests(unittest.TestCase):
         self.assertEqual(reason, "stale_date_claim")
         self.assertEqual(details["temporal_signal"], "stale_date_claim")
 
+    def test_validate_temporal_rationale_allows_historical_year_evidence(self) -> None:
+        temporal_context = {
+            "current_utc": "2026-08-19T00:00:00Z",
+            "current_date": "2026-08-19",
+            "market_end_date": "2026-09-30T00:00:00Z",
+            "market_resolution_date": "2026-09-30T00:00:00Z",
+            "time_remaining_hours": 1000.0,
+            "time_remaining": "41 days",
+            "event_status": "ONGOING",
+            "temporal_source": "endDate",
+            "requires_verified_temporal_context": False,
+        }
+
+        ok, reason, _ = validate_temporal_rationale(
+            "United Russia won the 2021 election and is expected to remain dominant in the upcoming election.",
+            temporal_context,
+            now=datetime(2026, 8, 19, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(reason, "ok")
+
+    def test_validate_temporal_rationale_rejects_future_claim_anchored_to_old_year(self) -> None:
+        temporal_context = {
+            "current_utc": "2026-08-19T00:00:00Z",
+            "current_date": "2026-08-19",
+            "market_end_date": "2026-09-30T00:00:00Z",
+            "market_resolution_date": "2026-09-30T00:00:00Z",
+            "time_remaining_hours": 1000.0,
+            "time_remaining": "41 days",
+            "event_status": "ONGOING",
+            "temporal_source": "endDate",
+            "requires_verified_temporal_context": False,
+        }
+
+        ok, reason, details = validate_temporal_rationale(
+            "The election is expected in 2025 and therefore remains ahead.",
+            temporal_context,
+            now=datetime(2026, 8, 19, tzinfo=timezone.utc),
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(reason, "stale_date_claim")
+        self.assertEqual(details["temporal_signal"], "stale_date_claim")
+
     def test_validate_temporal_rationale_rejects_impossible_relative_time_claim(self) -> None:
         temporal_context = {
             "current_utc": "2026-07-13T00:00:00Z",

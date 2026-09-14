@@ -171,12 +171,39 @@ def format_temporal_context_block(temporal_context: Dict[str, Any]) -> str:
 
 
 def _contains_stale_date_claim(text: str, current_year: int) -> bool:
-    years = [int(y) for y in _DATE_YEAR_RE.findall(text)]
-    if not years:
-        return False
-    if not any(cue in text for cue in _FUTURE_CUES):
-        return False
-    return any(year < current_year for year in years)
+    """Detect an explicitly future-oriented claim anchored to a past year.
+
+    Historical years are valid forecasting evidence.  A rationale should only
+    be considered stale when a future-oriented cue applies to the old year
+    itself, rather than merely appearing elsewhere in the same rationale.
+    """
+    lowered = str(text or "").lower()
+
+    cue_pattern = "|".join(
+        re.escape(cue) for cue in _FUTURE_CUES
+    )
+
+    # Require a future cue to precede the year within the same short clause.
+    # Examples rejected in 2026:
+    #   "expected in 2025"
+    #   "will launch by 2025"
+    #   "scheduled for 2024"
+    #
+    # Historical evidence remains valid:
+    #   "won in 2021 and remains dominant"
+    #   "the 2021 result is an important base rate"
+    future_year_re = re.compile(
+        rf"\b(?:{cue_pattern})\b"
+        rf"[^.!?;\n]{{0,60}}?"
+        rf"\b(20\d{{2}})\b",
+        re.IGNORECASE,
+    )
+
+    for match in future_year_re.finditer(lowered):
+        if int(match.group(1)) < current_year:
+            return True
+
+    return False
 
 
 def _contains_already_claim(text: str) -> bool:

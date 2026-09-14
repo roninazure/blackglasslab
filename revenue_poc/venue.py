@@ -54,6 +54,7 @@ def quote_from_market_and_book(
     book: dict[str, Any],
     *,
     category: str,
+    observed_at_utc: str | None = None,
 ) -> dict[str, Any]:
     bid, bid_size = _top(book.get("bids"), best="bid")
     ask, ask_size = _top(book.get("asks"), best="ask")
@@ -77,11 +78,96 @@ def quote_from_market_and_book(
         "fee_rate": fee_rate,
         "fee_source": fee_source,
         "quote_timestamp_utc": _timestamp(book.get("timestamp")),
+        "observed_at_utc": (
+            observed_at_utc
+            or datetime.now(timezone.utc).isoformat()
+        ),
         "quote_source": "polymarket_clob",
         "assumptions": {
             "fee_rate_assumed": fee_source.endswith("assumption"),
             "slippage_bps_assumed": True,
         },
+    }
+
+
+def validate_executable_quote(
+    quote: dict[str, Any],
+    *,
+    side: str,
+    position_size_usd: float,
+    max_quote_age_seconds: float,
+    now: datetime | None = None,
+) -> dict[str, float]:
+    """Fail closed unless a fresh CLOB quote can support the paper entry."""
+    side = str(side).strip().upper()
+    if side not in {"YES", "NO"}:
+        raise ValueError("execution side must be YES or NO")
+
+    try:
+        bid = float(quote["best_bid"])
+        ask = float(quote["best_ask"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("executable quote requires numeric best bid and ask") from exc
+
+    if not 0 < bid <= ask < 1:
+        raise ValueError("invalid executable top of book")
+
+    timestamp = str(quote.get("quote_timestamp_utc") or "").strip()
+    if not timestamp:
+        raise ValueError("executable quote timestamp is required")
+
+    observed_timestamp = str(
+        quote.get("observed_at_utc")
+        or timestamp
+    ).strip()
+
+    try:
+        quote_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("invalid executable quote timestamp") from exc
+
+    try:
+        observed_time = datetime.fromisoformat(
+            observed_timestamp.replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError("invalid executable observation timestamp") from exc
+
+    if quote_time.tzinfo is None:
+        quote_time = quote_time.replace(tzinfo=timezone.utc)
+    quote_time = quote_time.astimezone(timezone.utc)
+
+    if observed_time.tzinfo is None:
+        observed_time = observed_time.replace(tzinfo=timezone.utc)
+    observed_time = observed_time.astimezone(timezone.utc)
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+
+    age_seconds = (current - observed_time).total_seconds()
+    book_state_age_seconds = (current - quote_time).total_seconds()
+
+    if age_seconds < 0 or age_seconds > float(max_quote_age_seconds):
+        raise ValueError(
+            "executable quote observation is stale or future-dated"
+        )
+
+    depth_key = "ask_depth_usd" if side == "YES" else "bid_depth_usd"
+
+    try:
+        depth_usd = float(quote[depth_key])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("executable-side depth is required") from exc
+
+    if depth_usd < float(position_size_usd):
+        raise ValueError("insufficient executable-side depth")
+
+    entry_price = ask if side == "YES" else 1.0 - bid
+
+    return {
+        "entry_price": entry_price,
+        "depth_usd": depth_usd,
+        "quote_age_seconds": age_seconds,
+        "book_state_age_seconds": book_state_age_seconds,
     }
 
 

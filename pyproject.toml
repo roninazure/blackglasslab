@@ -13,7 +13,16 @@ dependencies = [
   "pandas==3.0.5",
   "anthropic==0.119.0",
   "textual==8.2.8",
+  "websockets==16.1.1",
+  "py-clob-client-v2==1.1.0",
+  "polymarket-us==0.1.2",
 ]
 
 [tool.setuptools]
 py-modules = ["swarm_edge_io", "swarm_edge_runtime"]
+packages = ["maker_spread_economics", "negrisk_economics", "sports", "crypto_markets", "flash_employment", "parallax"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8,<9",
+]

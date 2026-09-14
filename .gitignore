@@ -26,6 +26,7 @@ memory/*.sqlite-*
 *.log
 
 # local backups
+backups/
 *.bak.*
 *.backup.*
 *.bak
@@ -43,13 +44,17 @@ markets/_pm_search2/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
 coverage.xml
 htmlcov/
 /KILL
+/data/parallax-commercial/
 
 # runtime artifacts
 signals/infer_diagnostics.json
 signals/trade_candidates_*.json
+trials/
+census/*.sqlite
 
 # local scratch / patch fallout
 live_runner.py.BROKEN.*
@@ -61,3 +66,6 @@ markets/_pm_search/
 bgl.db
 *.db
 .DS_Store
+reports/sports_scan_latest.json
+reports/sports_quota_state.json
+reports/sports_watch_state.json
