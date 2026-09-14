@@ -146,6 +146,10 @@ class Evidence:
     play_type: PlayType = PlayType.PARALLAX_EDGE
     source_independence: str = ""
     validation_status: str = ""
+    # Optional metadata for event-specific forecast inputs.  Sports providers
+    # leave this empty; generic event adapters use it to freeze methodology and
+    # assumptions without duplicating the core Evidence fields.
+    forecast_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

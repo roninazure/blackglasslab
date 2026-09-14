@@ -200,6 +200,9 @@ class TrackRecord:
             "market_snapshot": asdict(market),
             "evidence_snapshot": asdict(evidence) if evidence is not None else None,
         }
+        if evidence is not None and evidence.forecast_metadata:
+            snapshot["event_forecast"] = evidence.forecast_metadata
+            snapshot["event_family"] = evidence.forecast_metadata.get("event_family")
         serialized = json.dumps(snapshot, allow_nan=False)
         with self.connect() as db:
             db.execute(
