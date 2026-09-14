@@ -1,5 +1,15 @@
+import importlib.util
+from pathlib import Path
+
 from parallax.nfl import NFLGame, NFLEvidenceProvider, VALIDATION_ECE, is_supported_market, map_market_to_game, nfl_calibration_safe, parse_games, validate
-from parallax.models import NormalizedMarket, Venue, Mechanics
+from parallax.models import NormalizedMarket, Venue, Mechanics, Side
+
+nfl_live_scan_spec = importlib.util.spec_from_file_location(
+    "nfl_live_scan", Path(__file__).parents[1] / "scripts" / "nfl_live_scan.py"
+)
+nfl_live_scan = importlib.util.module_from_spec(nfl_live_scan_spec)
+assert nfl_live_scan_spec.loader is not None
+nfl_live_scan_spec.loader.exec_module(nfl_live_scan)
 
 
 def test_parse_nfl_schedule_results_filters_non_games_and_uses_scores_after_parse():
@@ -95,3 +105,16 @@ def test_current_kalshi_nfl_game_family_is_supported():
         original_metadata={"market": raw},
     )
     assert is_supported_market(market)
+
+
+def test_nfl_evaluated_play_reaches_prospective_capture(monkeypatch):
+    captured = []
+    sentinel = object()
+    monkeypatch.setattr(nfl_live_scan, "qualify", lambda *args, **kwargs: sentinel)
+
+    class Store:
+        def capture_prospective(self, *args, **kwargs):
+            captured.append((args, kwargs))
+
+    result = nfl_live_scan._capture_evaluated(Store(), object(), Side.YES, object(), "now")
+    assert result is sentinel and len(captured) == 1

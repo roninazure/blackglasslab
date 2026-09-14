@@ -1,6 +1,9 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+import importlib.util
+from pathlib import Path
+
 from parallax.cfb import (
     CFBGame, CFBEvidenceProvider, VALIDATION_ECE, is_supported_market,
     map_market_to_game, probability_for_game,
@@ -10,6 +13,12 @@ from parallax.engine import qualify
 from parallax.fees import attach_fees
 from parallax.models import Action, Side, Venue
 from parallax.normalization import normalize_kalshi
+cfb_live_scan_spec = importlib.util.spec_from_file_location(
+    "cfb_live_scan", Path(__file__).parents[1] / "scripts" / "cfb_live_scan.py"
+)
+cfb_live_scan = importlib.util.module_from_spec(cfb_live_scan_spec)
+assert cfb_live_scan_spec.loader is not None
+cfb_live_scan_spec.loader.exec_module(cfb_live_scan)
 
 
 def game(*, home="Alabama", away="Georgia", date="2026-09-19", fcs=False, neutral=False, home_points=None, away_points=None):
@@ -119,3 +128,16 @@ def test_kalshi_cfb_disclaimer_property_does_not_trigger_prop_rejection():
     market = normalize_kalshi(raw, {}, "test", event=event)
 
     assert is_supported_market(market)
+
+
+def test_cfb_evaluated_play_reaches_prospective_capture(monkeypatch):
+    captured = []
+    sentinel = object()
+    monkeypatch.setattr(cfb_live_scan, "qualify", lambda *args, **kwargs: sentinel)
+
+    class Store:
+        def capture_prospective(self, *args, **kwargs):
+            captured.append((args, kwargs))
+
+    result = cfb_live_scan._capture_evaluated(Store(), object(), Side.YES, object(), "now")
+    assert result is sentinel and len(captured) == 1

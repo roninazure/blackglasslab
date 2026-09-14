@@ -16,7 +16,12 @@ from .track_record import TrackRecord
 def make_service(db: str, *, demo: bool = False, limit: int = 6) -> PlayService:
     path = Path(db)
     path.parent.mkdir(parents=True, exist_ok=True)
-    service = PlayService(TrackRecord(path))
+    prospective = None if demo else TrackRecord("data/parallax-commercial/prospective.sqlite")
+    service = PlayService(
+        TrackRecord(path),
+        prospective_store=prospective,
+        capture_only=not demo,
+    )
     refresh(service, demo=demo, limit=limit)
     return service
 

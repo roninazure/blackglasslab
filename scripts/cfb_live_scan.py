@@ -19,8 +19,17 @@ from parallax.fees import attach_fees
 from parallax.models import Side, Venue, utcnow
 from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.sources import KalshiPublicClient
+from parallax.track_record import TrackRecord
 
 CFB_MARKET_DISCOVERY_LIMIT = 1_000
+PROSPECTIVE_DB = Path("data/parallax-commercial/prospective.sqlite")
+
+
+def _capture_evaluated(store, market, side, evidence, now):
+    """Capture exactly one already-qualified live market-side observation."""
+    play = qualify(market, side, evidence, now=now)
+    store.capture_prospective(market, side, evidence, now=now)
+    return play
 
 
 def _text(row: dict) -> str:
@@ -58,7 +67,8 @@ def _scan() -> dict:
     current_year = datetime.now(UTC).year
     seasons = tuple(range(2010, current_year + 1))
     games = fetch_games(seasons)
-    result = {"read_only": True, "orders": 0, "alerts": 0, "published": 0, "cfbd_calls": len(seasons), "validation_ece": VALIDATION_ECE, "venues": {}, "rows": [], "mapping_failure_reasons": Counter()}
+    result = {"read_only": True, "orders": 0, "alerts": 0, "published": 0, "prospective_captured": 0, "cfbd_calls": len(seasons), "validation_ece": VALIDATION_ECE, "venues": {}, "rows": [], "mapping_failure_reasons": Counter()}
+    prospective_store = TrackRecord(PROSPECTIVE_DB)
     pmus_client = PolymarketUSPublicClient()
     try:
         raw_pmus, coverage = paginate(pmus_client.markets_page, page_size=100, max_pages=10, max_rows=CFB_MARKET_DISCOVERY_LIMIT)
@@ -115,7 +125,11 @@ def _scan() -> dict:
                     continue
                 statuses[venue_name]["EVIDENCE"] += 1
                 for side in Side:
-                    play = qualify(market, side, evidence, now=utcnow())
+                    decision_at = utcnow()
+                    play = _capture_evaluated(
+                        prospective_store, market, side, evidence, decision_at
+                    )
+                    result["prospective_captured"] += 1
                     example_rows = {}
                     for index, stake in ((1, 25), (2, 50), (3, 100)):
                         ex = play.retail_examples[index]

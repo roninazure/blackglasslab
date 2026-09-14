@@ -3,7 +3,7 @@ from dataclasses import replace
 from parallax import sources
 from parallax.demo import demo_inputs
 from parallax.inbox import InboxStore
-from parallax.models import Evidence, Venue
+from parallax.models import Action, Evidence, Venue
 from parallax.normalization import rules_digest
 from parallax.service import PlayService
 from parallax.track_record import TrackRecord
@@ -145,3 +145,107 @@ def test_missing_collected_evidence_keeps_fail_closed_lookup(tmp_path):
     service.replace_inputs([market], collection={})
     assert spy.calls == 1
     assert service.evidence == {}
+
+
+def _live_capture_workload(now, count=7):
+    demo_markets, demo_evidence = demo_inputs(now)
+    base = demo_markets[0]
+    base_proof = demo_evidence[(base.venue, base.venue_market_id)]
+    markets = []
+    evidence = {}
+    for index in range(count):
+        market = replace(
+            base,
+            demo=False,
+            venue_market_id=f"mlb-live-{index}",
+            slug=f"mlb-live-{index}",
+            title=f"MLB live market {index}",
+            event=f"mlb-event-{index}",
+        )
+        proof = replace(
+            base_proof,
+            demo=False,
+            market_id=market.venue_market_id,
+            rules_digest=rules_digest(market),
+            validation_reference="" if index == 0 else base_proof.validation_reference,
+        )
+        markets.append(market)
+        evidence[(market.venue, market.venue_market_id)] = proof
+    return markets, evidence
+
+
+def test_live_mlb_capture_is_once_per_side_per_service_invocation(tmp_path, monkeypatch):
+    now = __import__("parallax.models", fromlist=["utcnow"]).utcnow()
+    first_at = now.replace(microsecond=0)
+    monkeypatch.setattr("parallax.service.utcnow", lambda: first_at)
+    markets, evidence = _live_capture_workload(first_at)
+    publications = TrackRecord(tmp_path / "publications.sqlite")
+    prospective = TrackRecord(tmp_path / "prospective.sqlite")
+
+    class NoAlerts:
+        def dispatch(self, _items):
+            raise AssertionError("capture-only mode must not dispatch alerts")
+
+        def status(self):
+            return {
+                "mode": "disabled",
+                "pending": 0,
+                "sent": 0,
+                "failed": 0,
+                "unknown": 0,
+                "last_delivery_at": None,
+            }
+
+    class NoSocial:
+        def enqueue(self, _item):
+            raise AssertionError("capture-only mode must not enqueue social content")
+
+        def publish_pending(self):
+            raise AssertionError("capture-only mode must not publish social content")
+
+        def status(self):
+            return {
+                "mode": "disabled",
+                "pending": 0,
+                "dry_run": 0,
+                "sent": 0,
+                "failed": 0,
+                "unknown": 0,
+            }
+
+    service = PlayService(
+        publications,
+        inbox_store=InboxStore(tmp_path / "inbox.sqlite"),
+        alert_dispatcher=NoAlerts(),
+        social_publisher=NoSocial(),
+        prospective_store=prospective,
+        capture_only=True,
+    )
+    service.replace_inputs(markets, evidence)
+    health = service.health()
+    assert service.plays()["total"] == 14
+    assert len(service._plays()) == 14
+
+    records = prospective.prospective_records()
+    assert len(records) == 14
+    assert {record["verdict"] for record in records} == {
+        Action.BUY,
+        Action.WATCH,
+        Action.PASS,
+    }
+    assert publications.summary()["published_plays"] == 0
+    assert health["live_orders"] == 0 and not health["execution_enabled"]
+
+    later = first_at + __import__("datetime").timedelta(seconds=1)
+    monkeypatch.setattr("parallax.service.utcnow", lambda: later)
+    second = PlayService(
+        publications,
+        inbox_store=InboxStore(tmp_path / "inbox-2.sqlite"),
+        alert_dispatcher=NoAlerts(),
+        social_publisher=NoSocial(),
+        prospective_store=prospective,
+        capture_only=True,
+    )
+    second.replace_inputs(markets, evidence)
+    second._plays()
+    assert len(prospective.prospective_records()) == 28

@@ -330,8 +330,13 @@ class PlayService:
         alert_dispatcher: AlertDispatcher | None = None,
         social_publisher: SocialPublisher | None = None,
         evidence_engine: EvidenceEngine | None = None,
+        prospective_store: TrackRecord | None = None,
+        capture_only: bool = False,
     ):
         self.store = store
+        self.prospective_store = prospective_store
+        self.capture_only = capture_only
+        self.prospective_captured: set[str] = set()
         self.inbox_store = inbox_store or default_inbox_store()
         self.alert_dispatcher = alert_dispatcher or AlertDispatcher(
             AlertDeliveryStore(self.inbox_store.path)
@@ -402,7 +407,8 @@ class PlayService:
             self.collection = collection or {}
             self.mode = mode
             self.last_refresh = detected_at.isoformat()
-        self.refresh_inbox()
+        if not self.capture_only:
+            self.refresh_inbox()
 
     @staticmethod
     def _window_seconds(
@@ -774,7 +780,21 @@ class PlayService:
                         play = qualify(market, side, evidence, now=now)
                         created = self.first_seen.setdefault(play.id, play.created_at)
                         play = replace(play, created_at=created)
-                        if play.suggested_action == Action.BUY and not play.demo:
+                        if (
+                            self.prospective_store is not None
+                            and evidence is not None
+                            and not play.demo
+                            and play.id not in self.prospective_captured
+                        ):
+                            self.prospective_store.capture_prospective(
+                                market, side, evidence, now=now
+                            )
+                            self.prospective_captured.add(play.id)
+                        if (
+                            not self.capture_only
+                            and play.suggested_action == Action.BUY
+                            and not play.demo
+                        ):
                             # Persist before returning an actionable play to any consumer.
                             self.store.publish(market, side, evidence, now=now)
                         result.append(play)
@@ -1485,7 +1505,8 @@ class PlayService:
 
     def health(self):
         plays = self._plays()
-        self.refresh_inbox()
+        if not self.capture_only:
+            self.refresh_inbox()
         inbox_items = self.inbox_store.items()
         metrics = Counter(
             {

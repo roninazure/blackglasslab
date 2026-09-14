@@ -19,6 +19,16 @@ from parallax.models import Side, utcnow
 from parallax.nfl import VALIDATION_ECE, NFLEvidenceProvider, fetch_games, is_supported_market, map_market_to_game, probability_for_game
 from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.sources import KalshiPublicClient
+from parallax.track_record import TrackRecord
+
+PROSPECTIVE_DB = Path("data/parallax-commercial/prospective.sqlite")
+
+
+def _capture_evaluated(store, market, side, evidence, now):
+    """Capture exactly one already-qualified live market-side observation."""
+    play = qualify(market, side, evidence, now=now)
+    store.capture_prospective(market, side, evidence, now=now)
+    return play
 
 
 def _text(row: dict) -> str:
@@ -92,7 +102,8 @@ def _scope_kalshi(client: KalshiPublicClient) -> tuple[list[dict], dict]:
 
 def _scan() -> dict:
     games = fetch_games()
-    result = {"read_only": True, "orders": 0, "alerts": 0, "published": 0, "validation_ece": VALIDATION_ECE, "venues": {}}
+    result = {"read_only": True, "orders": 0, "alerts": 0, "published": 0, "prospective_captured": 0, "validation_ece": VALIDATION_ECE, "venues": {}}
+    prospective_store = TrackRecord(PROSPECTIVE_DB)
     pmus = PolymarketUSPublicClient()
     try:
         raw_pmus, cov = paginate(pmus.markets_page, page_size=100, max_pages=100, max_rows=MAX_ACTIVE_MARKETS_PER_VENUE)
@@ -151,7 +162,11 @@ def _scan() -> dict:
                     else:
                         statuses["EVIDENCE"] += 1
                         for side in Side:
-                            play = qualify(market, side, evidence, now=utcnow())
+                            decision_at = utcnow()
+                            play = _capture_evaluated(
+                                prospective_store, market, side, evidence, decision_at
+                            )
+                            result["prospective_captured"] += 1
                             statuses[f"SCORED_{play.suggested_action}"] += 1
                             scored = {"venue": venue, "market": market.title, "market_id": market.venue_market_id, "side": side.value, "game_start": mapping.game.kickoff, "nfl_v1_probability": play.model_probability, "executable_price": play.executable_price, "raw_edge": play.edge_points, "safety_margin": (play.edge_points / 100 - VALIDATION_ECE) if play.edge_points is not None else None, "fee": play.fees_estimate, "net_ev_25": play.expected_value, "net_ev_50": None, "net_ev_100": None, "liquidity": play.executable_size, "failed_gates": list(play.verdict.failed_gates), "verdict": play.suggested_action.value}
                             for index, key in ((2, "net_ev_50"), (3, "net_ev_100")):
