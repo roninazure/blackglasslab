@@ -6,14 +6,16 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
+from datetime import UTC
 from pathlib import Path
+from uuid import NAMESPACE_URL, uuid5
 
 from .engine import qualify
 from .models import Action, Evidence, NormalizedMarket, Side, timestamp, utcnow
 
 
 class TrackRecord:
-    """Append-only publication and settlement records in a separate product DB."""
+    """Append-only publication, settlement, and prospective records in one product DB."""
 
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -29,10 +31,25 @@ class TrackRecord:
                 CREATE TABLE IF NOT EXISTS candidates (
                     candidate_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS prospective_plays (
+                    observation_id TEXT PRIMARY KEY,
+                    captured_at TEXT NOT NULL,
+                    venue TEXT NOT NULL,
+                    market_id TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    verdict TEXT NOT NULL,
+                    snapshot TEXT NOT NULL
+                );
                 CREATE TRIGGER IF NOT EXISTS candidates_no_update BEFORE UPDATE ON candidates
                     BEGIN SELECT RAISE(ABORT, 'Immutable candidate'); END;
                 CREATE TRIGGER IF NOT EXISTS candidates_no_delete BEFORE DELETE ON candidates
                     BEGIN SELECT RAISE(ABORT, 'Immutable candidate'); END;
+                CREATE TRIGGER IF NOT EXISTS prospective_plays_no_update
+                    BEFORE UPDATE ON prospective_plays
+                    BEGIN SELECT RAISE(ABORT, 'Immutable prospective play'); END;
+                CREATE TRIGGER IF NOT EXISTS prospective_plays_no_delete
+                    BEFORE DELETE ON prospective_plays
+                    BEGIN SELECT RAISE(ABORT, 'Immutable prospective play'); END;
                 CREATE TRIGGER IF NOT EXISTS publications_no_update BEFORE UPDATE ON publications
                     BEGIN SELECT RAISE(ABORT, 'Immutable publication'); END;
                 CREATE TRIGGER IF NOT EXISTS publications_no_delete BEFORE DELETE ON publications
@@ -121,6 +138,80 @@ class TrackRecord:
                 (candidate_id, json.dumps(snapshot, allow_nan=False)),
             )
         return snapshot
+
+    def capture_prospective(
+        self, market: NormalizedMarket, side: Side, evidence: Evidence | None, *, now=None
+    ) -> dict:
+        """Freeze one real, non-publishing prospective evaluation observation."""
+        now = (now or utcnow()).astimezone(UTC)
+        if market.demo or (evidence is not None and evidence.demo):
+            raise ValueError("Synthetic demo inputs cannot be prospectively captured")
+        play = qualify(market, side, evidence, now=now)
+        if play.demo:
+            raise ValueError("Synthetic demo inputs cannot be prospectively captured")
+
+        captured_at = now.isoformat()
+        observation_identity = (
+            f"prospective:v1:{play.id}:{play.venue}:{play.market_id}:{play.side}:{captured_at}"
+        )
+        observation_id = f"PX-{uuid5(NAMESPACE_URL, observation_identity)}"
+        snapshot = {
+            "observation_id": observation_id,
+            "captured_at": captured_at,
+            "play_id": play.id,
+            "venue": play.venue,
+            "market_id": play.market_id,
+            "event": market.event,
+            "event_title": market.event_title,
+            "title": play.market_title,
+            "side": play.side,
+            "selected_outcome": play.side_description,
+            "verdict": play.suggested_action,
+            "executable_price": play.executable_price,
+            "current_price": play.current_price,
+            "model_probability": play.model_probability,
+            "fair_value": play.parallax_fair_value,
+            "edge": play.edge_points,
+            "confidence": play.confidence_band,
+            "failed_gates": play.verdict.failed_gates,
+            "invalidation_conditions": play.invalidation_conditions,
+            "resolution_time": play.resolution_time,
+            "expected_value": play.expected_value,
+            "retail_examples": [asdict(example) for example in play.retail_examples],
+            "play": play.as_dict(),
+            "market_snapshot": asdict(market),
+            "evidence_snapshot": asdict(evidence) if evidence is not None else None,
+        }
+        serialized = json.dumps(snapshot, allow_nan=False)
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO prospective_plays "
+                "(observation_id, captured_at, venue, market_id, side, verdict, snapshot) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    observation_id,
+                    captured_at,
+                    play.venue,
+                    play.market_id,
+                    play.side,
+                    play.suggested_action,
+                    serialized,
+                ),
+            )
+            stored = db.execute(
+                "SELECT snapshot FROM prospective_plays WHERE observation_id=?",
+                (observation_id,),
+            ).fetchone()
+        assert stored is not None
+        return json.loads(stored[0])
+
+    def prospective_records(self) -> list[dict]:
+        """Return immutable prospective observations in capture order."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT snapshot FROM prospective_plays ORDER BY captured_at, observation_id"
+            ).fetchall()
+        return [json.loads(snapshot) for (snapshot,) in rows]
 
     def settle(
         self,

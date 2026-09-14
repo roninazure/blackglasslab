@@ -250,6 +250,66 @@ def test_immutable_publication_and_deduplication(tmp_path, sample):
 
 
 @pytest.mark.parametrize(
+    "market_change, expected",
+    [
+        ({}, "BUY"),
+        ({"book_timestamp": "2020-01-01T00:00:00Z"}, "WATCH"),
+        ({"status": "CLOSED"}, "PASS"),
+    ],
+)
+def test_prospective_capture_supports_all_verdicts(tmp_path, sample, market_change, expected):
+    now, market, proof = sample
+    store = TrackRecord(tmp_path / "record.sqlite")
+    record = store.capture_prospective(replace(market, **market_change), Side.YES, proof, now=now)
+    assert record["verdict"] == expected
+    assert store.prospective_records() == [record]
+    assert store.summary()["published_plays"] == 0
+    json.dumps(record, allow_nan=False)
+
+
+def test_prospective_rejects_demo_and_is_immutable(tmp_path, sample):
+    now, market, proof = sample
+    store = TrackRecord(tmp_path / "record.sqlite")
+    with pytest.raises(ValueError, match="Synthetic demo"):
+        store.capture_prospective(replace(market, demo=True), Side.YES, proof, now=now)
+    store.capture_prospective(market, Side.YES, proof, now=now)
+    with store.connect() as db:
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("UPDATE prospective_plays SET snapshot='{}'")
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("DELETE FROM prospective_plays")
+
+
+def test_prospective_observations_and_snapshots_are_append_only(tmp_path, sample):
+    now, market, proof = sample
+    store = TrackRecord(tmp_path / "record.sqlite")
+    first = store.capture_prospective(market, Side.YES, proof, now=now)
+    changed_market = replace(market, title="Changed later", yes_ask=0.41)
+    changed_proof = replace(proof, rationale="Changed later", fair_probability=0.70)
+    second = store.capture_prospective(
+        changed_market, Side.YES, changed_proof, now=now + timedelta(seconds=1)
+    )
+    records = store.prospective_records()
+    assert len(records) == 2
+    assert first["observation_id"] != second["observation_id"]
+    assert first["title"] == market.title
+    assert first["market_snapshot"]["title"] == market.title
+    assert first["evidence_snapshot"]["rationale"] == proof.rationale
+    assert first["play"]["market_title"] == market.title
+
+
+def test_prospective_same_observation_does_not_overwrite(tmp_path, sample):
+    now, market, proof = sample
+    store = TrackRecord(tmp_path / "record.sqlite")
+    first = store.capture_prospective(market, Side.YES, proof, now=now)
+    second = store.capture_prospective(
+        market, Side.YES, replace(proof, rationale="later"), now=now
+    )
+    assert second == first
+    assert store.prospective_records() == [first]
+
+
+@pytest.mark.parametrize(
     "side,result", [("YES", "WIN"), ("NO", "LOSS"), (None, "VOID")]
 )
 def test_settlement(tmp_path, sample, side, result):
