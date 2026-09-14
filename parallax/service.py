@@ -337,6 +337,7 @@ class PlayService:
         self.prospective_store = prospective_store
         self.capture_only = capture_only
         self.prospective_captured: set[str] = set()
+        self.prospective_observations: dict[str, str] = {}
         self.inbox_store = inbox_store or default_inbox_store()
         self.alert_dispatcher = alert_dispatcher or AlertDispatcher(
             AlertDeliveryStore(self.inbox_store.path)
@@ -772,6 +773,8 @@ class PlayService:
     def _plays(self):
         now = utcnow()
         result = []
+        generated = set()
+        captured = set()
         with self.lock:
             for market in self.markets:
                 evidence = self.evidence.get((market.venue, market.venue_market_id))
@@ -780,16 +783,30 @@ class PlayService:
                         play = qualify(market, side, evidence, now=now)
                         created = self.first_seen.setdefault(play.id, play.created_at)
                         play = replace(play, created_at=created)
+                        if self.prospective_store is not None and evidence is not None and not play.demo:
+                            generated.add((play.id, play.venue, play.market_id, play.side))
                         if (
                             self.prospective_store is not None
                             and evidence is not None
                             and not play.demo
                             and play.id not in self.prospective_captured
                         ):
-                            self.prospective_store.capture_prospective(
+                            observation = self.prospective_store.capture_prospective(
                                 market, side, evidence, now=now
                             )
+                            observation_id = observation.get("observation_id") if isinstance(observation, dict) else None
+                            expected = (play.id, play.venue, play.market_id, play.side)
+                            actual = tuple(observation.get(key) for key in ("play_id", "venue", "market_id", "side")) if isinstance(observation, dict) else None
+                            if not observation_id or actual != expected or self.prospective_store.prospective_record(observation_id) is None:
+                                raise ValueError("Prospective capture did not produce a verified durable observation ID")
+                            self.prospective_observations[play.id] = observation_id
                             self.prospective_captured.add(play.id)
+                        if self.prospective_store is not None and evidence is not None and not play.demo:
+                            observation_id = self.prospective_observations.get(play.id)
+                            observation = self.prospective_store.prospective_record(observation_id) if observation_id else None
+                            if observation is None:
+                                raise ValueError("Missing durable prospective observation")
+                            captured.add(tuple(observation.get(key) for key in ("play_id", "venue", "market_id", "side")))
                         if (
                             not self.capture_only
                             and play.suggested_action == Action.BUY
@@ -801,6 +818,9 @@ class PlayService:
                     except (ValueError, TypeError, ArithmeticError, sqlite3.Error):
                         self.failures += 1
                         # Fail closed: never return an unrecorded live BUY.
+            if generated != captured:
+                self.failures += 1
+                raise ValueError("Prospective capture integrity failure: generated and persisted identities differ")
             return result
 
     @staticmethod

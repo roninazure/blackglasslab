@@ -109,12 +109,46 @@ def test_current_kalshi_nfl_game_family_is_supported():
 
 def test_nfl_evaluated_play_reaches_prospective_capture(monkeypatch):
     captured = []
-    sentinel = object()
+    from types import SimpleNamespace
+    sentinel = SimpleNamespace(id="play", venue="PMUS", market_id="market", side=Side.YES)
     monkeypatch.setattr(nfl_live_scan, "qualify", lambda *args, **kwargs: sentinel)
 
     class Store:
         def capture_prospective(self, *args, **kwargs):
             captured.append((args, kwargs))
+            return {"observation_id": "PX-1", "play_id": "play", "venue": "PMUS", "market_id": "market", "side": Side.YES}
+
+        def prospective_record(self, observation_id):
+            return {"observation_id": observation_id}
 
     result = nfl_live_scan._capture_evaluated(Store(), object(), Side.YES, object(), "now")
     assert result is sentinel and len(captured) == 1
+
+
+def test_nfl_capture_failure_is_fail_closed(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(nfl_live_scan, "qualify", lambda *args, **kwargs: SimpleNamespace(id="p", venue="PMUS", market_id="m", side=Side.YES))
+
+    class Store:
+        def capture_prospective(self, *args, **kwargs):
+            raise RuntimeError("disk failure")
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        nfl_live_scan._capture_evaluated(Store(), object(), Side.YES, object(), "now")
+
+
+def test_nfl_capture_missing_or_mismatched_observation_is_fail_closed(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(nfl_live_scan, "qualify", lambda *args, **kwargs: SimpleNamespace(id="p", venue="PMUS", market_id="m", side=Side.YES))
+
+    class Store:
+        def capture_prospective(self, *args, **kwargs):
+            return {"play_id": "different", "venue": "PMUS", "market_id": "m", "side": Side.YES}
+
+        def prospective_record(self, observation_id):
+            return None
+
+    import pytest
+    with pytest.raises(ValueError, match="verified durable observation ID"):
+        nfl_live_scan._capture_evaluated(Store(), object(), Side.YES, object(), "now")

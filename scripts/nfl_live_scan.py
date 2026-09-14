@@ -27,7 +27,12 @@ PROSPECTIVE_DB = Path("data/parallax-commercial/prospective.sqlite")
 def _capture_evaluated(store, market, side, evidence, now):
     """Capture exactly one already-qualified live market-side observation."""
     play = qualify(market, side, evidence, now=now)
-    store.capture_prospective(market, side, evidence, now=now)
+    observation = store.capture_prospective(market, side, evidence, now=now)
+    observation_id = observation.get("observation_id") if isinstance(observation, dict) else None
+    expected = (play.id, play.venue, play.market_id, play.side)
+    actual = tuple(observation.get(key) for key in ("play_id", "venue", "market_id", "side")) if isinstance(observation, dict) else None
+    if not observation_id or actual != expected or store.prospective_record(observation_id) is None:
+        raise ValueError("Prospective capture did not produce a verified durable observation ID")
     return play
 
 

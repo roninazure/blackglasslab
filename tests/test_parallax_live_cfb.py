@@ -132,12 +132,17 @@ def test_kalshi_cfb_disclaimer_property_does_not_trigger_prop_rejection():
 
 def test_cfb_evaluated_play_reaches_prospective_capture(monkeypatch):
     captured = []
-    sentinel = object()
+    from types import SimpleNamespace
+    sentinel = SimpleNamespace(id="play", venue="PMUS", market_id="market", side=Side.YES)
     monkeypatch.setattr(cfb_live_scan, "qualify", lambda *args, **kwargs: sentinel)
 
     class Store:
         def capture_prospective(self, *args, **kwargs):
             captured.append((args, kwargs))
+            return {"observation_id": "PX-1", "play_id": "play", "venue": "PMUS", "market_id": "market", "side": Side.YES}
+
+        def prospective_record(self, observation_id):
+            return {"observation_id": observation_id}
 
     result = cfb_live_scan._capture_evaluated(Store(), object(), Side.YES, object(), "now")
     assert result is sentinel and len(captured) == 1

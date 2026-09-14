@@ -234,6 +234,14 @@ class TrackRecord:
             ).fetchall()
         return [json.loads(snapshot) for (snapshot,) in rows]
 
+    def prospective_record(self, observation_id: str) -> dict | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT snapshot FROM prospective_plays WHERE observation_id=?",
+                (observation_id,),
+            ).fetchone()
+        return json.loads(row[0]) if row is not None else None
+
     def prospective_settlements(self) -> list[dict]:
         """Return authoritative prospective settlements in observation order."""
         with self.connect() as db:
