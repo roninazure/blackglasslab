@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -40,6 +41,17 @@ class TrackRecord:
                     verdict TEXT NOT NULL,
                     snapshot TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS prospective_settlements (
+                    observation_id TEXT PRIMARY KEY REFERENCES prospective_plays(observation_id),
+                    settled_at TEXT NOT NULL,
+                    settlement_state TEXT NOT NULL CHECK(settlement_state IN ('RESOLVED', 'VOID')),
+                    result TEXT NOT NULL CHECK(result IN ('WIN', 'LOSS', 'VOID')),
+                    snapshot TEXT NOT NULL,
+                    CHECK(
+                        (settlement_state = 'RESOLVED' AND result IN ('WIN', 'LOSS')) OR
+                        (settlement_state = 'VOID' AND result = 'VOID')
+                    )
+                );
                 CREATE TRIGGER IF NOT EXISTS candidates_no_update BEFORE UPDATE ON candidates
                     BEGIN SELECT RAISE(ABORT, 'Immutable candidate'); END;
                 CREATE TRIGGER IF NOT EXISTS candidates_no_delete BEFORE DELETE ON candidates
@@ -50,6 +62,12 @@ class TrackRecord:
                 CREATE TRIGGER IF NOT EXISTS prospective_plays_no_delete
                     BEFORE DELETE ON prospective_plays
                     BEGIN SELECT RAISE(ABORT, 'Immutable prospective play'); END;
+                CREATE TRIGGER IF NOT EXISTS prospective_settlements_no_update
+                    BEFORE UPDATE ON prospective_settlements
+                    BEGIN SELECT RAISE(ABORT, 'Immutable prospective settlement'); END;
+                CREATE TRIGGER IF NOT EXISTS prospective_settlements_no_delete
+                    BEFORE DELETE ON prospective_settlements
+                    BEGIN SELECT RAISE(ABORT, 'Immutable prospective settlement'); END;
                 CREATE TRIGGER IF NOT EXISTS publications_no_update BEFORE UPDATE ON publications
                     BEGIN SELECT RAISE(ABORT, 'Immutable publication'); END;
                 CREATE TRIGGER IF NOT EXISTS publications_no_delete BEFORE DELETE ON publications
@@ -212,6 +230,151 @@ class TrackRecord:
                 "SELECT snapshot FROM prospective_plays ORDER BY captured_at, observation_id"
             ).fetchall()
         return [json.loads(snapshot) for (snapshot,) in rows]
+
+    def prospective_settlements(self) -> list[dict]:
+        """Return authoritative prospective settlements in observation order."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT s.snapshot FROM prospective_settlements s "
+                "JOIN prospective_plays p USING(observation_id) "
+                "ORDER BY p.captured_at, p.observation_id"
+            ).fetchall()
+        return [json.loads(snapshot) for (snapshot,) in rows]
+
+    def pending_prospective(self, *, limit: int | None = None) -> list[dict]:
+        """Return observations with no appended authoritative settlement."""
+        if limit is not None and limit < 1:
+            raise ValueError("Pending limit must be positive")
+        query = (
+            "SELECT p.snapshot FROM prospective_plays p "
+            "LEFT JOIN prospective_settlements s USING(observation_id) "
+            "WHERE s.observation_id IS NULL ORDER BY p.captured_at, p.observation_id"
+        )
+        parameters: tuple[int, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters = (limit,)
+        with self.connect() as db:
+            rows = db.execute(query, parameters).fetchall()
+        return [json.loads(snapshot) for (snapshot,) in rows]
+
+    def settle_prospective(
+        self,
+        observation_id: str,
+        *,
+        settlement_state: str,
+        result: str,
+        authoritative_source: str,
+        authoritative_source_id: str,
+        authoritative_winner: str | None,
+        settled_at: str,
+        source_resolved_at: str | None = None,
+        sport: str | None = None,
+    ) -> bool:
+        """Append one auditable final outcome; identical repeats are idempotent."""
+        if settlement_state not in {"RESOLVED", "VOID"}:
+            raise ValueError("Prospective settlement must be RESOLVED or VOID")
+        if not authoritative_source.strip() or not authoritative_source_id.strip():
+            raise ValueError("Authoritative source and identifier are required")
+        if settlement_state == "RESOLVED":
+            if result not in {"WIN", "LOSS"} or not authoritative_winner:
+                raise ValueError("Resolved settlement requires WIN/LOSS and a winner")
+        elif result != "VOID" or authoritative_winner is not None:
+            raise ValueError("Void settlement requires VOID and no winner")
+        date = timestamp(settled_at)
+        resolved_date = timestamp(source_resolved_at) if source_resolved_at else None
+        if (
+            date is None
+            or date > utcnow()
+            or (source_resolved_at and resolved_date is None)
+            or (resolved_date is not None and resolved_date > date)
+        ):
+            raise ValueError("Invalid settlement timestamp")
+
+        with self.connect() as db:
+            # Serialize check-and-append so concurrent identical attempts remain idempotent.
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT captured_at, snapshot FROM prospective_plays WHERE observation_id=?",
+                (observation_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Unknown prospective observation")
+            captured_at, serialized_observation = row
+            if date < timestamp(captured_at):
+                raise ValueError("Settlement predates prospective observation")
+            observation = json.loads(serialized_observation)
+            probability = observation.get("model_probability")
+            binary_outcome = None if result == "VOID" else int(result == "WIN")
+            brier_score = None
+            log_loss = None
+            if binary_outcome is not None and isinstance(probability, (int, float)):
+                probability = float(probability)
+                if 0.0 <= probability <= 1.0:
+                    brier_score = (probability - binary_outcome) ** 2
+                if 0.0 < probability < 1.0:
+                    log_loss = -math.log(
+                        probability if binary_outcome else 1.0 - probability
+                    )
+            executable_price = observation.get("executable_price")
+            hypothetical_return = None
+            if result == "VOID":
+                hypothetical_return = 0.0
+            elif isinstance(executable_price, (int, float)) and 0 < executable_price <= 1:
+                hypothetical_return = (
+                    1.0 / float(executable_price) - 1.0 if result == "WIN" else -1.0
+                )
+            authority = {
+                "settlement_state": settlement_state,
+                "result": result,
+                "authoritative_winner": authoritative_winner,
+                "authoritative_source": authoritative_source,
+                "authoritative_source_id": authoritative_source_id,
+                "source_resolved_at": source_resolved_at,
+                "sport": sport,
+            }
+            existing = db.execute(
+                "SELECT snapshot FROM prospective_settlements WHERE observation_id=?",
+                (observation_id,),
+            ).fetchone()
+            if existing is not None:
+                stored = json.loads(existing[0])
+                stored_authority = {key: stored.get(key) for key in authority}
+                if stored_authority == authority:
+                    return False
+                raise ValueError("Conflicting prospective settlement")
+            snapshot = {
+                "observation_id": observation_id,
+                "settled_at": settled_at,
+                **authority,
+                "selected_outcome": observation.get("selected_outcome"),
+                "selected_side": observation.get("side"),
+                "venue": observation.get("venue"),
+                "market_id": observation.get("market_id"),
+                "frozen_executable_price": executable_price,
+                "frozen_current_price": observation.get("current_price"),
+                "frozen_model_probability": probability,
+                "frozen_edge": observation.get("edge"),
+                "frozen_verdict": observation.get("verdict"),
+                "binary_outcome": binary_outcome,
+                "brier_score": brier_score,
+                "log_loss": log_loss,
+                "accuracy": binary_outcome,
+                "hypothetical_standardized_return_at_frozen_price": hypothetical_return,
+            }
+            db.execute(
+                "INSERT INTO prospective_settlements "
+                "(observation_id, settled_at, settlement_state, result, snapshot) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    observation_id,
+                    settled_at,
+                    settlement_state,
+                    result,
+                    json.dumps(snapshot, allow_nan=False, sort_keys=True),
+                ),
+            )
+        return True
 
     def settle(
         self,
