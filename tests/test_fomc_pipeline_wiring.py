@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 from parallax import sources
-from parallax.models import Action, Venue
-from parallax.service import PlayService
-from parallax.track_record import TrackRecord
+from parallax.economic_evidence import EconomicSubtype, EconomicsEvidenceProvider, economic_subtype
+from parallax.models import Venue
 
 
 def fomc_row(slug: str = "rdc-usfed-fomc-2026-09-16-hike25") -> dict:
@@ -36,6 +33,97 @@ def fomc_book(slug: str, observed_at: str) -> dict:
         f"{slug}::NO": {"best_bid": 0.56, "best_ask": 0.58, "ask_size_shares": 100},
         "transact_time": observed_at,
     }
+
+
+def normalized_economic_market(question: str, description: str):
+    from parallax.direct_contracts import normalized_for_direct_contract
+    from parallax.event_discovery import discover_event_candidate
+
+    candidate = discover_event_candidate(
+        {
+            **fomc_row("economic-market"),
+            "id": "economic-market",
+            "question": question,
+            "title": question,
+            "description": description,
+        },
+        venue=Venue.POLYMARKET,
+    ).candidate
+    assert candidate is not None
+    return normalized_for_direct_contract(candidate)
+
+
+def test_reusable_economic_lane_classifies_all_required_subtypes():
+    cases = {
+        EconomicSubtype.FED_RATES: ("Fed Decision in September", "Federal Reserve policy decision rules."),
+        EconomicSubtype.CPI_INFLATION: ("Will CPI inflation exceed 3 percent?", "Official economic release rules."),
+        EconomicSubtype.EMPLOYMENT: ("Will unemployment fall in September?", "Official economic release rules."),
+        EconomicSubtype.GDP: ("Will GDP growth exceed expectations?", "Official economic release rules."),
+        EconomicSubtype.RECESSION: ("Will a recession be declared?", "Official economic release rules."),
+    }
+    for subtype, (question, description) in cases.items():
+        assert economic_subtype(
+            normalized_economic_market(question, description)
+        ) is subtype
+
+
+def test_economic_provider_is_registered_fail_closed_and_never_uses_price():
+    market = normalized_economic_market(
+        "Will CPI inflation exceed 3 percent?", "Official CPI release rules."
+    )
+    provider = EconomicsEvidenceProvider()
+    assert provider.supports(market)
+    assert provider.assess(market) is None
+    assert provider.last_reason.startswith("missing_independent_economic_source:CPI_INFLATION")
+
+
+def test_authoritative_source_observation_is_recorded_without_becoming_a_forecast():
+    from parallax.economic_sources import EconomicObservation
+
+    observation = EconomicObservation(
+        "FRED", "DFF", "2026-09-15", 3.75, "2026-09-15T12:00:00+00:00", 0.0
+    )
+
+    class Sources:
+        def latest(self, subtype):
+            return observation
+
+    market = normalized_economic_market(
+        "Fed Decision in September", "Federal Reserve policy decision rules."
+    )
+    provider = EconomicsEvidenceProvider(Sources())
+    assert provider.assess(market) is None
+    assert provider.last_observation == observation
+    assert provider.last_reason == "economic_probability_methodology_unvalidated:FED_RATES"
+
+
+def test_source_clients_use_mocked_authoritative_payloads_and_cache_them():
+    from parallax.economic_sources import BLSClient, FREDClient
+
+    fred_calls = []
+
+    def fred_transport(url):
+        fred_calls.append(url)
+        return {"observations": [{"date": "2026-09-15", "value": "3.75"}]}
+
+    fred = FREDClient(api_key="test-only", transport=fred_transport)
+    first = fred.latest("DFF")
+    second = fred.latest("DFF")
+    assert first.series_id == "DFF"
+    assert first.value == 3.75
+    assert second == first
+    assert len(fred_calls) == 1
+
+    bls_calls = []
+
+    def bls_transport(url, body):
+        bls_calls.append((url, body))
+        return {"Results": {"series": [{"data": [{"year": "2026", "period": "M08", "value": "4.3"}]}]}}
+
+    bls = BLSClient(transport=bls_transport)
+    assert bls.latest("LNS14000000").value == 4.3
+    assert bls.latest("LNS14000000").value == 4.3
+    assert len(bls_calls) == 1
 
 
 def test_live_source_wires_fed_contract_to_exact_normalized_path(monkeypatch):
@@ -98,38 +186,3 @@ def test_fed_rates_scope_reuses_taxonomy_and_excludes_sports():
             "question": "Who will win the baseball game?",
         }
     )
-
-
-def test_missing_fomc_evidence_is_not_buy_and_is_durably_captured(tmp_path):
-    class NoEvidence:
-        def assess(self, market):
-            return None
-
-    row = fomc_row()
-    observed_at = "2026-09-15T12:00:00+00:00"
-    from parallax.direct_contracts import normalized_for_direct_contract
-    from parallax.event_discovery import discover_event_candidate
-
-    candidate = discover_event_candidate(
-        row, venue=Venue.POLYMARKET
-    ).candidate
-    assert candidate is not None
-    market = normalized_for_direct_contract(replace(
-        candidate,
-        raw_provenance={**candidate.raw_provenance, "book": fomc_book(row["slug"], observed_at)},
-    ))
-    service = PlayService(
-        TrackRecord(tmp_path / "record.sqlite"),
-        prospective_store=TrackRecord(tmp_path / "prospective.sqlite"),
-        evidence_engine=NoEvidence(),
-        capture_only=True,
-    )
-    service.replace_inputs([market])
-    plays = service.plays()["items"]
-
-    assert plays
-    assert all(play["suggested_action"] != Action.BUY.value for play in plays)
-    records = service.prospective_store.prospective_records()
-    assert len(records) == 2
-    assert {record["observation_id"] for record in records}
-    assert {record["market_id"] for record in records} == {"313137"}

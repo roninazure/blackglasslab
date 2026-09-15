@@ -6,6 +6,7 @@ from typing import Protocol
 from .mlb import MLBEvidenceProvider
 from .nfl import NFLEvidenceProvider
 from .cfb import CFBEvidenceProvider, fetch_games
+from .economic_evidence import EconomicsEvidenceProvider
 from .models import Evidence, NormalizedMarket
 
 
@@ -20,7 +21,7 @@ class EvidenceEngine:
     def __init__(self, providers: tuple[EvidenceProvider, ...] | None = None):
         # CFB live routing is opt-in at the provider loader boundary so the
         # historical CFBD calls happen once per scan, not once per market.
-        self.providers = providers or (MLBEvidenceProvider(), NFLEvidenceProvider(), CFBEvidenceProvider(lambda: fetch_games(tuple(range(2010, datetime.now(UTC).year + 1)))))
+        self.providers = providers or (MLBEvidenceProvider(), NFLEvidenceProvider(), CFBEvidenceProvider(lambda: fetch_games(tuple(range(2010, datetime.now(UTC).year + 1)))), EconomicsEvidenceProvider())
 
     def assess(self, market: NormalizedMarket) -> Evidence | None:
         for provider in self.providers:
