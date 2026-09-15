@@ -1,22 +1,63 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import math
 import os
 import random
+import re
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from .live_engine import OrderIntent, ReconciliationError, SafetyStop
 
 PMUS_KEY_ID_ENV = "PARALLAX_PMUS_KEY_ID"
 PMUS_SECRET_KEY_ENV = "PARALLAX_PMUS_SECRET_KEY"
+PMUS_DISCOVERY_MAX_ATTEMPTS = 3
+PMUS_DISCOVERY_BACKOFF_SECONDS = (0.1, 0.2)
 
 
 class PolymarketUSRateLimit(SafetyStop):
     """Authenticated US REST traffic is temporarily unsafe to send."""
+
+
+class PolymarketUSOrderRejected(SafetyStop):
+    """A bounded, credential-free Polymarket US order rejection."""
+
+    def __init__(self, details: dict[str, Any]) -> None:
+        self.details = details
+        super().__init__(
+            f"status={details.get('status') or 'UNKNOWN'}; "
+            f"reason={details.get('reason') or 'unknown venue rejection'}"
+        )
+
+
+class PolymarketUSDiscoveryFailure(SafetyStop):
+    """Fail-closed discovery failure with bounded retry metadata."""
+
+    def __init__(self, message: str, *, attempts: int, underlying_error: Exception) -> None:
+        self.attempts = attempts
+        self.underlying_error = underlying_error
+        super().__init__(message)
+
+
+def _retryable_discovery_error(exc: BaseException) -> bool:
+    """Recognize only transport/timeouts, including SDK-wrapped causes."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        name = type(current).__name__.lower()
+        module = type(current).__module__.lower()
+        if "timeout" in name or "timeout" in module or "network" in name or "requesterror" in name:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 class RequestMeter:
@@ -168,7 +209,78 @@ def redact_sensitive(value: object) -> str:
         secret = os.environ.get(name)
         if secret:
             text = text.replace(secret, "<redacted>")
+    text = re.sub(
+        r"(?i)(authorization|x-pm-signature|secret(?:_key)?|api[_-]?key)"
+        r"\s*[:=]\s*[^\s,;]+",
+        r"\1=<redacted>",
+        text,
+    )
     return text
+
+
+def _bounded_error_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key)[:64]: _bounded_error_value(item)
+            for key, item in list(value.items())[:8]
+        }
+    if isinstance(value, (list, tuple)):
+        return [_bounded_error_value(item) for item in list(value)[:8]]
+    if isinstance(value, str):
+        return " ".join(redact_sensitive(value).split())[:240]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return redact_sensitive(value)[:240]
+
+
+def extract_sdk_error(exc: Exception) -> dict[str, Any]:
+    """Extract bounded SDK error fields without headers, signatures, or credentials."""
+    request = getattr(exc, "request", None)
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        reason_value = body.get("message") or body.get("error") or body.get("detail")
+    else:
+        reason_value = body
+    reason = redact_sensitive(
+        reason_value or getattr(exc, "message", None) or str(exc)
+    )
+    reason = " ".join(reason.split())[:240] or "unknown venue rejection"
+    safe_body: object
+    if isinstance(body, dict):
+        safe_body = _bounded_error_value(
+            {
+                key: body[key]
+                for key in ("code", "message", "error", "detail", "details")
+                if key in body
+            }
+        )
+    elif body is None:
+        safe_body = None
+    else:
+        safe_body = " ".join(redact_sensitive(body).split())[:240]
+    return {
+        "exception_type": type(exc).__name__,
+        "status": getattr(exc, "status_code", None),
+        "reason": reason,
+        "body": safe_body,
+        "method": getattr(request, "method", None),
+        "endpoint": str(getattr(request, "url", "")).split("?", 1)[0] or None,
+    }
+
+
+def format_order_rejected(intent: OrderIntent, details: dict[str, Any]) -> str:
+    return (
+        "ORDER_REJECTED "
+        f"market={intent.market_id} side={intent.side} price={intent.price:g} "
+        f"qty={intent.size_shares:g} notional={intent.notional_usd:g} "
+        f"status={details.get('status') or 'UNKNOWN'} "
+        f"reason={details.get('reason') or 'unknown venue rejection'}"
+    )
+
+
+def _on_increment(value: float, increment: float) -> bool:
+    units = value / increment
+    return abs(units - round(units)) <= 1e-8
 
 
 def normalize_market_page(payload: Any) -> list[dict[str, Any]]:
@@ -387,6 +499,260 @@ def normalize_execution(raw: Any) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class PolymarketUSMarketTrade:
+    """One authoritative trade notification from the PMUS markets websocket."""
+
+    id: str
+    market: str
+    aggressor_side: str
+    aggressor_outcome: str
+    price: float
+    quantity: float
+    timestamp: str
+
+    def for_outcome(self, outcome: str) -> dict[str, Any]:
+        """Express the binary-market print in one outcome token's coordinates."""
+        if outcome not in {"YES", "NO"}:
+            raise ReconciliationError("invalid paper trade outcome")
+        same_outcome = outcome == self.aggressor_outcome
+        side = self.aggressor_side if same_outcome else (
+            "SELL" if self.aggressor_side == "BUY" else "BUY"
+        )
+        return {
+            "id": f"{self.id}::{outcome}",
+            "market": self.market,
+            "side": side,
+            "price": self.price if same_outcome else 1.0 - self.price,
+            "quantity": self.quantity,
+            "timestamp": self.timestamp,
+        }
+
+
+def normalize_market_trade(
+    message: Any, *, event_sequence: int = 0
+) -> PolymarketUSMarketTrade:
+    """Normalize the official ``SUBSCRIPTION_TYPE_TRADE`` message schema."""
+    if not isinstance(message, dict) or not isinstance(message.get("trade"), dict):
+        raise ReconciliationError("malformed Polymarket US market trade message")
+    raw = message["trade"]
+    market = str(raw.get("marketSlug") or "")
+    timestamp = str(raw.get("tradeTime") or raw.get("transactTime") or "")
+    taker = raw.get("taker")
+    if not market or not timestamp or not isinstance(taker, dict):
+        raise ReconciliationError("Polymarket US market trade omitted identity")
+    taker_side = str(taker.get("side") or "")
+    intent = str(taker.get("intent") or "")
+    raw_side = taker_side.removeprefix("ORDER_SIDE_")
+    side = _action_from_intent(intent)
+    outcome = _outcome_from_intent(intent)
+    expected_raw_side = side if outcome == "YES" else (
+        "SELL" if side == "BUY" else "BUY"
+    )
+    if raw_side not in {"BUY", "SELL"} or raw_side != expected_raw_side:
+        raise ReconciliationError("inconsistent Polymarket US trade aggressor")
+    price = _amount(raw.get("price"), name="market trade price")
+    quantity = _amount(raw.get("quantity"), name="market trade quantity")
+    if not 0 < price < 1 or quantity <= 0:
+        raise ReconciliationError("invalid Polymarket US market trade economics")
+    source_id = str(raw.get("id") or raw.get("tradeId") or "")
+    if not source_id:
+        canonical = json.dumps(raw, allow_nan=False, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:20]
+        source_id = f"pmus-ws-{event_sequence}-{digest}"
+    return PolymarketUSMarketTrade(
+        id=source_id,
+        market=market,
+        aggressor_side=side,
+        aggressor_outcome=outcome,
+        price=price if outcome == "YES" else 1.0 - price,
+        quantity=quantity,
+        timestamp=timestamp,
+    )
+
+
+class PolymarketUSTradeStream:
+    """Threaded adapter for the official authenticated PMUS market trade stream."""
+
+    _RAW_EVENT_COUNTER_LIMIT = 1_000_000
+
+    def __init__(self, client: Any, market_slugs: list[str]) -> None:
+        slugs = sorted(set(market_slugs))
+        if not slugs or len(slugs) > 100:
+            raise ValueError("PMUS trade subscriptions require 1-100 markets")
+        self.client = client
+        self.market_slugs = slugs
+        self.connected = False
+        self.failed = False
+        self.error: str | None = None
+        self.last_message_monotonic = 0.0
+        self.book_subscription_connected = False
+        self.trade_subscription_connected = False
+        self.raw_event_count = 0
+        self.raw_trade_event_count = 0
+        self._trades: deque[PolymarketUSMarketTrade] = deque()
+        self._sequence = 0
+        self._lock = threading.Lock()
+        self._stop_thread = threading.Event()
+        self._stop_async: asyncio.Event | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+
+    @classmethod
+    def from_env(cls, market_slugs: list[str]) -> PolymarketUSTradeStream:
+        missing = [
+            name
+            for name in (PMUS_KEY_ID_ENV, PMUS_SECRET_KEY_ENV)
+            if not os.environ.get(name)
+        ]
+        if missing:
+            raise SafetyStop(
+                "official Polymarket US trade websocket requires authentication: "
+                + ", ".join(missing)
+            )
+        try:
+            from polymarket_us import PolymarketUS
+        except ImportError as exc:
+            raise SafetyStop("polymarket-us is required for the PMUS trade stream") from exc
+        return cls(
+            PolymarketUS(
+                key_id=os.environ[PMUS_KEY_ID_ENV],
+                secret_key=os.environ[PMUS_SECRET_KEY_ENV],
+                timeout=8.0,
+            ),
+            market_slugs,
+        )
+
+    def _fail(self, exc: Exception) -> None:
+        with self._lock:
+            self.connected = False
+            self.failed = True
+            self.error = f"{type(exc).__name__}: {redact_sensitive(exc)}"
+        if self._stop_async is not None:
+            self._stop_async.set()
+
+    def _on_trade(self, message: dict[str, Any]) -> None:
+        try:
+            with self._lock:
+                self._sequence += 1
+                sequence = self._sequence
+                self.raw_trade_event_count = min(
+                    self.raw_trade_event_count + 1,
+                    self._RAW_EVENT_COUNTER_LIMIT,
+                )
+            trade = normalize_market_trade(message, event_sequence=sequence)
+            if trade.market not in self.market_slugs:
+                raise ReconciliationError("unexpected Polymarket US trade market")
+            with self._lock:
+                self._trades.append(trade)
+                self.last_message_monotonic = time.monotonic()
+        except Exception as exc:  # noqa: BLE001 - schema drift must fail closed
+            self._fail(exc)
+
+    def _on_raw_message(self, _message: dict[str, Any]) -> None:
+        """Count SDK events without retaining or logging their payloads."""
+        with self._lock:
+            self.raw_event_count = min(
+                self.raw_event_count + 1,
+                self._RAW_EVENT_COUNTER_LIMIT,
+            )
+            self.last_message_monotonic = time.monotonic()
+
+    def start(self) -> None:
+        if self._thread is not None:
+            raise RuntimeError("PMUS trade stream was already started")
+
+        def run() -> None:
+            async def consume() -> None:
+                self._loop = asyncio.get_running_loop()
+                self._stop_async = asyncio.Event()
+                websocket = self.client.ws.markets()
+
+                def heartbeat() -> None:
+                    with self._lock:
+                        self.last_message_monotonic = time.monotonic()
+
+                def closed() -> None:
+                    if not self._stop_thread.is_set():
+                        self._fail(RuntimeError("Polymarket US trade websocket closed"))
+
+                websocket.on("message", self._on_raw_message)
+                websocket.on("trade", self._on_trade)
+                websocket.on("heartbeat", heartbeat)
+                websocket.on("error", self._fail)
+                websocket.on("close", closed)
+                await websocket.connect()
+                await websocket.subscribe_market_data(
+                    "parallax-paper-books", self.market_slugs
+                )
+                with self._lock:
+                    self.book_subscription_connected = True
+                print("PMUS_BOOK_SUBSCRIPTION=CONNECTED", flush=True)
+                await websocket.subscribe_trades("parallax-paper-trades", self.market_slugs)
+                with self._lock:
+                    self.trade_subscription_connected = True
+                    self.connected = True
+                    self.last_message_monotonic = time.monotonic()
+                print("PMUS_TRADE_SUBSCRIPTION=CONNECTED", flush=True)
+                print(f"PMUS_TRADE_MARKETS={len(self.market_slugs)}", flush=True)
+                await self._stop_async.wait()
+                await websocket.close()
+
+            try:
+                asyncio.run(consume())
+            except Exception as exc:  # noqa: BLE001 - cross the worker boundary safely
+                self._fail(exc)
+
+        self._thread = threading.Thread(
+            target=run, name="parallax-pmus-trade-stream", daemon=True
+        )
+        self._thread.start()
+
+    def wait_connected(self, timeout_seconds: float) -> bool:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            with self._lock:
+                if self.connected:
+                    return True
+                if self.failed:
+                    return False
+            time.sleep(0.01)
+        return False
+
+    def drain(self) -> list[PolymarketUSMarketTrade]:
+        with self._lock:
+            rows = list(self._trades)
+            self._trades.clear()
+            return rows
+
+    def diagnostics(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "trade_stream_connected": self.connected and not self.failed,
+                "trade_stream_failed": self.failed,
+                "trade_stream_error": self.error,
+                "last_trade_stream_message_monotonic": self.last_message_monotonic,
+                "book_subscription_connected": self.book_subscription_connected,
+                "trade_subscription_connected": self.trade_subscription_connected,
+                "trade_markets_subscribed": len(self.market_slugs),
+                "raw_event_count": self.raw_event_count,
+                "raw_trade_event_count": self.raw_trade_event_count,
+            }
+
+    def stop(self) -> None:
+        self._stop_thread.set()
+        if self._stop_async is not None and self._loop is not None:
+            try:
+                self._loop.call_soon_threadsafe(self._stop_async.set)
+            except RuntimeError:
+                pass
+        if self._thread is not None:
+            self._thread.join(timeout=5.0)
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
+
+
 def normalize_positions(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, dict) or not isinstance(payload.get("positions"), dict):
         raise ReconciliationError("Polymarket US position response omitted positions")
@@ -439,25 +805,30 @@ class PolymarketUSPublicClient:
         return {"public_rest_requests_per_minute": self.meter.per_minute()}
 
     def markets_page(self, *, limit: int, offset: int) -> list[dict[str, Any]]:
-        try:
-            self.meter.record()
-            payload = self.client.markets.list(
-                {
-                    "active": True,
-                    "closed": False,
-                    "limit": limit,
-                    "offset": offset,
-                    "orderBy": ["volumeNum"],
-                    "orderDirection": "desc",
-                }
-            )
-            return normalize_market_page(payload)
-        except Exception as exc:
-            if isinstance(exc, (SafetyStop, ReconciliationError)):
-                raise
-            raise SafetyStop(
-                f"Polymarket US market discovery failed: {redact_sensitive(exc)}"
-            ) from exc
+        last_error: Exception | None = None
+        for attempt in range(1, PMUS_DISCOVERY_MAX_ATTEMPTS + 1):
+            try:
+                self.meter.record()
+                payload = self.client.markets.list(
+                    {"active": True, "closed": False, "limit": limit, "offset": offset,
+                     "orderBy": ["volume"], "orderDirection": "desc"}
+                )
+                return normalize_market_page(payload)
+            except Exception as exc:
+                last_error = exc
+                if not _retryable_discovery_error(exc):
+                    if isinstance(exc, (SafetyStop, ReconciliationError)):
+                        raise
+                    raise SafetyStop(
+                        f"Polymarket US market discovery failed: {redact_sensitive(exc)}"
+                    ) from exc
+                if attempt == PMUS_DISCOVERY_MAX_ATTEMPTS:
+                    raise PolymarketUSDiscoveryFailure(
+                        f"Polymarket US market discovery failed after {attempt} attempts: {redact_sensitive(exc)}",
+                        attempts=attempt, underlying_error=exc,
+                    ) from exc
+                time.sleep(PMUS_DISCOVERY_BACKOFF_SECONDS[attempt - 1])
+        raise AssertionError(f"unreachable discovery retry state: {last_error!r}")
 
     def book(self, slug: str) -> dict[str, Any]:
         try:
@@ -469,6 +840,38 @@ class PolymarketUSPublicClient:
             raise SafetyStop(
                 f"Polymarket US book retrieval failed for {slug}: {redact_sensitive(exc)}"
             ) from exc
+
+    def trades(self, slug: str) -> list[dict[str, Any]]:
+        """Read public prints when the installed US SDK exposes them.
+
+        SDK versions without a public trade endpoint intentionally return no evidence;
+        paper execution must never substitute a price touch or book depletion for prints.
+        """
+        method = getattr(self.client.markets, "trades", None)
+        if not callable(method):
+            return []
+        try:
+            self.meter.record()
+            payload = method(slug)
+        except Exception:
+            return []
+        rows = payload.get("trades", []) if isinstance(payload, dict) else payload
+        if not isinstance(rows, list):
+            return []
+        result = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                result.append({
+                    "id": str(row.get("id") or row.get("tradeId") or ""),
+                    "side": str(row.get("side") or row.get("aggressorSide") or "").upper(),
+                    "price": _amount(row.get("price") or row.get("lastPx"), name="public trade price"),
+                    "quantity": _number(row.get("quantity") or row.get("qty") or row.get("size"), name="public trade quantity"),
+                })
+            except ReconciliationError:
+                continue
+        return result
 
 
 class PolymarketUSPrivateState:
@@ -777,9 +1180,8 @@ class PolymarketUSVenue:
             result.append(normalized)
         return result
 
-    def place_post_only(self, intent: OrderIntent) -> dict[str, Any]:
-        if self.read_only:
-            raise SafetyStop("read-only Polymarket US client cannot submit orders")
+    @staticmethod
+    def _order_components(intent: OrderIntent) -> tuple[str, str, float, str]:
         slug, encoded_outcome = split_token_id(intent.token_id)
         outcome = intent.outcome.upper()
         if encoded_outcome != outcome or intent.market_id != slug:
@@ -793,20 +1195,118 @@ class PolymarketUSVenue:
         }.get((outcome, intent.side))
         if order_intent is None:
             raise ReconciliationError("invalid Polymarket US order side/outcome")
-        if not 0.01 <= long_price <= 0.99:
-            raise SafetyStop("Polymarket US long-side order price is out of bounds")
-        params = {
+        return slug, outcome, long_price, order_intent
+
+    @staticmethod
+    def _available_usd(payload: Any) -> float:
+        if not isinstance(payload, dict) or not isinstance(payload.get("balances"), list):
+            raise ReconciliationError("Polymarket US balance response is malformed")
+        usd = [
+            row
+            for row in payload["balances"]
+            if isinstance(row, dict)
+            and str(row.get("currency") or "USD").upper() == "USD"
+        ]
+        if not usd:
+            return 0.0
+        row = usd[0]
+        for field in ("buyingPower", "assetAvailable", "currentBalance"):
+            if row.get(field) not in (None, ""):
+                return max(0.0, _number(row[field], name=field))
+        raise ReconciliationError("Polymarket US USD balance omitted available cash")
+
+    def account_available_balance(self) -> float:
+        payload = self.rest.call(
+            "pre-submission balance check", self.client.account.balances
+        )
+        return self._available_usd(payload)
+
+    def build_order_request(self, intent: OrderIntent) -> dict[str, Any]:
+        slug, _outcome, long_price, order_intent = self._order_components(intent)
+        if not float(intent.size_shares).is_integer():
+            raise SafetyStop("Polymarket US quantity must use whole-share precision")
+        return {
             "marketSlug": slug,
             "intent": order_intent,
             "type": "ORDER_TYPE_LIMIT",
-            "price": {"value": f"{long_price:.10f}".rstrip("0").rstrip("."), "currency": "USD"},
-            "quantity": intent.size_shares,
+            "price": {
+                "value": f"{long_price:.10f}".rstrip("0").rstrip("."),
+                "currency": "USD",
+            },
+            "quantity": int(intent.size_shares),
             "tif": "TIME_IN_FORCE_GOOD_TILL_CANCEL",
             "participateDontInitiate": True,
             "manualOrderIndicator": "MANUAL_ORDER_INDICATOR_AUTOMATIC",
             "synchronousExecution": False,
         }
-        response = self.rest.call("create order", lambda: self.client.orders.create(params))
+
+    def prevalidate_order(self, intent: OrderIntent) -> dict[str, Any]:
+        """Validate dynamic venue constraints without creating or previewing an order."""
+        slug, outcome, long_price, _order_intent = self._order_components(intent)
+        market_response = self.client.markets.retrieve_by_slug(slug)
+        raw_market = (
+            market_response.get("market") if isinstance(market_response, dict) else None
+        )
+        if not isinstance(raw_market, dict):
+            raise ReconciliationError("Polymarket US market detail response is malformed")
+        market = normalize_market_page({"markets": [raw_market]})[0]
+        if (
+            market["active"] is not True
+            or market["closed"] is True
+            or market["accepting_orders"] is not True
+        ):
+            raise SafetyStop("Polymarket US market is not currently tradeable")
+        book = normalize_book(self.client.markets.book(slug), expected_slug=slug)
+        tick = float(market["tick_size"])
+        minimum = float(market["minimum_trade_quantity"])
+        if not 0.01 <= long_price <= 0.99:
+            raise SafetyStop("Polymarket US long-side order price is out of bounds")
+        if not _on_increment(long_price, tick):
+            raise SafetyStop(f"Polymarket US price is not on the venue tick ({tick:g})")
+        if not float(intent.size_shares).is_integer():
+            raise SafetyStop("Polymarket US quantity must use whole-share precision")
+        if intent.size_shares + 1e-9 < minimum:
+            raise SafetyStop(f"Polymarket US quantity is below market minimum ({minimum:g})")
+        top = book[token_id(slug, outcome)]
+        if intent.side == "BUY" and intent.price >= float(top["best_ask"]) - 1e-9:
+            raise SafetyStop("Polymarket US post-only BUY would cross the current offer")
+        if intent.side == "SELL" and intent.price <= float(top["best_bid"]) + 1e-9:
+            raise SafetyStop("Polymarket US post-only SELL would cross the current bid")
+        available = self.account_available_balance()
+        if intent.side == "BUY" and intent.notional_usd > available + 1e-9:
+            raise SafetyStop(
+                "insufficient Polymarket US available balance: "
+                f"required={intent.notional_usd:.4f} available={available:.4f}"
+            )
+        request = self.build_order_request(intent)
+        return {
+            "market": slug,
+            "market_id": str(market["id"]),
+            "outcome": outcome,
+            "market_state": "MARKET_STATE_OPEN",
+            "tradeable": True,
+            "available_balance": available,
+            "minimum_order_size": minimum,
+            "tick_size": tick,
+            "price_precision": max(0, -Decimal(str(tick)).normalize().as_tuple().exponent),
+            "quantity_precision": 0,
+            "request": request,
+        }
+
+    def place_post_only(self, intent: OrderIntent) -> dict[str, Any]:
+        if self.read_only:
+            raise SafetyStop("read-only Polymarket US client cannot submit orders")
+        validated = self.prevalidate_order(intent)
+        params = validated["request"]
+        slug, outcome, _long_price, _order_intent = self._order_components(intent)
+        try:
+            response = self.rest.call(
+                "create order", lambda: self.client.orders.create(params)
+            )
+        except Exception as exc:
+            details = extract_sdk_error(exc)
+            print(format_order_rejected(intent, details), flush=True)
+            raise PolymarketUSOrderRejected(details) from exc
         order_id = str(response.get("id") or "") if isinstance(response, dict) else ""
         if not order_id:
             raise ReconciliationError("Polymarket US order response omitted order ID")

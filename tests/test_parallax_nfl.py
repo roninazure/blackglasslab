@@ -1,8 +1,11 @@
 import importlib.util
 from pathlib import Path
+import pytest
 
 from parallax.nfl import NFLGame, NFLEvidenceProvider, VALIDATION_ECE, is_supported_market, map_market_to_game, nfl_calibration_safe, parse_games, validate
 from parallax.models import NormalizedMarket, Venue, Mechanics, Side
+from maker_spread_economics.live_engine import SafetyStop
+from maker_spread_economics.polymarket_us import PolymarketUSDiscoveryFailure, PolymarketUSPublicClient
 
 nfl_live_scan_spec = importlib.util.spec_from_file_location(
     "nfl_live_scan", Path(__file__).parents[1] / "scripts" / "nfl_live_scan.py"
@@ -152,3 +155,47 @@ def test_nfl_capture_missing_or_mismatched_observation_is_fail_closed(monkeypatc
     import pytest
     with pytest.raises(ValueError, match="verified durable observation ID"):
         nfl_live_scan._capture_evaluated(Store(), object(), Side.YES, object(), "now")
+
+
+def test_pmus_discovery_retries_timeout_then_succeeds(monkeypatch):
+    class TimeoutErrorFromSDK(Exception):
+        pass
+    class Markets:
+        def __init__(self): self.calls = 0
+        def list(self, _params):
+            self.calls += 1
+            if self.calls < 3:
+                raise TimeoutErrorFromSDK("read timeout")
+            return {"markets": []}
+    class Client:
+        def __init__(self): self.markets = Markets()
+    sleeps = []
+    monkeypatch.setattr("maker_spread_economics.polymarket_us.time.sleep", sleeps.append)
+    client = Client()
+    assert PolymarketUSPublicClient(client=client).markets_page(limit=100, offset=0) == []
+    assert client.markets.calls == 3 and sleeps == [0.1, 0.2]
+
+
+def test_pmus_discovery_exhaustion_is_fail_closed(monkeypatch):
+    class APITimeoutError(Exception): pass
+    class Markets:
+        def list(self, _params): raise APITimeoutError("read timeout")
+    class Client:
+        markets = Markets()
+    monkeypatch.setattr("maker_spread_economics.polymarket_us.time.sleep", lambda _seconds: None)
+    with pytest.raises(PolymarketUSDiscoveryFailure) as caught:
+        PolymarketUSPublicClient(client=Client()).markets_page(limit=100, offset=0)
+    assert caught.value.attempts == 3
+    assert isinstance(caught.value, SafetyStop)
+
+
+def test_pmus_discovery_non_retryable_safetystop_is_not_retried(monkeypatch):
+    class Markets:
+        def list(self, _params): raise SafetyStop("venue closed-only")
+    class Client:
+        markets = Markets()
+    sleeps = []
+    monkeypatch.setattr("maker_spread_economics.polymarket_us.time.sleep", sleeps.append)
+    with pytest.raises(SafetyStop, match="closed-only"):
+        PolymarketUSPublicClient(client=Client()).markets_page(limit=100, offset=0)
+    assert sleeps == []
