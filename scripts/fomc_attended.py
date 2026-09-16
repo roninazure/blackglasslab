@@ -16,11 +16,12 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from maker_spread_economics.polymarket_us import PolymarketUSPublicClient
+from maker_spread_economics.polymarket_us import PolymarketUSPublicClient, _amount
 
 from parallax.direct_contracts import normalized_for_direct_contract
 from parallax.economic_evidence import EconomicsEvidenceProvider
-from parallax.event_discovery import discover_event_candidate
+from parallax.event_discovery import classify_event_family, discover_event_candidate
+from parallax.generic_events import normalize_binary_event
 from parallax.models import Side, Venue, utcnow
 from parallax.track_record import TrackRecord
 from swarm_edge_runtime import RUNTIME_PATHS
@@ -36,35 +37,67 @@ def fred_status() -> str:
     return "AVAILABLE" if os.environ.get("FRED_API_KEY", "").strip() else "MISSING"
 
 
+def target_status(row: dict) -> str:
+    raw = row.get("raw") or {}
+    if row.get("closed") is True:
+        return "CLOSED"
+    # These are venue fields observed on the exact contracts, not quote-derived
+    # resolution guesses.  Missing quotes alone do not imply closure.
+    if raw.get("ep3Status") == "EXPIRED":
+        return "EXPIRED"
+    status = str(raw.get("status") or "").removeprefix("MARKET_STATUS_")
+    if status:
+        return status
+    return "OPEN" if row.get("active") and row.get("accepting_orders") else "UNKNOWN"
+
+
+def market_bbo(row: dict, *, executable: bool) -> dict:
+    raw = row.get("raw") or {}
+
+    def quote(name: str) -> float | None:
+        value = raw.get(name)
+        if value is None or (isinstance(value, dict) and value.get("value") is None):
+            return None
+        return _amount(value, name=name)
+
+    bid, ask = quote("bestBidQuote"), quote("bestAskQuote")
+    return {
+        f"{row['slug']}::YES": {
+            "best_bid": bid,
+            "best_ask": ask if executable else None,
+        },
+        f"{row['slug']}::NO": {
+            "best_bid": 1.0 - ask if executable and ask is not None else None,
+            "best_ask": 1.0 - bid if executable and bid is not None else None,
+        },
+    }
+
+
 def discover_targets(client: PolymarketUSPublicClient):
     markets = []
     for market_id in sorted(TARGETS):
         row = client.market_by_id(market_id)
         if row.get("slug") != TARGETS[market_id]:
             raise RuntimeError(f"contract {market_id} slug mismatch")
+        status = target_status(row)
         book_fetch_status = "book"
-        try:
-            book = client.book(row["slug"])
-        except Exception:
-            # The exact market response carries the venue BBO.  Preserve it as
-            # a price-only observation when the separate book endpoint is
-            # temporarily rate-limited; never manufacture depth.
-            raw = dict(row.get("raw") or {})
-            yes_ask = float((raw.get("bestAskQuote") or {}).get("value"))
-            no_ask = 1.0 - float((raw.get("bestBidQuote") or {}).get("value"))
-            raw["yes_ask"], raw["no_ask"] = yes_ask, no_ask
-            row = {**row, "raw": raw}
-            book = {
-                f"{row['slug']}::YES": {"best_ask": yes_ask},
-                f"{row['slug']}::NO": {"best_ask": no_ask},
-            }
-            book_fetch_status = "market_bbo_fallback"
-        decision = discover_event_candidate(row, venue=Venue.POLYMARKET, book=book)
-        if decision.candidate is None:
-            raise RuntimeError(f"contract {market_id} rejected: {decision.reasons}")
-        market = normalized_for_direct_contract(decision.candidate)
+        candidate = None
+        if status != "OPEN":
+            # Closed contracts are intentionally rejected by trading discovery.
+            # This exact-contract observer still records their terminal state.
+            book = market_bbo(row, executable=False)
+            market = normalize_binary_event(
+                row, venue=Venue.POLYMARKET,
+                event_id=f"direct-contract:POLYMARKET:{market_id}",
+                event_family=classify_event_family(row).value,
+                event_question=row["question"],
+                resolution_reference=row["slug"], book=book,
+            )
+            book_fetch_status = "market_bbo_non_open"
+        else:
+            market, candidate, book_fetch_status = discover_open_target(client, row)
         market = replace(
-            market,
+            market, status=status,
             original_metadata={
                 **market.original_metadata,
                 "fomc_observation": True,
@@ -73,8 +106,25 @@ def discover_targets(client: PolymarketUSPublicClient):
                 "price_source_state": book_fetch_status,
             },
         )
-        markets.append((market_id, market, decision.candidate))
+        markets.append((market_id, market, candidate))
     return markets
+
+
+def discover_open_target(client: PolymarketUSPublicClient, row: dict):
+    book_fetch_status = "book"
+    try:
+        book = client.book(row["slug"])
+    except Exception:
+        # The exact market response carries the venue BBO.  Preserve it as
+        # a price-only observation when the separate book endpoint is
+        # temporarily rate-limited; never manufacture depth.
+        book = market_bbo(row, executable=True)
+        book_fetch_status = "market_bbo_fallback"
+    decision = discover_event_candidate(row, venue=Venue.POLYMARKET, book=book)
+    if decision.candidate is None:
+        raise RuntimeError(f"contract {row['id']} rejected: {decision.reasons}")
+    market = normalized_for_direct_contract(decision.candidate)
+    return market, decision.candidate, book_fetch_status
 
 
 def observe_once(store: TrackRecord, client: PolymarketUSPublicClient) -> dict:
@@ -89,14 +139,16 @@ def observe_once(store: TrackRecord, client: PolymarketUSPublicClient) -> dict:
                 raise RuntimeError(f"durable read-back failed for {market_id}")
             captured.append({
                 "contract": market_id,
-                "classification": f"{candidate.event_family.value}/Fed-rates/FOMC",
+                "classification": f"{market.category}/Fed-rates/FOMC",
                 "side": side.value,
                 "outcome": market.outcomes[side.value],
                 "price": market.yes_ask if side is Side.YES else market.no_ask,
+                "bid": market.yes_bid if side is Side.YES else market.no_bid,
+                "status": market.status,
                 "verdict": "WATCH" if evidence is None else "EVALUATE",
                 "observation_id": observation_id,
                 "evidence": "FRED-backed observation; no certified probability" if provider.last_observation else provider.last_reason,
-                "open": market.status.upper() not in {"CLOSED", "SETTLED", "RESOLVED", "FINALIZED", "EXPIRED"},
+                "open": market.status == "OPEN",
             })
     return {"observed_at": datetime.now(UTC).isoformat(), "fred_api_key": fred_status(), "rows": captured}
 
@@ -119,6 +171,7 @@ def main() -> int:
     cycles = 0
     try:
         while not stopping["value"]:
+            cycles += 1
             try:
                 report = observe_once(store, client)
                 for row in report["rows"]:
@@ -126,16 +179,16 @@ def main() -> int:
                         f"{report['observed_at']} contract={row['contract']} "
                         f"classification={row['classification']} side={row['side']} "
                         f"ask={row['price']} verdict={row['verdict']} "
+                        f"bid={row['bid']} status={row['status']} open={row['open']} "
                         f"observation_id={row['observation_id']} evidence={row['evidence']}",
                         flush=True,
                     )
-                if not all(row["open"] for row in report["rows"]):
-                    break
-                cycles += 1
-                if args.cycles and cycles >= args.cycles:
+                if not any(row["open"] for row in report["rows"]):
                     break
             except Exception as exc:  # one failed refresh must not kill attendance
                 print(f"{datetime.now(UTC).isoformat()} refresh_error={type(exc).__name__}", flush=True)
+            if args.cycles and cycles >= args.cycles:
+                break
             if not stopping["value"]:
                 time.sleep(args.interval)
     finally:
