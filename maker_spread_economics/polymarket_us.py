@@ -830,6 +830,22 @@ class PolymarketUSPublicClient:
                 time.sleep(PMUS_DISCOVERY_BACKOFF_SECONDS[attempt - 1])
         raise AssertionError(f"unreachable discovery retry state: {last_error!r}")
 
+    def market_by_id(self, market_id: str) -> dict[str, Any]:
+        """Fetch one exact public market without scanning the ranked universe."""
+        try:
+            self.meter.record()
+            payload = self.client.markets.retrieve(int(market_id))
+            rows = normalize_market_page({"markets": [payload.get("market", payload)]})
+            if len(rows) != 1 or rows[0]["id"] != str(market_id):
+                raise ReconciliationError("Polymarket US market ID mismatch")
+            return rows[0]
+        except Exception as exc:
+            if isinstance(exc, (SafetyStop, ReconciliationError)):
+                raise
+            raise SafetyStop(
+                f"Polymarket US exact market retrieval failed: {redact_sensitive(exc)}"
+            ) from exc
+
     def book(self, slug: str) -> dict[str, Any]:
         try:
             self.meter.record()
