@@ -66,6 +66,15 @@ def test_void_is_supported(tmp_path):
     assert settlement["hypothetical_standardized_return_at_frozen_price"] == 0
 
 
+def test_reconciliation_accepts_null_evidence_snapshot(tmp_path):
+    store = TrackRecord(tmp_path / "record.sqlite")
+    observation = {"observation_id": "historical-null-evidence", "evidence_snapshot": None}
+
+    decision = ProspectiveReconciler(store).determine(observation)
+
+    assert decision.status == "unsupported"
+
+
 def test_original_immutable_idempotent_and_conflict_safe(tmp_path):
     store = TrackRecord(tmp_path / "record.sqlite")
     observation = capture(store)
