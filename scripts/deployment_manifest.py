@@ -38,8 +38,8 @@ def git_sha(root: Path) -> str:
         raise
 
 
-def build_manifest(root: Path, runtime_env: Path, plist: Path, lock: Path) -> dict[str, object]:
-    return {
+def build_manifest(root: Path, runtime_env: Path, plist: Path, lock: Path, entrypoint: Path | None = None) -> dict[str, object]:
+    manifest: dict[str, object] = {
         "schema_version": 1,
         "git_sha": git_sha(root),
         "python_version": platform.python_version(),
@@ -47,6 +47,9 @@ def build_manifest(root: Path, runtime_env: Path, plist: Path, lock: Path) -> di
         "runtime_config_sha256": sha256_file(runtime_env),
         "launchd_plist_sha256": sha256_file(plist),
     }
+    if entrypoint is not None:
+        manifest["runtime_entrypoint_sha256"] = sha256_file(entrypoint)
+    return manifest
 
 
 def generate(args: argparse.Namespace) -> int:
@@ -56,6 +59,7 @@ def generate(args: argparse.Namespace) -> int:
         Path(args.runtime_env).resolve(),
         Path(args.plist).resolve(),
         Path(args.lock).resolve(),
+        Path(args.entrypoint).resolve() if args.entrypoint else None,
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +75,7 @@ def validate(args: argparse.Namespace) -> int:
         Path(args.runtime_env).resolve(),
         Path(args.plist).resolve(),
         Path(args.lock).resolve(),
+        Path(args.entrypoint).resolve() if args.entrypoint else None,
     )
     if expected != actual:
         print("deployment manifest validation failed")
@@ -89,6 +94,7 @@ def parser() -> argparse.ArgumentParser:
         cmd.add_argument("--runtime-env", required=True)
         cmd.add_argument("--plist", required=True)
         cmd.add_argument("--lock", required=True)
+        cmd.add_argument("--entrypoint")
         if name == "generate":
             cmd.add_argument("--output", required=True)
         else:
