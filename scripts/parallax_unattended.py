@@ -25,6 +25,8 @@ UTC = timezone.utc
 HEALTH_FILENAME = "parallax_unattended_health.json"
 LOCK_FILENAME = "parallax_unattended.lock"
 LANES = ("nfl", "cfb", "mlb", "reconciliation")
+SPORTS_LANES = ("nfl", "cfb", "mlb")
+SPORTS_INTERVAL_SECONDS = 3600
 
 
 def utc_now() -> str:
@@ -110,6 +112,7 @@ class UnattendedScheduler:
         runtime_env: Path | None = None,
         runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         clock: Callable[[], str] = utc_now,
+        monotonic: Callable[[], float] = time.monotonic,
         timeout_seconds: int = 600,
     ) -> None:
         self.root = root.resolve()
@@ -117,9 +120,13 @@ class UnattendedScheduler:
         self.runtime_env = runtime_env
         self.runner = runner
         self.clock = clock
+        self.monotonic = monotonic
         self.timeout_seconds = timeout_seconds
         self.started_at = clock()
         self.last_success: dict[str, str | None] = {lane: None for lane in LANES}
+        self.next_due: dict[str, float] = {
+            lane: self.monotonic() + SPORTS_INTERVAL_SECONDS for lane in SPORTS_LANES
+        }
         self.recent_errors: list[str] = []
 
     @property
@@ -162,7 +169,12 @@ class UnattendedScheduler:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         successful = 0
         errors: list[str] = []
+        now = self.monotonic()
         for lane, command in self.commands().items():
+            if lane in SPORTS_LANES and now < self.next_due[lane]:
+                continue
+            if lane in SPORTS_LANES:
+                self.next_due[lane] = now + SPORTS_INTERVAL_SECONDS
             try:
                 completed = self.runner(
                     command,
