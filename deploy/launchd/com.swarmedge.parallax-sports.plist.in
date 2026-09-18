@@ -17,10 +17,16 @@
     <string>--interval-seconds</string>
     <string>300</string>
   </array>
+  <key>UserName</key>
+  <string>scottsteele</string>
   <key>WorkingDirectory</key>
   <string>@SWARM_EDGE_ROOT@</string>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>HOME</key>
+    <string>/Users/scottsteele</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>PARALLAX_RELEASE_SHA</key>
     <string>@RELEASE_SHA@</string>
     <key>PYTHONPATH</key>
