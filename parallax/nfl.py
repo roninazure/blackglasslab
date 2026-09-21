@@ -75,6 +75,7 @@ class NFLMapping:
     status: str
     game: NFLGame | None
     reason: str
+    selected_team: str | None = None
 
 
 def _int(value: Any) -> int | None:
@@ -300,11 +301,23 @@ def map_market_to_game(market: NormalizedMarket, games: list[NFLGame], *, now: d
     if len(candidates) != 1:
         return NFLMapping("AMBIGUOUS", None, "multiple official NFL games matched")
     game = candidates[0]
+    explicit_selected = [raw.get("yes_sub_title"), raw.get("yesSubTitle"), market.outcomes.get("YES")]
+    selected_values = explicit_selected if any(str(value or "").strip() not in {"", "YES"} for value in explicit_selected) else [market.title, market.description, market.resolution_rules]
+    selected_keys: set[str] = set()
+    for value in selected_values:
+        candidate = _team_key(value)
+        for team in (game.home_team, game.away_team):
+            team_key = _team_key(team)
+            if team_key and (candidate == team_key or team_key in candidate):
+                selected_keys.add(team_key)
+    if len(selected_keys) != 1:
+        return NFLMapping("AMBIGUOUS", game, "selected market team could not be determined uniquely")
+    selected_team = next(iter(selected_keys))
     observed = now or utcnow()
     kickoff = datetime.fromisoformat(game.kickoff.replace("Z", "+00:00"))
     if kickoff <= observed:
-        return NFLMapping("PAST_START", game, "official kickoff has passed")
-    return NFLMapping("MAPPED_GAME_WINNER", game, "exact team/date match")
+        return NFLMapping("PAST_START", game, "official kickoff has passed", selected_team)
+    return NFLMapping("MAPPED_GAME_WINNER", game, "exact team/date match", selected_team)
 
 
 def probability_for_game(game: NFLGame, games: list[NFLGame]) -> float:
@@ -331,7 +344,15 @@ class NFLEvidenceProvider:
         if mapping.status != "MAPPED_GAME_WINNER" or mapping.game is None:
             return None
         validation = NFLValidation(SOURCE_URL, SOURCE_LICENSE, ("season", "game_type", "gameday", "home_team", "away_team", "home_score", "away_score"), (), (), (), (), 272, {}, "Target-game final scores are consumed only after prediction/state update; no odds or postgame target features used.", True)
-        return evidence_for_market(market, probability_for_game(mapping.game, games), validation)
+        p_home = probability_for_game(mapping.game, games)
+        selected_key = _team_key(mapping.selected_team)
+        if selected_key == _team_key(mapping.game.home_team):
+            probability = p_home
+        elif selected_key == _team_key(mapping.game.away_team):
+            probability = 1 - p_home
+        else:
+            return None
+        return evidence_for_market(market, probability, validation)
 
 
 def evidence_for_market(market: NormalizedMarket, probability: float, validation: NFLValidation, *, now: datetime | None = None) -> Evidence:
