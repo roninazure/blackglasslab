@@ -1,10 +1,12 @@
 import importlib.util
+import json
 from pathlib import Path
 from dataclasses import replace
 import pytest
 
 from parallax.nfl import NFLGame, NFLEvidenceProvider, VALIDATION_ECE, is_supported_market, map_market_to_game, nfl_calibration_safe, parse_games, validate
 from parallax.models import NormalizedMarket, Venue, Mechanics, Side
+from parallax.normalization import normalize_pmus
 from maker_spread_economics.live_engine import SafetyStop
 from maker_spread_economics.polymarket_us import PolymarketUSDiscoveryFailure, PolymarketUSPublicClient
 
@@ -71,6 +73,54 @@ def test_nfl_selected_team_orientation_and_ambiguity(monkeypatch):
     assert NFLEvidenceProvider(lambda: [game]).assess(home).fair_probability == pytest.approx(.83)
     ambiguous = replace(base, outcomes={"YES":"YES","NO":"NO"})
     assert NFLEvidenceProvider(lambda: [game]).assess(ambiguous) is None
+
+
+@pytest.mark.parametrize(
+    ("market_id", "slug", "away", "home", "selected", "expected_probability"),
+    [
+        ("658005", "aec-nfl-nyg-lar-2026-09-21", "New York Giants", "Los Angeles Rams", "New York Giants", .17),
+        ("825204", "nfl-sea-was-2026-09-27", "Seattle Seahawks", "Washington Commanders", "Seattle Seahawks", .17),
+    ],
+)
+def test_nfl_pmus_structured_long_side_resolves_real_game_winner_shape(monkeypatch, market_id, slug, away, home, selected, expected_probability):
+    raw = {
+        "id": market_id, "slug": slug, "question": f"Who will win in the upcoming football event {away} vs {home}?",
+        "description": f"This market will settle to the winner of the {away} vs {home} professional football game.", "category": "sports", "eventSlug": slug,
+        "active": True, "closed": False, "status": "MARKET_STATUS_OPEN", "ep3Status": "OPEN",
+        "accepting_orders": True, "orderPriceMinTickSize": "0.01", "minimumTradeQty": "1",
+        "gameStartTime": "2026-09-27T17:00:00Z", "marketType": "moneyline", "sportsMarketType": "football_team_full_game_winner", "sportsMarketTypeV2": "SPORTS_MARKET_TYPE_MONEYLINE", "outcomes": json.dumps([away.split()[-1], home.split()[-1]]),
+        "marketSides": [
+            {"long": selected == away, "description": "YES" if selected == away else "NO", "team": {"league": "nfl", "ordering": "away", "name": away}},
+            {"long": selected == home, "description": "YES" if selected == home else "NO", "team": {"league": "nfl", "ordering": "home", "name": home}},
+        ],
+    }
+    market = normalize_pmus({"id": market_id, "slug": slug, "question": raw["question"], "event_id": slug, "active": True, "closed": False, "accepting_orders": True, "raw": raw}, {}, "2026-09-21T00:00:00Z")
+    game = NFLGame("g", 2026, "REG", "2026-09-27T17:00:00+00:00", "LA" if home == "Los Angeles Rams" else "WAS", "NYG" if away == "New York Giants" else "SEA", None, None)
+    monkeypatch.setattr("parallax.nfl.probability_for_game", lambda *_: .83)
+    mapping = map_market_to_game(market, [game], now=__import__("datetime").datetime(2026, 9, 21, tzinfo=__import__("datetime").UTC))
+    assert mapping.status == "MAPPED_GAME_WINNER"
+    assert mapping.selected_team == (game.home_team if selected == home else game.away_team)
+    assert NFLEvidenceProvider(lambda: [game]).assess(market).fair_probability == pytest.approx(expected_probability)
+
+
+def test_nfl_pmus_structured_long_side_orients_home_team_yes(monkeypatch):
+    game = NFLGame("g", 2026, "REG", "2026-09-27T17:00:00+00:00", "WAS", "SEA", None, None)
+    raw = {"marketType": "moneyline", "gameStartTime": game.kickoff, "marketSides": [
+        {"long": False, "description": "Seahawks", "team": {"league": "nfl", "ordering": "away", "name": "Seattle Seahawks", "alias": "Seahawks", "abbreviation": "sea"}},
+        {"long": True, "description": "Commanders", "team": {"league": "nfl", "ordering": "home", "name": "Washington Commanders", "alias": "Commanders", "abbreviation": "was"}},
+    ]}
+    market = NormalizedMarket(title="Who will win in the upcoming football event Seattle Seahawks vs Washington Commanders?", venue=Venue.POLYMARKET, venue_market_id="pmus-home", slug="pmus-home", description="This market will settle to the winner of the Seattle Seahawks vs Washington Commanders professional football game.", category="sports", event="pmus-home", outcomes={"YES": "YES", "NO": "NO"}, resolution_rules=raw["marketSides"][0]["description"], resolution_time=game.kickoff, status="OPEN", yes_bid=.4, yes_ask=.5, no_bid=.4, no_ask=.5, best_bid_size=1, best_ask_size=1, executable_depth={}, recent_volume=None, recent_trade_count=None, last_trade_time=None, book_timestamp=None, data_timestamp="2026-09-21T00:00:00Z", source_url=None, mechanics=Mechanics(), original_metadata={"market": raw})
+    monkeypatch.setattr("parallax.nfl.probability_for_game", lambda *_: .83)
+    assert map_market_to_game(market, [game], now=__import__("datetime").datetime(2026, 9, 21, tzinfo=__import__("datetime").UTC)).selected_team == "WAS"
+    assert NFLEvidenceProvider(lambda: [game]).assess(market).fair_probability == pytest.approx(.83)
+
+
+def test_nfl_pmus_multiple_long_sides_remains_ambiguous():
+    game = NFLGame("g", 2026, "REG", "2026-09-27T17:00:00+00:00", "LA", "NYG", None, None)
+    market = NormalizedMarket(title="NFL game winner", venue=Venue.POLYMARKET, venue_market_id="ambiguous", slug="ambiguous", description="NFL game winner", category="NFL", event="e", outcomes={"YES": "YES", "NO": "NO"}, resolution_rules="NFL game winner", resolution_time="2026-09-27T17:00:00Z", status="OPEN", yes_bid=.4, yes_ask=.5, no_bid=.4, no_ask=.5, best_bid_size=1, best_ask_size=1, executable_depth={}, recent_volume=None, recent_trade_count=None, last_trade_time=None, book_timestamp=None, data_timestamp="2026-09-21T00:00:00Z", source_url=None, mechanics=Mechanics(), original_metadata={"market": {"marketType": "moneyline", "gameStartTime": "2026-09-27T17:00:00Z", "marketSides": [{"long": True, "team": {"league": "nfl", "ordering": "away", "name": "New York Giants"}}, {"long": True, "team": {"league": "nfl", "ordering": "home", "name": "Los Angeles Rams"}}]}})
+    mapped = map_market_to_game(market, [game], now=__import__("datetime").datetime(2026, 9, 21, tzinfo=__import__("datetime").UTC))
+    assert mapped.status == "AMBIGUOUS"
+    assert NFLEvidenceProvider(lambda: [game]).assess(market) is None
 
 
 def test_nfl_calibration_safety_requires_edge_above_frozen_holdout_ece():
