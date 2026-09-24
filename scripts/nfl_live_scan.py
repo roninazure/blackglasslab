@@ -11,11 +11,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from maker_spread_economics.polymarket_us import PolymarketUSPublicClient, redact_sensitive
+from parallax.alerts import AlertDeliveryStore, AlertDispatcher, dispatch_scored_buy
 from parallax.discovery import MAX_ACTIVE_MARKETS_PER_VENUE, paginate, paginate_collection
 from parallax.economics import retail_example
 from parallax.engine import qualify
 from parallax.fees import attach_fees
-from parallax.models import Side, utcnow
+from parallax.inbox import default_inbox_store
+from parallax.models import Action, Side, utcnow
 from parallax.nfl import VALIDATION_ECE, NFLEvidenceProvider, fetch_games, is_supported_market, map_market_to_game, probability_for_game
 from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.sources import KalshiPublicClient
@@ -34,6 +36,25 @@ def _capture_evaluated(store, market, side, evidence, now):
     if not observation_id or actual != expected or store.prospective_record(observation_id) is None:
         raise ValueError("Prospective capture did not produce a verified durable observation ID")
     return play
+
+
+def _dispatch_buy_alert(dispatcher, play, market, mapping, detected_at):
+    """Send one immediate deduplicated ntfy alert for a scored NFL BUY."""
+    if play.suggested_action != Action.BUY:
+        return None
+    matchup = (
+        f"{mapping.game.away_team} at {mapping.game.home_team}"
+        if mapping.game
+        else market.title
+    )
+    return dispatch_scored_buy(
+        dispatcher,
+        play,
+        market,
+        sport="NFL",
+        matchup=matchup,
+        detected_at=detected_at.isoformat(),
+    )
 
 
 def _text(row: dict) -> str:
@@ -109,6 +130,9 @@ def _scan() -> dict:
     games = fetch_games()
     result = {"read_only": True, "orders": 0, "alerts": 0, "published": 0, "prospective_captured": 0, "validation_ece": VALIDATION_ECE, "venues": {}}
     prospective_store = TrackRecord(PROSPECTIVE_DB)
+    alert_dispatcher = AlertDispatcher(
+        AlertDeliveryStore(default_inbox_store().path)
+    )
     pmus_rows: list[dict] = []
     pmus = PolymarketUSPublicClient()
     try:
@@ -187,6 +211,22 @@ def _scan() -> dict:
                             )
                             result["prospective_captured"] += 1
                             statuses[f"SCORED_{play.suggested_action}"] += 1
+                            try:
+                                alert_result = _dispatch_buy_alert(
+                                    alert_dispatcher,
+                                    play,
+                                    market,
+                                    mapping,
+                                    decision_at,
+                                )
+                                if (
+                                    alert_result is not None
+                                    and alert_result["status"] == "SENT"
+                                    and not alert_result["deduplicated"]
+                                ):
+                                    result["alerts"] += 1
+                            except Exception:
+                                statuses["ALERT_ERROR"] += 1
                             scored = {"venue": venue, "market": market.title, "market_id": market.venue_market_id, "side": side.value, "game_start": mapping.game.kickoff, "nfl_v1_probability": play.model_probability, "executable_price": play.executable_price, "raw_edge": play.edge_points, "safety_margin": (play.edge_points / 100 - VALIDATION_ECE) if play.edge_points is not None else None, "fee": play.fees_estimate, "net_ev_25": play.expected_value, "net_ev_50": None, "net_ev_100": None, "liquidity": play.executable_size, "failed_gates": list(play.verdict.failed_gates), "verdict": play.suggested_action.value}
                             for index, key in ((2, "net_ev_50"), (3, "net_ev_100")):
                                 example = play.retail_examples[index]
