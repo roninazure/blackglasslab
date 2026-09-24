@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from maker_spread_economics.polymarket_us import PolymarketUSPublicClient
+from maker_spread_economics.polymarket_us import PolymarketUSPublicClient, redact_sensitive
 from parallax.discovery import MAX_ACTIVE_MARKETS_PER_VENUE, paginate, paginate_collection
 from parallax.economics import retail_example
 from parallax.engine import qualify
@@ -109,11 +109,25 @@ def _scan() -> dict:
     games = fetch_games()
     result = {"read_only": True, "orders": 0, "alerts": 0, "published": 0, "prospective_captured": 0, "validation_ece": VALIDATION_ECE, "venues": {}}
     prospective_store = TrackRecord(PROSPECTIVE_DB)
+    pmus_rows: list[dict] = []
     pmus = PolymarketUSPublicClient()
     try:
         raw_pmus, cov = paginate(pmus.markets_page, page_size=100, max_pages=100, max_rows=MAX_ACTIVE_MARKETS_PER_VENUE)
         pmus_rows = [r for r in raw_pmus if r.get("active") and not r.get("closed") and _is_nfl(r, r.get("raw", {}))]
         result["venues"]["PMUS"] = {"coverage": cov.__dict__, "universe_rows": len(raw_pmus), "nfl_rows": len(pmus_rows)}
+    except Exception as exc:
+        result["venues"]["PMUS"] = {
+            "coverage": {"state": "PARTIAL", "reason": "market discovery unavailable"},
+            "universe_rows": 0, "nfl_rows": 0,
+            "failure": {
+                "timestamp": utcnow().isoformat(), "venue": "PMUS",
+                "context": "NFL prospective market discovery",
+                "classification": type(exc).__name__,
+                "underlying_error": redact_sensitive(getattr(exc, "underlying_error", exc)),
+                "attempt_count": getattr(exc, "attempts", 1),
+                "status": "DATA_UNAVAILABLE / NO_VALID_OBSERVATION",
+            },
+        }
     finally:
         pmus.close()
     kalshi = KalshiPublicClient()

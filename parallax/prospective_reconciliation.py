@@ -107,7 +107,8 @@ class ProspectiveReconciler:
         return MLBStatsAPI().transport(path)
 
     def determine(self, observation: dict[str, Any]) -> ResolutionDecision:
-        model = str(observation.get("evidence_snapshot", {}).get("model_version") or "")
+        evidence_snapshot = observation.get("evidence_snapshot") or {}
+        model = str(evidence_snapshot.get("model_version") or "")
         try:
             if model.startswith("mlb-"):
                 return self._mlb(observation)
@@ -120,7 +121,8 @@ class ProspectiveReconciler:
         return ResolutionDecision("unsupported", "unsupported prospective sport")
 
     def _mlb(self, observation: dict[str, Any]) -> ResolutionDecision:
-        reference = str(observation.get("evidence_snapshot", {}).get("review_reference") or "")
+        evidence_snapshot = observation.get("evidence_snapshot") or {}
+        reference = str(evidence_snapshot.get("review_reference") or "")
         prefix = "official-mlb-statsapi:"
         if not reference.startswith(prefix) or not reference[len(prefix):].isdigit():
             return ResolutionDecision("ambiguous", "missing exact MLB gamePk", sport="MLB")
