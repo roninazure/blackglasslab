@@ -66,6 +66,8 @@ def play(action=Action.BUY, *, price=0.44):
         edge_points=17.0,
         executable_size=325.0,
         confidence_band=Confidence.HIGH,
+        demo=False,
+        updated_at="2026-09-23T15:01:02+00:00",
     )
 
 
