@@ -109,3 +109,102 @@ def test_all_lane_failures_write_failed_health_when_due(tmp_path):
     health = scheduler.run_cycle()
     assert health["state"] == "FAILED"
     assert len(health["recent_errors"]) == 4
+
+
+def test_successful_nfl_and_mlb_export_once_other_lanes_never_export(
+    tmp_path, monkeypatch
+):
+    now = [3600.0]
+    runner_calls = []
+    export_calls = []
+
+    def runner(command, **kwargs):
+        runner_calls.append(command)
+        return subprocess.CompletedProcess(command, 0, '{"ok": true}', "")
+
+    def exporter(lane, stdout, state_dir):
+        export_calls.append((lane, stdout, state_dir))
+
+    monkeypatch.setattr("parallax_unattended.export_completed_scan", exporter)
+    scheduler = UnattendedScheduler(
+        root=tmp_path / "release",
+        state_dir=tmp_path / "state",
+        runner=runner,
+        monotonic=lambda: now[0],
+        clock=lambda: "2026-09-24T00:00:00+00:00",
+    )
+    scheduler.next_due = {lane: 0.0 for lane in ("nfl", "cfb", "mlb")}
+
+    health = scheduler.run_cycle()
+
+    assert len(runner_calls) == 4
+    assert [call[0] for call in export_calls] == ["nfl", "mlb"]
+    assert all(call[1] == '{"ok": true}' for call in export_calls)
+    assert all(call[2] == (tmp_path / "state").resolve() for call in export_calls)
+    assert health["state"] == "RUNNING"
+
+
+def test_failed_lane_never_exports_and_runner_count_is_unchanged(tmp_path, monkeypatch):
+    runner_calls = []
+    export_calls = []
+
+    def runner(command, **kwargs):
+        runner_calls.append(command)
+        lane_failed = command[1].endswith("nfl_live_scan.py")
+        return subprocess.CompletedProcess(command, 1 if lane_failed else 0, "{}", "failed")
+
+    monkeypatch.setattr(
+        "parallax_unattended.export_completed_scan",
+        lambda lane, stdout, state_dir: export_calls.append(lane),
+    )
+    scheduler = UnattendedScheduler(
+        root=tmp_path / "release",
+        state_dir=tmp_path / "state",
+        runner=runner,
+        monotonic=lambda: 3600.0,
+        clock=lambda: "2026-09-24T00:00:00+00:00",
+    )
+    scheduler.next_due = {lane: 0.0 for lane in ("nfl", "cfb", "mlb")}
+
+    health = scheduler.run_cycle()
+
+    assert len(runner_calls) == 4
+    assert export_calls == ["mlb"]
+    assert health["last_successful_nfl_scan"] is None
+    assert health["last_successful_mlb_scan"] is not None
+    assert health["state"] == "DEGRADED"
+
+
+def test_exporter_exception_preserves_successful_scan_and_later_lanes(
+    tmp_path, monkeypatch
+):
+    runner_calls = []
+    export_calls = []
+
+    def runner(command, **kwargs):
+        runner_calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+    def exporter(lane, stdout, state_dir):
+        export_calls.append(lane)
+        if lane == "nfl":
+            raise OSError("local export unavailable")
+
+    monkeypatch.setattr("parallax_unattended.export_completed_scan", exporter)
+    scheduler = UnattendedScheduler(
+        root=tmp_path / "release",
+        state_dir=tmp_path / "state",
+        runner=runner,
+        monotonic=lambda: 3600.0,
+        clock=lambda: "2026-09-24T00:00:00+00:00",
+    )
+    scheduler.next_due = {lane: 0.0 for lane in ("nfl", "cfb", "mlb")}
+
+    health = scheduler.run_cycle()
+
+    assert len(runner_calls) == 4
+    assert export_calls == ["nfl", "mlb"]
+    assert health["last_successful_nfl_scan"] is not None
+    assert health["last_successful_mlb_scan"] is not None
+    assert health["state"] == "RUNNING"
+    assert health["recent_errors"] == []
