@@ -78,28 +78,6 @@ TEMPORAL_SIGNAL_TYPES = {
 }
 
 
-def _is_fed_rates_contract(market: NormalizedMarket) -> bool:
-    """Allow evidence-less capture only for the newly wired Fed/rates seam."""
-    if market.category != "MACRO_MONETARY":
-        return False
-    text = " ".join(
-        str(value or "").casefold()
-        for value in (market.title, market.description, market.resolution_rules)
-    )
-    return any(
-        term in text
-        for term in (
-            "federal reserve",
-            "fomc",
-            "fed funds",
-            "interest rate",
-            "rate hike",
-            "rate cut",
-            "monetary policy",
-        )
-    )
-
-
 def _display_price(value: float) -> str:
     cents = round(value * 100, 10)
     return f"{cents:.0f}¢" if cents.is_integer() else f"{cents:.1f}¢"
@@ -800,22 +778,17 @@ class PlayService:
         with self.lock:
             for market in self.markets:
                 evidence = self.evidence.get((market.venue, market.venue_market_id))
-                capture_without_evidence = _is_fed_rates_contract(market)
                 for side in Side:
                     try:
                         play = qualify(market, side, evidence, now=now)
                         created = self.first_seen.setdefault(play.id, play.created_at)
                         play = replace(play, created_at=created)
-                        if (
-                            self.prospective_store is not None
-                            and not play.demo
-                            and (evidence is not None or capture_without_evidence)
-                        ):
+                        if self.prospective_store is not None and evidence is not None and not play.demo:
                             generated.add((play.id, play.venue, play.market_id, play.side))
                         if (
                             self.prospective_store is not None
+                            and evidence is not None
                             and not play.demo
-                            and (evidence is not None or capture_without_evidence)
                             and play.id not in self.prospective_captured
                         ):
                             observation = self.prospective_store.capture_prospective(
@@ -828,11 +801,7 @@ class PlayService:
                                 raise ValueError("Prospective capture did not produce a verified durable observation ID")
                             self.prospective_observations[play.id] = observation_id
                             self.prospective_captured.add(play.id)
-                        if (
-                            self.prospective_store is not None
-                            and not play.demo
-                            and (evidence is not None or capture_without_evidence)
-                        ):
+                        if self.prospective_store is not None and evidence is not None and not play.demo:
                             observation_id = self.prospective_observations.get(play.id)
                             observation = self.prospective_store.prospective_record(observation_id) if observation_id else None
                             if observation is None:

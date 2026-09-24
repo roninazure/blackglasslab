@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import logging
 import os
 import sqlite3
 import sys
@@ -12,9 +10,7 @@ from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .models import Action, AttentionClass, NormalizedMarket, ParallaxPlay, utcnow
-
-logger = logging.getLogger(__name__)
+from .models import AttentionClass, utcnow
 
 ALERT_CONFIG_PATH = (
     Path.home()
@@ -360,8 +356,7 @@ class AlertDeliveryStore:
             rows = conn.execute(
                 """
                 SELECT delivery_id, inbox_id, attention_class, priority, status,
-                    attempt_count, created_at, last_attempt_at, sent_at,
-                    http_status, error_code, error_summary
+                    attempt_count, created_at, sent_at, error_summary
                 FROM alert_deliveries
                 ORDER BY created_at DESC
                 LIMIT ?
@@ -369,14 +364,6 @@ class AlertDeliveryStore:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
-
-    def delivery(self, channel: str, inbox_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM alert_deliveries WHERE channel = ? AND inbox_id = ?",
-                (channel, inbox_id),
-            ).fetchone()
-        return None if row is None else dict(row)
 
 
 class AlertDispatcher:
@@ -437,46 +424,24 @@ class AlertDispatcher:
                 continue
             if self.config.mode == "ntfy":
                 if not self.config.ntfy_topic:
-                    result = DeliveryResult(
-                        "FAILED",
-                        error_code="CONFIGURATION_ERROR",
-                        error_summary="ntfy mode requires PARALLAX_ALERT_NTFY_TOPIC.",
-                    )
-                    self.store.record_attempt(delivery["delivery_id"], result)
-                    logger.error(
-                        "PARALLAX ntfy delivery status=FAILED http_status=None error_code=%s delivery_id=%s",
-                        result.error_code,
+                    self.store.record_attempt(
                         delivery["delivery_id"],
-                    )
-                    continue
-                try:
-                    result = self.transport.post_json(
-                        ntfy_publish_url(self.config.ntfy_server),
-                        ntfy_payload(
-                            pending_item,
-                            delivery["priority"],
-                            self.config.ntfy_topic,
+                        DeliveryResult(
+                            "FAILED",
+                            error_code="CONFIGURATION_ERROR",
+                            error_summary="ntfy mode requires PARALLAX_ALERT_NTFY_TOPIC.",
                         ),
                     )
-                except Exception as exc:  # noqa: BLE001 - delivery cannot stop scoring
-                    result = DeliveryResult(
-                        "FAILED",
-                        error_code="TRANSPORT_EXCEPTION",
-                        error_summary=f"Alert transport raised {type(exc).__name__}.",
-                    )
+                    continue
+                result = self.transport.post_json(
+                    ntfy_publish_url(self.config.ntfy_server),
+                    ntfy_payload(pending_item, delivery["priority"], self.config.ntfy_topic),
+                )
                 retryable = result.error_code in {"TIMEOUT", "HTTP_5XX"}
                 final = not retryable or delivery["attempt_count"] + 1 >= MAX_ATTEMPTS
                 if result.status == "UNKNOWN":
                     final = True
                 self.store.record_attempt(delivery["delivery_id"], result, final=final)
-                if result.status != "SENT":
-                    logger.error(
-                        "PARALLAX ntfy delivery status=%s http_status=%s error_code=%s delivery_id=%s",
-                        result.status,
-                        result.http_status,
-                        result.error_code,
-                        delivery["delivery_id"],
-                    )
                 continue
             if not self.config.webhook_url:
                 self.store.record_attempt(
@@ -529,11 +494,7 @@ def ntfy_payload(item: dict[str, Any], priority: str, topic: str) -> dict[str, A
     return {
         "topic": topic,
         "message": format_alert_message(item),
-        "title": (
-            "PARALLAX BUY"
-            if item.get("alert_kind") == "SCORED_BUY"
-            else ALERT_TITLES[str(item["attention_class"])]
-        ),
+        "title": ALERT_TITLES[str(item["attention_class"])],
         "priority": NTFY_PRIORITIES[priority],
     }
 
@@ -543,8 +504,6 @@ def ntfy_publish_url(server: str) -> str:
 
 
 def format_alert_message(item: dict[str, Any]) -> str:
-    if item.get("alert_kind") == "SCORED_BUY":
-        return _scored_buy_message(item)
     attention_class = item["attention_class"]
     if attention_class == AttentionClass.ACTIONABLE_PLAY.value:
         return _actionable_message(item)
@@ -575,126 +534,6 @@ def format_alert_message(item: dict[str, Any]) -> str:
             "Watch for confirmation. No trade unless promoted to a PARALLAX Play.",
         )
     )
-
-
-def dispatch_scored_buy(
-    dispatcher: AlertDispatcher,
-    play: ParallaxPlay,
-    market: NormalizedMarket,
-    *,
-    sport: str,
-    matchup: str,
-    detected_at: str,
-) -> dict[str, Any] | None:
-    """Dispatch one deduplicated immediate alert for a freshly scored BUY."""
-    if play.suggested_action != Action.BUY:
-        return None
-    item = _scored_buy_item(
-        play,
-        market,
-        sport=sport,
-        matchup=matchup,
-        detected_at=detected_at,
-    )
-    existing = dispatcher.store.delivery(dispatcher.channel, item["inbox_id"])
-    dispatcher.dispatch([item])
-    delivery = dispatcher.store.delivery(dispatcher.channel, item["inbox_id"])
-    if delivery is None:
-        return {
-            "status": "DISABLED",
-            "deduplicated": False,
-            "http_status": None,
-            "error_code": None,
-        }
-    return {
-        "status": delivery["status"],
-        "deduplicated": existing is not None,
-        "http_status": delivery["http_status"],
-        "error_code": delivery["error_code"],
-    }
-
-
-def _scored_buy_item(
-    play: ParallaxPlay,
-    market: NormalizedMarket,
-    *,
-    sport: str,
-    matchup: str,
-    detected_at: str,
-) -> dict[str, Any]:
-    material_state = {
-        "venue": str(play.venue),
-        "market_id": play.market_id,
-        "side": str(play.side),
-        "price": _rounded(play.executable_price, 2),
-        "probability": _rounded(play.model_probability, 2),
-        "edge_points": _rounded(play.edge_points, 1),
-        "liquidity": _rounded(play.executable_size, 0),
-    }
-    fingerprint = hashlib.sha256(
-        json.dumps(material_state, allow_nan=False, sort_keys=True).encode()
-    ).hexdigest()[:16]
-    selected_side = play.side_description or str(play.side)
-    return {
-        "inbox_id": f"inbox-scored-buy-{play.venue}-{play.market_id}-{fingerprint}",
-        "attention_class": AttentionClass.ACTIONABLE_PLAY.value,
-        "status": "ACTIVE",
-        "venue": str(play.venue),
-        "market_id": play.market_id,
-        "headline": "PARALLAX BUY",
-        "market": play.market_title,
-        "verdict": f"BUY {play.side}",
-        "actionability": "ACTIONABLE",
-        "trade_confidence": str(play.confidence_band),
-        "detected_at": detected_at,
-        "alert_kind": "SCORED_BUY",
-        "sport": sport.upper(),
-        "matchup": matchup,
-        "selected_side": selected_side,
-        "executable_price": play.executable_price,
-        "model_probability": play.model_probability,
-        "edge_points": play.edge_points,
-        "liquidity": play.executable_size,
-        "contract_url": market.source_url or play.market_url,
-    }
-
-
-def _rounded(value: float | None, digits: int) -> float | None:
-    return None if value is None else round(float(value), digits)
-
-
-def _scored_buy_message(item: dict[str, Any]) -> str:
-    lines = [
-        "PARALLAX BUY",
-        f"Sport: {item['sport']}",
-        f"Venue: {item['venue']}",
-        f"Matchup: {item['matchup']}",
-        f"Selected side: {item['selected_side']}",
-        f"Executable price: {_format_price(item.get('executable_price'))}",
-        f"Model probability: {_format_probability(item.get('model_probability'))}",
-        f"Edge: {_format_edge(item.get('edge_points'))}",
-        f"Liquidity: {_format_liquidity(item.get('liquidity'))}",
-    ]
-    if item.get("contract_url"):
-        lines.append(f"Contract: {item['contract_url']}")
-    lines.append(f"Timestamp: {item['detected_at']}")
-    return "\n".join(lines)
-
-
-def _format_probability(value: Any) -> str:
-    return "unavailable" if not isinstance(value, int | float) else f"{value * 100:.1f}%"
-
-
-def _format_price(value: Any) -> str:
-    return "unavailable" if not isinstance(value, int | float) else f"{value * 100:.1f}¢"
-
-
-def _format_edge(value: Any) -> str:
-    return "unavailable" if not isinstance(value, int | float) else f"{value:.1f} pp"
-
-
-def _format_liquidity(value: Any) -> str:
-    return "unavailable" if not isinstance(value, int | float) else f"{value:,.0f} contracts"
 
 
 def _actionable_message(item: dict[str, Any]) -> str:
