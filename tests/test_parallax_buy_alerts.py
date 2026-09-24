@@ -191,3 +191,58 @@ def test_ntfy_transport_exception_is_contained_and_failed(tmp_path):
     assert result["status"] == "FAILED"
     assert result["error_code"] == "TRANSPORT_EXCEPTION"
     assert alert_dispatcher.status()["failed"] == 1
+
+
+
+def test_mlb_scan_dispatches_only_fresh_buy_alerts(monkeypatch):
+    import parallax.__main__ as parallax_main
+
+    buy = play(Action.BUY)
+    watch = play(Action.WATCH)
+    fake_market = market()
+    calls = []
+
+    def fake_dispatch(dispatcher, scored_play, scored_market, **kwargs):
+        calls.append((dispatcher, scored_play, scored_market, kwargs))
+        return {
+            "status": "SENT",
+            "deduplicated": False,
+            "http_status": 200,
+            "error_code": None,
+        }
+
+    monkeypatch.setattr(parallax_main, "dispatch_scored_buy", fake_dispatch)
+    service = SimpleNamespace(
+        markets=[fake_market],
+        alert_dispatcher=object(),
+        _plays=lambda: [buy, watch],
+    )
+
+    result = parallax_main.dispatch_scan_buy_alerts(service, sport="MLB")
+
+    assert result == {"sent": 1, "deduplicated": 0, "failed": 0}
+    assert len(calls) == 1
+    assert calls[0][1] is buy
+    assert calls[0][2] is fake_market
+    assert calls[0][3]["sport"] == "MLB"
+
+
+def test_mlb_buy_alert_failure_does_not_fail_scan(monkeypatch):
+    import parallax.__main__ as parallax_main
+
+    monkeypatch.setattr(
+        parallax_main,
+        "dispatch_scored_buy",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ntfy unavailable")),
+    )
+    service = SimpleNamespace(
+        markets=[market()],
+        alert_dispatcher=object(),
+        _plays=lambda: [play(Action.BUY)],
+    )
+
+    assert parallax_main.dispatch_scan_buy_alerts(service, sport="MLB") == {
+        "sent": 0,
+        "deduplicated": 0,
+        "failed": 1,
+    }
