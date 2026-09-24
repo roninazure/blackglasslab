@@ -261,3 +261,62 @@ def test_pmus_discovery_non_retryable_safetystop_is_not_retried(monkeypatch):
     with pytest.raises(SafetyStop, match="closed-only"):
         PolymarketUSPublicClient(client=Client()).markets_page(limit=100, offset=0)
     assert sleeps == []
+
+
+
+def test_nfl_scored_buy_dispatches_immediate_alert(monkeypatch):
+    from types import SimpleNamespace
+    from parallax.models import Action
+
+    sent = []
+
+    def fake_dispatch(dispatcher, scored_play, scored_market, **kwargs):
+        sent.append((dispatcher, scored_play, scored_market, kwargs))
+        return {
+            "status": "SENT",
+            "deduplicated": False,
+            "http_status": 200,
+            "error_code": None,
+        }
+
+    monkeypatch.setattr(nfl_live_scan, "dispatch_scored_buy", fake_dispatch)
+    game = SimpleNamespace(away_team="BAL", home_team="KC")
+    mapping = SimpleNamespace(game=game)
+    scored_play = SimpleNamespace(suggested_action=Action.BUY)
+    detected_at = __import__("datetime").datetime(
+        2026, 9, 24, 22, 30, tzinfo=__import__("datetime").UTC
+    )
+
+    result = nfl_live_scan._dispatch_buy_alert(
+        object(), scored_play, object(), mapping, detected_at
+    )
+
+    assert result["status"] == "SENT"
+    assert len(sent) == 1
+    assert sent[0][3]["sport"] == "NFL"
+    assert sent[0][3]["matchup"] == "BAL at KC"
+    assert sent[0][3]["detected_at"] == detected_at.isoformat()
+
+
+@pytest.mark.parametrize("action", [__import__("parallax.models", fromlist=["Action"]).Action.WATCH, __import__("parallax.models", fromlist=["Action"]).Action.PASS])
+def test_nfl_watch_and_pass_do_not_dispatch_buy_alert(monkeypatch, action):
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "dispatch_scored_buy",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("WATCH/PASS must stay silent")
+        ),
+    )
+    play = __import__("types").SimpleNamespace(suggested_action=action)
+    mapping = __import__("types").SimpleNamespace(game=None)
+
+    assert (
+        nfl_live_scan._dispatch_buy_alert(
+            object(),
+            play,
+            __import__("types").SimpleNamespace(title="test"),
+            mapping,
+            __import__("datetime").datetime.now(__import__("datetime").UTC),
+        )
+        is None
+    )
