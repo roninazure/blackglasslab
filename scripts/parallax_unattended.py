@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from parallax.public_feed import export_completed_scan
+
 
 UTC = timezone.utc
 HEALTH_FILENAME = "parallax_unattended_health.json"
@@ -192,6 +194,15 @@ class UnattendedScheduler:
                 successful += 1
                 if completed.stdout:
                     print(f"[{lane}] {completed.stdout.strip()}", flush=True)
+                if lane in {"nfl", "mlb"}:
+                    try:
+                        export_completed_scan(lane, completed.stdout, self.state_dir)
+                    except Exception as exc:  # Export must not change scan success.
+                        print(
+                            f"[WARN] {lane} public feed export failed: {type(exc).__name__}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
             except Exception as exc:  # Each lane must not prevent later lanes.
                 message = f"{lane}: {type(exc).__name__}: {exc}"
                 errors.append(message)
