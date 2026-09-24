@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 from threading import Event, Thread
 
+from .alerts import dispatch_scored_buy
 from .api import server
 from .demo import demo_inputs
 from .entitlements import Plan
+from .models import Action
 from .service import PlayService
 from .sources import collect_markets
 from .track_record import TrackRecord
@@ -33,6 +35,43 @@ def refresh(service: PlayService, *, demo: bool, limit: int):
     else:
         markets, collection = collect_markets(limit)
         service.replace_inputs(markets, collection=collection)
+
+
+def dispatch_scan_buy_alerts(service: PlayService, *, sport: str) -> dict[str, int]:
+    """Dispatch immediate ntfy alerts for freshly scored live BUY plays."""
+    markets = {
+        (market.venue, market.venue_market_id): market
+        for market in service.markets
+    }
+    summary = {"sent": 0, "deduplicated": 0, "failed": 0}
+    for play in service._plays():
+        if play.demo or play.suggested_action != Action.BUY:
+            continue
+        market = markets.get((play.venue, play.market_id))
+        if market is None:
+            summary["failed"] += 1
+            continue
+        try:
+            result = dispatch_scored_buy(
+                service.alert_dispatcher,
+                play,
+                market,
+                sport=sport,
+                matchup=market.title,
+                detected_at=play.updated_at,
+            )
+        except Exception:  # Alert delivery must never fail the scan.
+            summary["failed"] += 1
+            continue
+        if result is None:
+            continue
+        if result["deduplicated"]:
+            summary["deduplicated"] += 1
+        elif result["status"] == "SENT":
+            summary["sent"] += 1
+        elif result["status"] in {"FAILED", "UNKNOWN", "PENDING"}:
+            summary["failed"] += 1
+    return summary
 
 
 def start_refresh_loop(service: PlayService, *, demo: bool, limit: int) -> Event:
@@ -68,7 +107,12 @@ def main():
     args = parser.parse_args()
     service = make_service(args.db, demo=args.demo, limit=args.limit)
     if args.command == "scan":
-        payload = {"health": service.health()}
+        buy_alerts = (
+            {"sent": 0, "deduplicated": 0, "failed": 0}
+            if args.demo
+            else dispatch_scan_buy_alerts(service, sport="MLB")
+        )
+        payload = {"health": service.health(), "buy_alerts": buy_alerts}
         payload["plays"] = service.plays(Plan.PRO)
         payload["signals"] = service.signals(Plan.PRO)
         if args.summary:
