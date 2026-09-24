@@ -10,11 +10,6 @@ from maker_spread_economics.polymarket_us import PolymarketUSPublicClient
 
 from .fair_value import assess_value
 from .fees import attach_fees
-from .direct_contracts import normalized_for_direct_contract
-from .discovery import classify_market as classify_inventory_market
-from .discovery import normalize_market as normalize_inventory_market
-from .event_discovery import discover_event_candidate
-from .models import Venue
 from .mlb import MLBEvidenceProvider
 from .models import NormalizedMarket, utcnow
 from .normalization import normalize_kalshi, normalize_pmus
@@ -51,20 +46,6 @@ def _is_mlb_moneyline(row: dict) -> bool:
         and (nested_mlb or "mlb" in text or "baseball" in text)
         and any(term in text for term in ("winner", "wins", "win"))
         and not any(term in market_type + " " + text for term in ("spread", "total", "prop", "future"))
-    )
-
-
-def _is_fed_rates_market(row: dict) -> bool:
-    """Scope generic live enrichment to the existing Fed/rates taxonomy."""
-    raw = row.get("raw", row)
-    if not isinstance(raw, dict):
-        return False
-    classified = classify_inventory_market(
-        normalize_inventory_market(raw, venue="PMUS")
-    )
-    return (
-        classified.classification == "MACRO_ECONOMICS"
-        and classified.subcategory == "Fed/rates"
     )
 
 
@@ -158,15 +139,14 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
         for offset in range(0, 1000, 100):
             page = pmus.markets_page(limit=100, offset=offset)
             rows.extend(page)
-        all_rows = [
+        rows = [
             r for r in rows
             if r.get("active") and not r.get("closed") and r.get("accepting_orders")
+            and _is_mlb_moneyline(r)
         ]
-        all_rows = _dedupe_rows(all_rows, "slug")
-        rows = [r for r in all_rows if _is_mlb_moneyline(r)]
-        discovery_time = utcnow()
-        discovery_at = discovery_time.isoformat()
-        metrics["POLYMARKET.markets_discovered"] = len(all_rows)
+        rows = _dedupe_rows(rows, "slug")
+        discovery_at = utcnow().isoformat()
+        metrics["POLYMARKET.markets_discovered"] = len(rows)
         provider = MLBEvidenceProvider()
         for row in rows:
             try:
@@ -187,41 +167,6 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
                 failure("POLYMARKET", "market", exc)
             except Exception as exc:  # noqa: BLE001 - isolate one live market
                 failure("POLYMARKET", "market", exc)
-
-        # The generic/direct seam is intentionally evidence-neutral.  It keeps
-        # exact non-sports contracts in the same normalized market universe;
-        # EvidenceEngine remains the only source allowed to provide a forecast.
-        for row in all_rows:
-            if _is_mlb_moneyline(row) or not _is_fed_rates_market(row):
-                if not _is_mlb_moneyline(row):
-                    metrics["POLYMARKET.generic_scope_skipped"] += 1
-                continue
-            try:
-                candidate = discover_event_candidate(
-                    row, venue=Venue.POLYMARKET, discovered_at=discovery_time
-                )
-                if candidate.candidate is None:
-                    metrics["POLYMARKET.generic_rejected"] += 1
-                    continue
-                book = pmus.book(candidate.candidate.slug or candidate.candidate.market_id)
-                candidate = discover_event_candidate(
-                    row,
-                    venue=Venue.POLYMARKET,
-                    book=book,
-                    discovered_at=discovery_time,
-                )
-                if candidate.candidate is None:
-                    metrics["POLYMARKET.generic_rejected"] += 1
-                    continue
-                market = attach_fees(
-                    normalized_for_direct_contract(candidate.candidate), utcnow()
-                )
-                markets.append(market)
-                metrics["POLYMARKET.generic_markets_observed"] += 1
-            except (ValueError, TypeError, KeyError) as exc:
-                failure("POLYMARKET", "generic_market", exc)
-            except Exception as exc:  # noqa: BLE001 - isolate one live market
-                failure("POLYMARKET", "generic_market", exc)
     except Exception as exc:  # noqa: BLE001 - isolate SDK discovery failures by venue
         failure("POLYMARKET", "discovery", exc)
     finally:
