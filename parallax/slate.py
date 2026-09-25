@@ -13,7 +13,16 @@ from typing import Any
 
 ACTIONS = ("BUY", "WATCH", "PASS")
 ACTION_PRIORITY = {"PASS": 0, "WATCH": 1, "BUY": 2}
-NON_PLAY_SCHEDULE_STATES = {"CANCELLED", "CANCELED", "POSTPONED", "SUSPENDED"}
+NON_PLAY_SCHEDULE_STATES = {
+    "CANCELLED",
+    "CANCELED",
+    "POSTPONED",
+    "SUSPENDED",
+    "DELAYED",
+    "IN_PROGRESS",
+    "PAST_START",
+    "FINAL",
+}
 
 
 def _text(value: object) -> str:
