@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from maker_spread_economics.polymarket_us import PolymarketUSPublicClient, redact_sensitive
-from parallax.alerts import AlertDeliveryStore, AlertDispatcher, dispatch_scored_buy
+from parallax.alerts import AlertDeliveryStore, AlertDispatcher, dispatch_scored_buy, reconcile_active_buy_alerts
 from parallax.discovery import MAX_ACTIVE_MARKETS_PER_VENUE, paginate, paginate_collection
 from parallax.economics import retail_example
 from parallax.engine import qualify
