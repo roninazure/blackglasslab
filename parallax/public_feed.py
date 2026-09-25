@@ -212,6 +212,78 @@ def _health_state(payload: Mapping[str, Any]) -> str:
     return "UNKNOWN"
 
 
+def _public_slate(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    public: dict[str, Any] = {}
+    for key in (
+        "schedule_state",
+        "expected_games",
+        "accounted_games",
+        "all_games_accounted",
+        "market_data_complete",
+    ):
+        item = value.get(key)
+        if isinstance(item, (str, int, bool)) or item is None:
+            public[key] = item
+    status_counts = value.get("status_counts")
+    if isinstance(status_counts, Mapping):
+        public["status_counts"] = {
+            str(key): int(count)
+            for key, count in status_counts.items()
+            if isinstance(count, int) and not isinstance(count, bool)
+        }
+    dates_out = []
+    dates = value.get("dates")
+    if isinstance(dates, list):
+        for date_row in dates:
+            if not isinstance(date_row, Mapping):
+                continue
+            date_public = {
+                key: date_row.get(key)
+                for key in (
+                    "date",
+                    "expected_games",
+                    "accounted_games",
+                    "all_games_accounted",
+                    "market_data_complete",
+                )
+                if isinstance(date_row.get(key), (str, int, bool))
+            }
+            counts = date_row.get("status_counts")
+            if isinstance(counts, Mapping):
+                date_public["status_counts"] = {
+                    str(key): int(count)
+                    for key, count in counts.items()
+                    if isinstance(count, int) and not isinstance(count, bool)
+                }
+            games_out = []
+            games = date_row.get("games")
+            if isinstance(games, list):
+                for game in games:
+                    if not isinstance(game, Mapping):
+                        continue
+                    games_out.append(
+                        {
+                            key: game.get(key)
+                            for key in (
+                                "game_id",
+                                "date",
+                                "start_time",
+                                "away_team",
+                                "home_team",
+                                "schedule_status",
+                                "status",
+                            )
+                            if isinstance(game.get(key), str)
+                        }
+                    )
+            date_public["games"] = games_out
+            dates_out.append(date_public)
+    public["dates"] = dates_out
+    return public
+
+
 def _public_play(row: Mapping[str, Any], lane: str) -> dict[str, Any] | None:
     action = _action(row)
     if action is None:
@@ -312,7 +384,7 @@ def sanitize_completed_scan(
     plays = [play for row in rows if (play := _public_play(row, normalized_lane))]
     source_as_of = _source_as_of(decoded, rows)
     counts = {action: sum(play["action"] == action for play in plays) for action in PUBLIC_ACTIONS}
-    return {
+    result = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": now.isoformat(),
         "source_as_of": source_as_of,
@@ -328,6 +400,10 @@ def sanitize_completed_scan(
         },
         "plays": plays,
     }
+    slate = _public_slate(decoded.get("slate"))
+    if slate is not None:
+        result["slate"] = slate
+    return result
 
 
 def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
