@@ -758,6 +758,17 @@ def dispatch_scored_buy(
     """Dispatch one deduplicated immediate alert for a freshly scored BUY."""
     if play.suggested_action != Action.BUY:
         return None
+    prior_state = dispatcher.store.buy_state(
+        sport,
+        str(play.venue),
+        play.market_id,
+        str(play.side),
+    )
+    lifecycle_generation = (
+        str(prior_state.get("closed_at") or prior_state.get("updated_at") or "")
+        if prior_state is not None and prior_state.get("status") != "ACTIVE"
+        else None
+    )
     item = _scored_buy_item(
         play,
         market,
@@ -765,6 +776,7 @@ def dispatch_scored_buy(
         matchup=matchup,
         detected_at=detected_at,
         game_start=game_start,
+        lifecycle_generation=lifecycle_generation,
     )
     existing = dispatcher.store.delivery(dispatcher.channel, item["inbox_id"])
     dispatcher.dispatch([item])
@@ -871,6 +883,7 @@ def _scored_buy_item(
     matchup: str,
     detected_at: str,
     game_start: str | None = None,
+    lifecycle_generation: str | None = None,
 ) -> dict[str, Any]:
     material_state = {
         "venue": str(play.venue),
@@ -880,6 +893,7 @@ def _scored_buy_item(
         "probability": _rounded(play.model_probability, 2),
         "edge_points": _rounded(play.edge_points, 1),
         "liquidity": _rounded(play.executable_size, 0),
+        "lifecycle_generation": lifecycle_generation,
     }
     fingerprint = hashlib.sha256(
         json.dumps(material_state, allow_nan=False, sort_keys=True).encode()
