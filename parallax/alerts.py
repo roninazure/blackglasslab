@@ -884,7 +884,15 @@ def _scored_buy_item(
         "matchup": matchup,
         "selected_side": selected_side,
         "side": str(play.side),
-        "game_start": game_start,
+        "game_start": (
+            game_start
+            or (
+                str(market.original_metadata.get("market", {}).get("gameStartTime"))
+                if isinstance(market.original_metadata.get("market"), dict)
+                and market.original_metadata.get("market", {}).get("gameStartTime")
+                else None
+            )
+        ),
         "resolution_time": play.resolution_time,
         "executable_price": play.executable_price,
         "model_probability": play.model_probability,
