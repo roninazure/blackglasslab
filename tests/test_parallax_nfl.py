@@ -316,7 +316,11 @@ def test_nfl_scored_buy_dispatches_immediate_alert(monkeypatch):
         }
 
     monkeypatch.setattr(nfl_live_scan, "dispatch_scored_buy", fake_dispatch)
-    game = SimpleNamespace(away_team="BAL", home_team="KC")
+    game = SimpleNamespace(
+        away_team="BAL",
+        home_team="KC",
+        kickoff="2026-09-28T00:20:00+00:00",
+    )
     mapping = SimpleNamespace(game=game)
     scored_play = SimpleNamespace(suggested_action=Action.BUY)
     detected_at = __import__("datetime").datetime(
@@ -332,7 +336,7 @@ def test_nfl_scored_buy_dispatches_immediate_alert(monkeypatch):
     assert sent[0][3]["sport"] == "NFL"
     assert sent[0][3]["matchup"] == "BAL at KC"
     assert sent[0][3]["detected_at"] == detected_at.isoformat()
-    assert sent[0][3]["game_start"] is None
+    assert sent[0][3]["game_start"] == "2026-09-28T00:20:00+00:00"
 
 
 @pytest.mark.parametrize("action", [__import__("parallax.models", fromlist=["Action"]).Action.WATCH, __import__("parallax.models", fromlist=["Action"]).Action.PASS])
