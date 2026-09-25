@@ -891,8 +891,9 @@ def _scored_buy_item(
         "probability": _rounded(play.model_probability, 2),
         "edge_points": _rounded(play.edge_points, 1),
         "liquidity": _rounded(play.executable_size, 0),
-        "lifecycle_generation": lifecycle_generation,
     }
+    if lifecycle_generation is not None:
+        material_state["lifecycle_generation"] = lifecycle_generation
     fingerprint = hashlib.sha256(
         json.dumps(material_state, allow_nan=False, sort_keys=True).encode()
     ).hexdigest()[:16]
