@@ -332,6 +332,7 @@ def test_nfl_scored_buy_dispatches_immediate_alert(monkeypatch):
     assert sent[0][3]["sport"] == "NFL"
     assert sent[0][3]["matchup"] == "BAL at KC"
     assert sent[0][3]["detected_at"] == detected_at.isoformat()
+    assert sent[0][3]["game_start"] is None
 
 
 @pytest.mark.parametrize("action", [__import__("parallax.models", fromlist=["Action"]).Action.WATCH, __import__("parallax.models", fromlist=["Action"]).Action.PASS])
