@@ -196,6 +196,7 @@ def _scan() -> dict:
     statuses = Counter()
     rejection_reasons = Counter()
     rows_out = []
+    scored_plays = []
     data_unavailable_game_ids: set[str] = set()
     mapping_failure_game_ids: set[str] = set()
     for venue, raw_rows in (("PMUS", pmus_rows), ("KALSHI", kalshi_rows)):
