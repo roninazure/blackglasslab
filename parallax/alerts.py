@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -877,7 +877,7 @@ def reconcile_active_buy_alerts(
     *,
     sport: str,
     detected_at: str,
-    economic_key_for_play: callable | None = None,
+    economic_key_for_play: Callable[[ParallaxPlay], str | None] | None = None,
 ) -> dict[str, int]:
     """Close only previously delivered BUYs with explicit invalidation evidence."""
     now = timestamp(detected_at) or utcnow()
