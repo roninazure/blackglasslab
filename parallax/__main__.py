@@ -5,11 +5,11 @@ import json
 from pathlib import Path
 from threading import Event, Thread
 
-from .alerts import dispatch_scored_buy
+from .alerts import dispatch_scored_buy, reconcile_active_buy_alerts
 from .api import server
 from .demo import demo_inputs
 from .entitlements import Plan
-from .models import Action
+from .models import Action, utcnow
 from .service import PlayService
 from .sources import collect_markets
 from .slate import reconcile_slate
@@ -38,6 +38,19 @@ def refresh(service: PlayService, *, demo: bool, limit: int):
         service.replace_inputs(markets, collection=collection)
 
 
+def _market_game_start(market) -> str | None:
+    metadata = market.original_metadata.get("market", {})
+    if not isinstance(metadata, dict):
+        return None
+    mlb = metadata.get("mlb")
+    if isinstance(mlb, dict) and mlb.get("start_time"):
+        return str(mlb["start_time"])
+    for key in ("gameStartTime", "game_start_time", "startTime", "start_time"):
+        if metadata.get(key):
+            return str(metadata[key])
+    return None
+
+
 def dispatch_scan_buy_alerts(service: PlayService, *, sport: str) -> dict[str, int]:
     """Dispatch immediate ntfy alerts for freshly scored live BUY plays."""
     markets = {
@@ -60,6 +73,7 @@ def dispatch_scan_buy_alerts(service: PlayService, *, sport: str) -> dict[str, i
                 sport=sport,
                 matchup=market.title,
                 detected_at=play.updated_at,
+                game_start=_market_game_start(market),
             )
         except Exception:  # Alert delivery must never fail the scan.
             summary["failed"] += 1
@@ -118,6 +132,15 @@ def mlb_slate_report(service: PlayService) -> dict:
     return report
 
 
+def reconcile_scan_buy_lifecycle(service: PlayService, *, sport: str) -> dict[str, int]:
+    return reconcile_active_buy_alerts(
+        service.alert_dispatcher,
+        service._plays(),
+        sport=sport,
+        detected_at=utcnow().isoformat(),
+    )
+
+
 def start_refresh_loop(service: PlayService, *, demo: bool, limit: int) -> Event:
     stop = Event()
 
@@ -158,6 +181,7 @@ def main():
         )
         payload = {"health": service.health(), "buy_alerts": buy_alerts}
         if not args.demo:
+            payload["buy_lifecycle"] = reconcile_scan_buy_lifecycle(service, sport="MLB")
             payload["slate"] = mlb_slate_report(service)
         payload["plays"] = service.plays(Plan.PRO)
         payload["signals"] = service.signals(Plan.PRO)
