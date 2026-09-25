@@ -213,3 +213,66 @@ def test_nfl_existing_verdict_rows_are_exported_without_guessing_fields():
     assert result["plays"][0]["contract_side"] == "NO"
     assert "contract_label" not in result["plays"][0]
     assert "selected_team" not in result["plays"][0]
+
+
+def test_public_feed_preserves_only_sanitized_dynamic_slate_fields():
+    stdout = json.dumps(
+        {
+            "read_only": True,
+            "slate": {
+                "schedule_state": "COMPLETE",
+                "expected_games": 2,
+                "accounted_games": 2,
+                "all_games_accounted": True,
+                "market_data_complete": True,
+                "status_counts": {"BUY": 1, "PASS": 1},
+                "private_debug": "do-not-export",
+                "dates": [
+                    {
+                        "date": "2026-09-27",
+                        "expected_games": 2,
+                        "accounted_games": 2,
+                        "all_games_accounted": True,
+                        "market_data_complete": True,
+                        "status_counts": {"BUY": 1, "PASS": 1},
+                        "games": [
+                            {
+                                "game_id": "g1",
+                                "date": "2026-09-27",
+                                "start_time": "2026-09-27T17:00:00+00:00",
+                                "away_team": "KC",
+                                "home_team": "MIA",
+                                "schedule_status": "SCHEDULED",
+                                "status": "BUY",
+                                "raw_provider_payload": "secret",
+                            },
+                            {
+                                "game_id": "g2",
+                                "date": "2026-09-27",
+                                "start_time": "2026-09-27T17:00:00+00:00",
+                                "away_team": "CAR",
+                                "home_team": "CLE",
+                                "schedule_status": "SCHEDULED",
+                                "status": "PASS",
+                            },
+                        ],
+                    }
+                ],
+            },
+            "summary": {"rows": []},
+        }
+    )
+
+    result = sanitize_completed_scan("nfl", stdout, generated_at=NOW)
+
+    assert result["slate"]["expected_games"] == 2
+    assert result["slate"]["accounted_games"] == 2
+    assert result["slate"]["all_games_accounted"] is True
+    assert [row["status"] for row in result["slate"]["dates"][0]["games"]] == [
+        "BUY",
+        "PASS",
+    ]
+    serialized = json.dumps(result["slate"], sort_keys=True)
+    assert "private_debug" not in serialized
+    assert "raw_provider_payload" not in serialized
+    assert "secret" not in serialized
