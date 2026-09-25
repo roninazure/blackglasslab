@@ -315,6 +315,24 @@ class AlertDeliveryStore:
                 ),
             )
 
+    def buy_state(
+        self,
+        sport: str,
+        venue: str,
+        market_id: str,
+        side: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM buy_alert_state
+                WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
+                """,
+                (sport.upper(), venue, market_id, side),
+            ).fetchone()
+        return None if row is None else dict(row)
+
     def active_buys(self, sport: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
