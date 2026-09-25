@@ -8,6 +8,7 @@ from parallax.alerts import (
     AlertDispatcher,
     DeliveryResult,
     dispatch_scored_buy,
+    reconcile_active_buy_alerts,
 )
 from parallax.models import Action, Confidence, Mechanics, NormalizedMarket, Side, Venue
 
@@ -248,3 +249,86 @@ def test_mlb_buy_alert_failure_does_not_fail_scan(monkeypatch):
         "deduplicated": 0,
         "failed": 1,
     }
+
+
+def test_delivered_buy_is_withdrawn_once_when_rescored_watch(tmp_path):
+    transport = FakeTransport()
+    alert_dispatcher = dispatcher(tmp_path, transport)
+
+    first = send(alert_dispatcher, play(Action.BUY))
+    watch = play(Action.WATCH)
+    result = reconcile_active_buy_alerts(
+        alert_dispatcher,
+        [watch],
+        sport="NFL",
+        detected_at="2026-09-23T15:02:02+00:00",
+    )
+    repeated = reconcile_active_buy_alerts(
+        alert_dispatcher,
+        [watch],
+        sport="NFL",
+        detected_at="2026-09-23T15:03:02+00:00",
+    )
+
+    assert first["status"] == "SENT"
+    assert result == {"withdrawn": 1, "expired": 0, "failed": 0}
+    assert repeated == {"withdrawn": 0, "expired": 0, "failed": 0}
+    assert len(transport.calls) == 2
+    assert transport.calls[1][1]["title"] == "PARALLAX BUY WITHDRAWN"
+    assert "Current verdict: WATCH" in transport.calls[1][1]["message"]
+
+
+def test_missing_current_play_does_not_withdraw_before_game_start(tmp_path):
+    transport = FakeTransport()
+    alert_dispatcher = dispatcher(tmp_path, transport)
+
+    dispatch_scored_buy(
+        alert_dispatcher,
+        play(Action.BUY),
+        market(),
+        sport="NFL",
+        matchup="Baltimore at Kansas City",
+        detected_at="2026-09-23T15:01:02+00:00",
+        game_start="2026-09-28T00:20:00+00:00",
+    )
+    result = reconcile_active_buy_alerts(
+        alert_dispatcher,
+        [],
+        sport="NFL",
+        detected_at="2026-09-23T15:05:02+00:00",
+    )
+
+    assert result == {"withdrawn": 0, "expired": 0, "failed": 0}
+    assert len(transport.calls) == 1
+
+
+def test_active_buy_expires_once_when_scheduled_game_starts(tmp_path):
+    transport = FakeTransport()
+    alert_dispatcher = dispatcher(tmp_path, transport)
+
+    dispatch_scored_buy(
+        alert_dispatcher,
+        play(Action.BUY),
+        market(),
+        sport="NFL",
+        matchup="Baltimore at Kansas City",
+        detected_at="2026-09-23T15:01:02+00:00",
+        game_start="2026-09-23T15:02:00+00:00",
+    )
+    result = reconcile_active_buy_alerts(
+        alert_dispatcher,
+        [],
+        sport="NFL",
+        detected_at="2026-09-23T15:02:01+00:00",
+    )
+    repeated = reconcile_active_buy_alerts(
+        alert_dispatcher,
+        [],
+        sport="NFL",
+        detected_at="2026-09-23T15:03:01+00:00",
+    )
+
+    assert result == {"withdrawn": 0, "expired": 1, "failed": 0}
+    assert repeated == {"withdrawn": 0, "expired": 0, "failed": 0}
+    assert len(transport.calls) == 2
+    assert transport.calls[1][1]["title"] == "PARALLAX BUY EXPIRED"
