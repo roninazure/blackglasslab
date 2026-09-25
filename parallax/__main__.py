@@ -190,7 +190,7 @@ def mlb_slate_report(service: PlayService) -> dict:
 def reconcile_scan_buy_lifecycle(service: PlayService, *, sport: str) -> dict[str, int]:
     markets = {
         (market.venue, market.venue_market_id): market
-        for market in service.markets
+        for market in getattr(service, "markets", ())
     }
 
     def economic_key_for_play(play):
