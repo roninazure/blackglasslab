@@ -333,3 +333,46 @@ def test_active_buy_expires_once_when_scheduled_game_starts(tmp_path):
     assert repeated == {"withdrawn": 0, "expired": 0, "failed": 0}
     assert len(transport.calls) == 2
     assert transport.calls[1][1]["title"] == "PARALLAX BUY EXPIRED"
+
+
+def test_withdrawn_buy_reactivation_sends_new_buy_even_same_material_state(tmp_path):
+    transport = FakeTransport()
+    alert_dispatcher = dispatcher(tmp_path, transport)
+
+    send(alert_dispatcher, play(Action.BUY))
+    reconcile_active_buy_alerts(
+        alert_dispatcher,
+        [play(Action.WATCH)],
+        sport="NFL",
+        detected_at="2026-09-23T15:02:02+00:00",
+    )
+    reactivated = send(alert_dispatcher, play(Action.BUY))
+
+    assert reactivated["status"] == "SENT"
+    assert reactivated["deduplicated"] is False
+    assert len(transport.calls) == 3
+    assert transport.calls[2][1]["title"] == "PARALLAX BUY"
+
+
+def test_kickoff_expiry_wins_over_non_buy_rescore(tmp_path):
+    transport = FakeTransport()
+    alert_dispatcher = dispatcher(tmp_path, transport)
+
+    dispatch_scored_buy(
+        alert_dispatcher,
+        play(Action.BUY),
+        market(),
+        sport="NFL",
+        matchup="Baltimore at Kansas City",
+        detected_at="2026-09-23T15:01:02+00:00",
+        game_start="2026-09-23T15:02:00+00:00",
+    )
+    result = reconcile_active_buy_alerts(
+        alert_dispatcher,
+        [play(Action.WATCH)],
+        sport="NFL",
+        detected_at="2026-09-23T15:02:01+00:00",
+    )
+
+    assert result == {"withdrawn": 0, "expired": 1, "failed": 0}
+    assert transport.calls[1][1]["title"] == "PARALLAX BUY EXPIRED"
