@@ -249,6 +249,7 @@ def _scan() -> dict:
                                 prospective_store, market, side, evidence, decision_at
                             )
                             result["prospective_captured"] += 1
+                            scored_plays.append(play)
                             statuses[f"SCORED_{play.suggested_action}"] += 1
                             try:
                                 alert_result = _dispatch_buy_alert(
