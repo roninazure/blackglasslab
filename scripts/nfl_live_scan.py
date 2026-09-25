@@ -6,7 +6,9 @@ import re
 import signal
 import sys
 from collections import Counter
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -21,9 +23,33 @@ from parallax.models import Action, Side, utcnow
 from parallax.nfl import VALIDATION_ECE, NFLEvidenceProvider, fetch_games, is_supported_market, map_market_to_game, probability_for_game
 from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.sources import KalshiPublicClient
+from parallax.slate import reconcile_slate
 from parallax.track_record import TrackRecord
 
 PROSPECTIVE_DB = Path("data/parallax-commercial/prospective.sqlite")
+NFL_SLATE_HORIZON_DAYS = 7
+NFL_TZ = ZoneInfo("America/New_York")
+
+
+def _upcoming_slate(games, now):
+    """Return the authoritative upcoming NFL schedule without assuming game count."""
+    cutoff = now + timedelta(days=NFL_SLATE_HORIZON_DAYS)
+    scheduled = []
+    for game in games:
+        kickoff = datetime.fromisoformat(game.kickoff.replace("Z", "+00:00"))
+        if kickoff < now or kickoff > cutoff:
+            continue
+        scheduled.append(
+            {
+                "game_id": game.game_id,
+                "date": kickoff.astimezone(NFL_TZ).date().isoformat(),
+                "start_time": kickoff.isoformat(),
+                "away_team": game.away_team,
+                "home_team": game.home_team,
+                "schedule_status": "SCHEDULED",
+            }
+        )
+    return scheduled
 
 
 def _capture_evaluated(store, market, side, evidence, now):
@@ -134,11 +160,14 @@ def _scan() -> dict:
         AlertDeliveryStore(default_inbox_store().path)
     )
     pmus_rows: list[dict] = []
+    pmus_discovery_complete = False
+    kalshi_discovery_complete = False
     pmus = PolymarketUSPublicClient()
     try:
         raw_pmus, cov = paginate(pmus.markets_page, page_size=100, max_pages=100, max_rows=MAX_ACTIVE_MARKETS_PER_VENUE)
         pmus_rows = [r for r in raw_pmus if r.get("active") and not r.get("closed") and _is_nfl(r, r.get("raw", {}))]
         result["venues"]["PMUS"] = {"coverage": cov.__dict__, "universe_rows": len(raw_pmus), "nfl_rows": len(pmus_rows)}
+        pmus_discovery_complete = cov.state.value == "COMPLETE"
     except Exception as exc:
         result["venues"]["PMUS"] = {
             "coverage": {"state": "PARTIAL", "reason": "market discovery unavailable"},
@@ -158,12 +187,15 @@ def _scan() -> dict:
     try:
         kalshi_rows, kalshi_cov = _scope_kalshi(kalshi)
         result["venues"]["KALSHI"] = {"coverage": kalshi_cov, "nfl_rows": len(kalshi_rows)}
+        kalshi_discovery_complete = kalshi_cov.get("state") == "COMPLETE"
     except Exception as exc:
         kalshi_rows, kalshi_cov = [], {"state": "PARTIAL", "failed_scopes": [{"stage": "series", "error": type(exc).__name__}]}
         result["venues"]["KALSHI"] = {"coverage": kalshi_cov, "nfl_rows": 0}
     statuses = Counter()
     rejection_reasons = Counter()
     rows_out = []
+    data_unavailable_game_ids: set[str] = set()
+    mapping_failure_game_ids: set[str] = set()
     for venue, raw_rows in (("PMUS", pmus_rows), ("KALSHI", kalshi_rows)):
         for raw in raw_rows:
             try:
@@ -182,8 +214,11 @@ def _scan() -> dict:
             statuses[mapping.status] += 1
             row = {"venue": venue, "market_id": market.venue_market_id, "status": mapping.status, "reason": mapping.reason, "title": market.title}
             if mapping.game:
+                row["game_id"] = mapping.game.game_id
                 row["game"] = f"{mapping.game.away_team} at {mapping.game.home_team}"
                 row["kickoff"] = mapping.game.kickoff
+                if mapping.status not in {"MAPPED_GAME_WINNER", "PAST_START"}:
+                    mapping_failure_game_ids.add(mapping.game.game_id)
             if mapping.status == "MAPPED_GAME_WINNER" and mapping.game:
                 row["model_probability"] = probability_for_game(mapping.game, games)
                 try:
@@ -202,6 +237,7 @@ def _scan() -> dict:
                     evidence = NFLEvidenceProvider(lambda: games).assess(market)
                     if evidence is None:
                         statuses["EVIDENCE_MISSING"] += 1
+                        data_unavailable_game_ids.add(mapping.game.game_id)
                     else:
                         statuses["EVIDENCE"] += 1
                         for side in Side:
@@ -227,16 +263,25 @@ def _scan() -> dict:
                                     result["alerts"] += 1
                             except Exception:
                                 statuses["ALERT_ERROR"] += 1
-                            scored = {"venue": venue, "market": market.title, "market_id": market.venue_market_id, "side": side.value, "game_start": mapping.game.kickoff, "nfl_v1_probability": play.model_probability, "executable_price": play.executable_price, "raw_edge": play.edge_points, "safety_margin": (play.edge_points / 100 - VALIDATION_ECE) if play.edge_points is not None else None, "fee": play.fees_estimate, "net_ev_25": play.expected_value, "net_ev_50": None, "net_ev_100": None, "liquidity": play.executable_size, "failed_gates": list(play.verdict.failed_gates), "verdict": play.suggested_action.value}
+                            scored = {"venue": venue, "market": market.title, "market_id": market.venue_market_id, "game_id": mapping.game.game_id, "side": side.value, "game_start": mapping.game.kickoff, "nfl_v1_probability": play.model_probability, "executable_price": play.executable_price, "raw_edge": play.edge_points, "safety_margin": (play.edge_points / 100 - VALIDATION_ECE) if play.edge_points is not None else None, "fee": play.fees_estimate, "net_ev_25": play.expected_value, "net_ev_50": None, "net_ev_100": None, "liquidity": play.executable_size, "failed_gates": list(play.verdict.failed_gates), "verdict": play.suggested_action.value}
                             for index, key in ((2, "net_ev_50"), (3, "net_ev_100")):
                                 example = play.retail_examples[index]
                                 scored[key] = (play.model_probability * example.estimated_payout_if_correct - example.total_cost) if play.model_probability is not None and example.available and example.total_cost is not None else None
                             rows_out.append(scored)
                 except Exception as exc:
                     statuses["BOOK_OR_SCORING_ERROR"] += 1
+                    data_unavailable_game_ids.add(mapping.game.game_id)
                     row["scoring_error"] = type(exc).__name__
             rows_out.append(row)
-    result["summary"] = {"nfl_markets_discovered": {"PMUS": len(pmus_rows), "KALSHI": len(kalshi_rows)}, "status_counts": dict(statuses), "rejection_counts": dict(rejection_reasons), "rows": rows_out[:50]}
+    scheduled = _upcoming_slate(games, utcnow())
+    result["slate"] = reconcile_slate(
+        scheduled,
+        rows_out,
+        discovery_complete=pmus_discovery_complete and kalshi_discovery_complete,
+        data_unavailable_game_ids=data_unavailable_game_ids,
+        mapping_failure_game_ids=mapping_failure_game_ids,
+    )
+    result["summary"] = {"nfl_markets_discovered": {"PMUS": len(pmus_rows), "KALSHI": len(kalshi_rows)}, "status_counts": dict(statuses), "rejection_counts": dict(rejection_reasons), "rows": rows_out}
     return result
 
 
