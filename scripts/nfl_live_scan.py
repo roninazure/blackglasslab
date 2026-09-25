@@ -32,21 +32,23 @@ NFL_TZ = ZoneInfo("America/New_York")
 
 
 def _upcoming_slate(games, now):
-    """Return the authoritative upcoming NFL schedule without assuming game count."""
-    cutoff = now + timedelta(days=NFL_SLATE_HORIZON_DAYS)
+    """Return authoritative NFL dates in the rolling horizon, preserving started games."""
+    today = now.astimezone(NFL_TZ).date()
+    final_date = today + timedelta(days=NFL_SLATE_HORIZON_DAYS)
     scheduled = []
     for game in games:
         kickoff = datetime.fromisoformat(game.kickoff.replace("Z", "+00:00"))
-        if kickoff < now or kickoff > cutoff:
+        local_date = kickoff.astimezone(NFL_TZ).date()
+        if local_date < today or local_date > final_date:
             continue
         scheduled.append(
             {
                 "game_id": game.game_id,
-                "date": kickoff.astimezone(NFL_TZ).date().isoformat(),
+                "date": local_date.isoformat(),
                 "start_time": kickoff.isoformat(),
                 "away_team": game.away_team,
                 "home_team": game.home_team,
-                "schedule_status": "SCHEDULED",
+                "schedule_status": "PAST_START" if kickoff <= now else "SCHEDULED",
             }
         )
     return scheduled
