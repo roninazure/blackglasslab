@@ -174,17 +174,22 @@ class MLBStatsAPI:
                 away = str(teams.get("away", {}).get("team", {}).get("name") or "").strip()
                 if not game_id or start is None or not home or not away:
                     continue
-                detailed = str(
-                    row.get("status", {}).get("detailedState")
-                    or row.get("status", {}).get("abstractGameState")
-                    or "Scheduled"
-                ).upper()
-                if "POSTPON" in detailed:
+                status = row.get("status", {})
+                detailed = str(status.get("detailedState") or "").upper()
+                abstract = str(status.get("abstractGameState") or "").upper()
+                combined = f"{abstract} {detailed}"
+                if "POSTPON" in combined:
                     schedule_status = "POSTPONED"
-                elif "CANCEL" in detailed:
+                elif "CANCEL" in combined:
                     schedule_status = "CANCELLED"
-                elif "SUSPEND" in detailed:
+                elif "SUSPEND" in combined:
                     schedule_status = "SUSPENDED"
+                elif "DELAY" in combined:
+                    schedule_status = "DELAYED"
+                elif abstract == "FINAL" or "FINAL" in detailed:
+                    schedule_status = "FINAL"
+                elif abstract == "LIVE" or "IN PROGRESS" in detailed:
+                    schedule_status = "IN_PROGRESS"
                 else:
                     schedule_status = "SCHEDULED"
                 scheduled.append(
