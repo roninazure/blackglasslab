@@ -82,6 +82,7 @@ def _dispatch_buy_alert(dispatcher, play, market, mapping, detected_at):
         sport="NFL",
         matchup=matchup,
         detected_at=detected_at.isoformat(),
+        game_start=mapping.game.kickoff if mapping.game else None,
     )
 
 
