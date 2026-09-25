@@ -230,6 +230,7 @@ class AlertDeliveryStore:
                 """
                 CREATE TABLE IF NOT EXISTS buy_alert_state (
                     sport TEXT NOT NULL,
+                    economic_key TEXT NOT NULL DEFAULT '',
                     venue TEXT NOT NULL,
                     market_id TEXT NOT NULL,
                     side TEXT NOT NULL,
@@ -249,45 +250,94 @@ class AlertDeliveryStore:
                 )
                 """
             )
+            buy_state_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(buy_alert_state)").fetchall()
+            }
+            if "economic_key" not in buy_state_columns:
+                conn.execute(
+                    "ALTER TABLE buy_alert_state ADD COLUMN economic_key TEXT NOT NULL DEFAULT ''"
+                )
+                migrated_at = utcnow().isoformat()
+                conn.execute(
+                    """
+                    UPDATE buy_alert_state
+                    SET status = 'SUPERSEDED',
+                        updated_at = ?,
+                        closed_at = ?,
+                        close_reason = 'Superseded by economic-position alert normalization.'
+                    WHERE sport = 'MLB' AND status = 'ACTIVE'
+                    """,
+                    (migrated_at, migrated_at),
+                )
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS buy_alert_state_status
                 ON buy_alert_state(sport, status, updated_at)
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS buy_alert_state_economic_status
+                ON buy_alert_state(sport, economic_key, status, updated_at)
+                """
+            )
 
     def mark_buy_active(self, item: dict[str, Any]) -> None:
-        """Persist the lifecycle of a BUY only after it has been delivered."""
+        """Persist one active lifecycle row per delivered economic BUY position."""
         now = utcnow().isoformat()
+        sport = str(item["sport"]).upper()
+        economic_key = str(item.get("economic_key") or "")
         key = (
-            str(item["sport"]).upper(),
+            sport,
             str(item["venue"]),
             str(item["market_id"]),
             str(item["side"]),
         )
         with self._connect() as conn:
-            existing = conn.execute(
-                """
-                SELECT status, activated_at
-                FROM buy_alert_state
-                WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
-                """,
-                key,
-            ).fetchone()
+            if economic_key:
+                existing = conn.execute(
+                    """
+                    SELECT status, activated_at
+                    FROM buy_alert_state
+                    WHERE sport = ? AND economic_key = ?
+                    ORDER BY CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END, updated_at DESC
+                    LIMIT 1
+                    """,
+                    (sport, economic_key),
+                ).fetchone()
+            else:
+                existing = conn.execute(
+                    """
+                    SELECT status, activated_at
+                    FROM buy_alert_state
+                    WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
+                    """,
+                    key,
+                ).fetchone()
             activated_at = (
                 existing["activated_at"]
                 if existing is not None and existing["status"] == "ACTIVE"
                 else str(item.get("detected_at") or now)
             )
+            if economic_key:
+                conn.execute(
+                    """
+                    DELETE FROM buy_alert_state
+                    WHERE sport = ? AND economic_key = ? AND status = 'ACTIVE'
+                    """,
+                    (sport, economic_key),
+                )
             conn.execute(
                 """
                 INSERT INTO buy_alert_state (
-                    sport, venue, market_id, side, status, matchup, selected_side,
+                    sport, economic_key, venue, market_id, side, status, matchup, selected_side,
                     activated_at, updated_at, game_start, resolution_time,
                     last_price, model_probability, edge_points, closed_at, close_reason
                 )
-                VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+                VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 ON CONFLICT(sport, venue, market_id, side) DO UPDATE SET
+                    economic_key = excluded.economic_key,
                     status = 'ACTIVE',
                     matchup = excluded.matchup,
                     selected_side = excluded.selected_side,
@@ -302,7 +352,11 @@ class AlertDeliveryStore:
                     close_reason = NULL
                 """,
                 (
-                    *key,
+                    sport,
+                    economic_key,
+                    str(item["venue"]),
+                    str(item["market_id"]),
+                    str(item["side"]),
                     str(item.get("matchup") or ""),
                     str(item.get("selected_side") or item.get("side") or ""),
                     activated_at,
@@ -321,16 +375,30 @@ class AlertDeliveryStore:
         venue: str,
         market_id: str,
         side: str,
+        *,
+        economic_key: str | None = None,
     ) -> dict[str, Any] | None:
         with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT *
-                FROM buy_alert_state
-                WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
-                """,
-                (sport.upper(), venue, market_id, side),
-            ).fetchone()
+            if economic_key:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM buy_alert_state
+                    WHERE sport = ? AND economic_key = ?
+                    ORDER BY CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END, updated_at DESC
+                    LIMIT 1
+                    """,
+                    (sport.upper(), economic_key),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM buy_alert_state
+                    WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
+                    """,
+                    (sport.upper(), venue, market_id, side),
+                ).fetchone()
         return None if row is None else dict(row)
 
     def active_buys(self, sport: str) -> list[dict[str, Any]]:
