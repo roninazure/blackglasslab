@@ -376,3 +376,26 @@ def test_kickoff_expiry_wins_over_non_buy_rescore(tmp_path):
 
     assert result == {"withdrawn": 0, "expired": 1, "failed": 0}
     assert transport.calls[1][1]["title"] == "PARALLAX BUY EXPIRED"
+
+
+def test_mlb_scan_lifecycle_wrapper_uses_current_scored_plays(monkeypatch):
+    import parallax.__main__ as parallax_main
+
+    plays = [play(Action.BUY), play(Action.WATCH)]
+    calls = []
+
+    def fake_reconcile(dispatcher, current, **kwargs):
+        calls.append((dispatcher, current, kwargs))
+        return {"withdrawn": 0, "expired": 0, "failed": 0}
+
+    monkeypatch.setattr(parallax_main, "reconcile_active_buy_alerts", fake_reconcile)
+    service = SimpleNamespace(
+        alert_dispatcher=object(),
+        _plays=lambda: plays,
+    )
+
+    result = parallax_main.reconcile_scan_buy_lifecycle(service, sport="MLB")
+
+    assert result == {"withdrawn": 0, "expired": 0, "failed": 0}
+    assert calls[0][1] == plays
+    assert calls[0][2]["sport"] == "MLB"
