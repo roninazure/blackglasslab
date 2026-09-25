@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -230,6 +230,7 @@ class AlertDeliveryStore:
                 """
                 CREATE TABLE IF NOT EXISTS buy_alert_state (
                     sport TEXT NOT NULL,
+                    economic_key TEXT NOT NULL DEFAULT '',
                     venue TEXT NOT NULL,
                     market_id TEXT NOT NULL,
                     side TEXT NOT NULL,
@@ -249,45 +250,94 @@ class AlertDeliveryStore:
                 )
                 """
             )
+            buy_state_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(buy_alert_state)").fetchall()
+            }
+            if "economic_key" not in buy_state_columns:
+                conn.execute(
+                    "ALTER TABLE buy_alert_state ADD COLUMN economic_key TEXT NOT NULL DEFAULT ''"
+                )
+                migrated_at = utcnow().isoformat()
+                conn.execute(
+                    """
+                    UPDATE buy_alert_state
+                    SET status = 'SUPERSEDED',
+                        updated_at = ?,
+                        closed_at = ?,
+                        close_reason = 'Superseded by economic-position alert normalization.'
+                    WHERE sport = 'MLB' AND status = 'ACTIVE'
+                    """,
+                    (migrated_at, migrated_at),
+                )
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS buy_alert_state_status
                 ON buy_alert_state(sport, status, updated_at)
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS buy_alert_state_economic_status
+                ON buy_alert_state(sport, economic_key, status, updated_at)
+                """
+            )
 
     def mark_buy_active(self, item: dict[str, Any]) -> None:
-        """Persist the lifecycle of a BUY only after it has been delivered."""
+        """Persist one active lifecycle row per delivered economic BUY position."""
         now = utcnow().isoformat()
+        sport = str(item["sport"]).upper()
+        economic_key = str(item.get("economic_key") or "")
         key = (
-            str(item["sport"]).upper(),
+            sport,
             str(item["venue"]),
             str(item["market_id"]),
             str(item["side"]),
         )
         with self._connect() as conn:
-            existing = conn.execute(
-                """
-                SELECT status, activated_at
-                FROM buy_alert_state
-                WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
-                """,
-                key,
-            ).fetchone()
+            if economic_key:
+                existing = conn.execute(
+                    """
+                    SELECT status, activated_at
+                    FROM buy_alert_state
+                    WHERE sport = ? AND economic_key = ?
+                    ORDER BY CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END, updated_at DESC
+                    LIMIT 1
+                    """,
+                    (sport, economic_key),
+                ).fetchone()
+            else:
+                existing = conn.execute(
+                    """
+                    SELECT status, activated_at
+                    FROM buy_alert_state
+                    WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
+                    """,
+                    key,
+                ).fetchone()
             activated_at = (
                 existing["activated_at"]
                 if existing is not None and existing["status"] == "ACTIVE"
                 else str(item.get("detected_at") or now)
             )
+            if economic_key:
+                conn.execute(
+                    """
+                    DELETE FROM buy_alert_state
+                    WHERE sport = ? AND economic_key = ? AND status = 'ACTIVE'
+                    """,
+                    (sport, economic_key),
+                )
             conn.execute(
                 """
                 INSERT INTO buy_alert_state (
-                    sport, venue, market_id, side, status, matchup, selected_side,
+                    sport, economic_key, venue, market_id, side, status, matchup, selected_side,
                     activated_at, updated_at, game_start, resolution_time,
                     last_price, model_probability, edge_points, closed_at, close_reason
                 )
-                VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+                VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 ON CONFLICT(sport, venue, market_id, side) DO UPDATE SET
+                    economic_key = excluded.economic_key,
                     status = 'ACTIVE',
                     matchup = excluded.matchup,
                     selected_side = excluded.selected_side,
@@ -302,7 +352,11 @@ class AlertDeliveryStore:
                     close_reason = NULL
                 """,
                 (
-                    *key,
+                    sport,
+                    economic_key,
+                    str(item["venue"]),
+                    str(item["market_id"]),
+                    str(item["side"]),
                     str(item.get("matchup") or ""),
                     str(item.get("selected_side") or item.get("side") or ""),
                     activated_at,
@@ -321,16 +375,30 @@ class AlertDeliveryStore:
         venue: str,
         market_id: str,
         side: str,
+        *,
+        economic_key: str | None = None,
     ) -> dict[str, Any] | None:
         with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT *
-                FROM buy_alert_state
-                WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
-                """,
-                (sport.upper(), venue, market_id, side),
-            ).fetchone()
+            if economic_key:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM buy_alert_state
+                    WHERE sport = ? AND economic_key = ?
+                    ORDER BY CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END, updated_at DESC
+                    LIMIT 1
+                    """,
+                    (sport.upper(), economic_key),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT *
+                    FROM buy_alert_state
+                    WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
+                    """,
+                    (sport.upper(), venue, market_id, side),
+                ).fetchone()
         return None if row is None else dict(row)
 
     def active_buys(self, sport: str) -> list[dict[str, Any]]:
@@ -754,6 +822,8 @@ def dispatch_scored_buy(
     matchup: str,
     detected_at: str,
     game_start: str | None = None,
+    economic_key: str | None = None,
+    selected_side: str | None = None,
 ) -> dict[str, Any] | None:
     """Dispatch one deduplicated immediate alert for a freshly scored BUY."""
     if play.suggested_action != Action.BUY:
@@ -763,6 +833,7 @@ def dispatch_scored_buy(
         str(play.venue),
         play.market_id,
         str(play.side),
+        economic_key=economic_key,
     )
     lifecycle_generation = (
         str(prior_state.get("closed_at") or prior_state.get("updated_at") or "")
@@ -777,6 +848,8 @@ def dispatch_scored_buy(
         detected_at=detected_at,
         game_start=game_start,
         lifecycle_generation=lifecycle_generation,
+        economic_key=economic_key,
+        selected_side=selected_side,
     )
     existing = dispatcher.store.delivery(dispatcher.channel, item["inbox_id"])
     dispatcher.dispatch([item])
@@ -804,6 +877,7 @@ def reconcile_active_buy_alerts(
     *,
     sport: str,
     detected_at: str,
+    economic_key_for_play: Callable[[ParallaxPlay], str | None] | None = None,
 ) -> dict[str, int]:
     """Close only previously delivered BUYs with explicit invalidation evidence."""
     now = timestamp(detected_at) or utcnow()
@@ -815,10 +889,23 @@ def reconcile_active_buy_alerts(
         ): play
         for play in plays
     }
+    current_by_economic_key: dict[str, list[ParallaxPlay]] = {}
+    if economic_key_for_play is not None:
+        for play in plays:
+            key = economic_key_for_play(play)
+            if key:
+                current_by_economic_key.setdefault(str(key), []).append(play)
     summary = {"withdrawn": 0, "expired": 0, "failed": 0}
     for active in dispatcher.store.active_buys(sport):
         key = (active["venue"], active["market_id"], active["side"])
         play = current.get(key)
+        economic_key = str(active.get("economic_key") or "")
+        if economic_key and current_by_economic_key:
+            equivalents = current_by_economic_key.get(economic_key, [])
+            play = next(
+                (candidate for candidate in equivalents if candidate.suggested_action == Action.BUY),
+                equivalents[0] if equivalents else None,
+            )
         lifecycle = None
         reason = None
         replacement_action = None
@@ -882,11 +969,14 @@ def _scored_buy_item(
     detected_at: str,
     game_start: str | None = None,
     lifecycle_generation: str | None = None,
+    economic_key: str | None = None,
+    selected_side: str | None = None,
 ) -> dict[str, Any]:
     material_state = {
-        "venue": str(play.venue),
-        "market_id": play.market_id,
-        "side": str(play.side),
+        "economic_key": economic_key,
+        "venue": None if economic_key else str(play.venue),
+        "market_id": None if economic_key else play.market_id,
+        "side": None if economic_key else str(play.side),
         "price": _rounded(play.executable_price, 2),
         "probability": _rounded(play.model_probability, 2),
         "edge_points": _rounded(play.edge_points, 1),
@@ -897,9 +987,18 @@ def _scored_buy_item(
     fingerprint = hashlib.sha256(
         json.dumps(material_state, allow_nan=False, sort_keys=True).encode()
     ).hexdigest()[:16]
-    selected_side = play.side_description or str(play.side)
+    selected_side = selected_side or play.side_description or str(play.side)
+    economic_identity = (
+        hashlib.sha256(economic_key.encode()).hexdigest()[:12]
+        if economic_key
+        else None
+    )
     return {
-        "inbox_id": f"inbox-scored-buy-{play.venue}-{play.market_id}-{fingerprint}",
+        "inbox_id": (
+            f"inbox-scored-buy-economic-{economic_identity}-{fingerprint}"
+            if economic_identity
+            else f"inbox-scored-buy-{play.venue}-{play.market_id}-{fingerprint}"
+        ),
         "attention_class": AttentionClass.ACTIONABLE_PLAY.value,
         "status": "ACTIVE",
         "venue": str(play.venue),
@@ -912,6 +1011,7 @@ def _scored_buy_item(
         "detected_at": detected_at,
         "alert_kind": "SCORED_BUY",
         "sport": sport.upper(),
+        "economic_key": economic_key or "",
         "matchup": matchup,
         "selected_side": selected_side,
         "side": str(play.side),
@@ -944,6 +1044,7 @@ def _scored_buy_lifecycle_item(
     identity = "|".join(
         (
             active["sport"],
+            str(active.get("economic_key") or ""),
             active["venue"],
             active["market_id"],
             active["side"],

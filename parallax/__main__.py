@@ -9,6 +9,7 @@ from .alerts import dispatch_scored_buy, reconcile_active_buy_alerts
 from .api import server
 from .demo import demo_inputs
 from .entitlements import Plan
+from .mlb import selected_team_for_moneyline
 from .models import Action, utcnow
 from .service import PlayService
 from .sources import collect_markets
@@ -51,13 +52,50 @@ def _market_game_start(market) -> str | None:
     return None
 
 
+def _mlb_economic_position(
+    service: PlayService,
+    play,
+    market,
+) -> tuple[str | None, str | None]:
+    """Map equivalent MLB binary contracts to one game/team economic position."""
+    collection = service.collection if isinstance(getattr(service, "collection", None), dict) else {}
+    market_game_ids = collection.get("_market_game_ids")
+    if not isinstance(market_game_ids, dict):
+        return None, None
+    venue = play.venue.value if hasattr(play.venue, "value") else str(play.venue)
+    game_id = market_game_ids.get(f"{venue}:{play.market_id}")
+    selected_team = selected_team_for_moneyline(market, play.side)
+    if not game_id or not selected_team:
+        return None, selected_team
+    team_key = "".join(ch for ch in selected_team.casefold() if ch.isalnum())
+    if not team_key:
+        return None, selected_team
+    return f"MLB:{game_id}:{team_key}", selected_team
+
+
+def _buy_candidate_rank(candidate) -> tuple:
+    play, _market, _economic_key, _selected_side = candidate
+    price = play.executable_price
+    edge = play.edge_points
+    size = play.executable_size
+    return (
+        float("inf") if price is None else float(price),
+        -(float("-inf") if edge is None else float(edge)),
+        -float(size or 0),
+        str(play.venue),
+        str(play.market_id),
+        str(play.side),
+    )
+
+
 def dispatch_scan_buy_alerts(service: PlayService, *, sport: str) -> dict[str, int]:
-    """Dispatch immediate ntfy alerts for freshly scored live BUY plays."""
+    """Dispatch at most one immediate alert per economic BUY position."""
     markets = {
         (market.venue, market.venue_market_id): market
         for market in service.markets
     }
     summary = {"sent": 0, "deduplicated": 0, "failed": 0}
+    grouped: dict[str, list[tuple]] = {}
     for play in service._plays():
         if play.demo or play.suggested_action != Action.BUY:
             continue
@@ -65,6 +103,21 @@ def dispatch_scan_buy_alerts(service: PlayService, *, sport: str) -> dict[str, i
         if market is None:
             summary["failed"] += 1
             continue
+        economic_key = None
+        selected_side = None
+        if sport.upper() == "MLB":
+            economic_key, selected_side = _mlb_economic_position(service, play, market)
+        grouping_key = economic_key or (
+            f"{sport.upper()}:{play.venue}:{play.market_id}:{play.side}"
+        )
+        grouped.setdefault(grouping_key, []).append(
+            (play, market, economic_key, selected_side)
+        )
+
+    for candidates in grouped.values():
+        play, market, economic_key, selected_side = min(
+            candidates, key=_buy_candidate_rank
+        )
         try:
             result = dispatch_scored_buy(
                 service.alert_dispatcher,
@@ -74,6 +127,8 @@ def dispatch_scan_buy_alerts(service: PlayService, *, sport: str) -> dict[str, i
                 matchup=market.title,
                 detected_at=play.updated_at,
                 game_start=_market_game_start(market),
+                economic_key=economic_key,
+                selected_side=selected_side,
             )
         except Exception:  # Alert delivery must never fail the scan.
             summary["failed"] += 1
@@ -133,11 +188,26 @@ def mlb_slate_report(service: PlayService) -> dict:
 
 
 def reconcile_scan_buy_lifecycle(service: PlayService, *, sport: str) -> dict[str, int]:
+    markets = {
+        (market.venue, market.venue_market_id): market
+        for market in getattr(service, "markets", ())
+    }
+
+    def economic_key_for_play(play):
+        if sport.upper() != "MLB":
+            return None
+        market = markets.get((play.venue, play.market_id))
+        if market is None:
+            return None
+        key, _selected_side = _mlb_economic_position(service, play, market)
+        return key
+
     return reconcile_active_buy_alerts(
         service.alert_dispatcher,
         service._plays(),
         sport=sport,
         detected_at=utcnow().isoformat(),
+        economic_key_for_play=economic_key_for_play,
     )
 
 

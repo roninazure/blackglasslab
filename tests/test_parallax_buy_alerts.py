@@ -1,3 +1,5 @@
+from dataclasses import replace
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -399,3 +401,242 @@ def test_mlb_scan_lifecycle_wrapper_uses_current_scored_plays(monkeypatch):
     assert result == {"withdrawn": 0, "expired": 0, "failed": 0}
     assert calls[0][1] == plays
     assert calls[0][2]["sport"] == "MLB"
+
+
+def _mlb_market(contract_team, ticker):
+    base = market()
+    return replace(
+        base,
+        venue_market_id=ticker,
+        slug=ticker,
+        title=f"{contract_team} wins",
+        description=f"{contract_team} wins",
+        category="MLB",
+        event="KXMLBGAME-26SEP25LADSF",
+        outcomes={"YES": contract_team, "NO": contract_team},
+        original_metadata={
+            "market": {
+                "mlb": {
+                    "league": "MLB",
+                    "market_type": "moneyline",
+                    "away_team": "Los Angeles Dodgers",
+                    "home_team": "San Francisco Giants",
+                    "start_time": "2026-09-26T02:15:00Z",
+                }
+            }
+        },
+    )
+
+
+def _mlb_play(market_id, side, label, price, edge):
+    return SimpleNamespace(
+        suggested_action=Action.BUY,
+        venue=Venue.KALSHI,
+        market_id=market_id,
+        side=side,
+        side_description=label,
+        market_title=f"{label} wins",
+        market_url=f"https://kalshi.com/markets/{market_id}",
+        executable_price=price,
+        model_probability=0.41534353117308787,
+        edge_points=edge,
+        executable_size=325.0,
+        confidence_band=Confidence.HIGH,
+        demo=False,
+        updated_at="2026-09-25T18:38:05+00:00",
+        resolution_time="2026-09-26T06:15:00+00:00",
+    )
+
+
+def test_mlb_scan_collapses_equivalent_kalshi_buys_to_one_best_price(monkeypatch):
+    import parallax.__main__ as parallax_main
+
+    specs = [
+        ("LAD-27", Side.NO, "Los Angeles D", 0.27, 14.53435312, "Los Angeles Dodgers"),
+        ("SF-27", Side.YES, "San Francisco", 0.27, 14.53435312, "San Francisco Giants"),
+        ("LAD-25", Side.NO, "Los Angeles D", 0.25, 16.53435312, "Los Angeles Dodgers"),
+        ("SF-25", Side.YES, "San Francisco", 0.25, 16.53435312, "San Francisco Giants"),
+        ("SF-33", Side.YES, "San Francisco", 0.33, 8.53435312, "San Francisco Giants"),
+    ]
+    markets = [_mlb_market(contract_team, market_id) for market_id, _side, _label, _price, _edge, contract_team in specs]
+    plays = [_mlb_play(market_id, side, label, price, edge) for market_id, side, label, price, edge, _contract_team in specs]
+    calls = []
+
+    def fake_dispatch(dispatcher, scored_play, scored_market, **kwargs):
+        calls.append((dispatcher, scored_play, scored_market, kwargs))
+        return {
+            "status": "SENT",
+            "deduplicated": False,
+            "http_status": 200,
+            "error_code": None,
+        }
+
+    monkeypatch.setattr(parallax_main, "dispatch_scored_buy", fake_dispatch)
+    service = SimpleNamespace(
+        markets=markets,
+        collection={
+            "_market_game_ids": {
+                f"KALSHI:{market.venue_market_id}": "823165"
+                for market in markets
+            }
+        },
+        alert_dispatcher=object(),
+        _plays=lambda: plays,
+    )
+
+    result = parallax_main.dispatch_scan_buy_alerts(service, sport="MLB")
+
+    assert result == {"sent": 1, "deduplicated": 0, "failed": 0}
+    assert len(calls) == 1
+    _dispatcher, selected_play, _market, kwargs = calls[0]
+    assert selected_play.executable_price == 0.25
+    assert kwargs["economic_key"] == "MLB:823165:sanfranciscogiants"
+    assert kwargs["selected_side"] == "San Francisco Giants"
+
+
+def test_economic_buy_identity_dedupes_contract_switch_and_keeps_one_active_state(tmp_path):
+    transport = FakeTransport()
+    alert_dispatcher = dispatcher(tmp_path, transport)
+    first_market = _mlb_market("Los Angeles Dodgers", "LAD-NO")
+    second_market = _mlb_market("San Francisco Giants", "SF-YES")
+    first_play = _mlb_play("LAD-NO", Side.NO, "Los Angeles D", 0.25, 16.5)
+    second_play = _mlb_play("SF-YES", Side.YES, "San Francisco", 0.25, 16.5)
+    economic_key = "MLB:823165:sanfranciscogiants"
+
+    first = dispatch_scored_buy(
+        alert_dispatcher,
+        first_play,
+        first_market,
+        sport="MLB",
+        matchup="Los Angeles Dodgers at San Francisco Giants",
+        detected_at=first_play.updated_at,
+        economic_key=economic_key,
+        selected_side="San Francisco Giants",
+    )
+    duplicate = dispatch_scored_buy(
+        alert_dispatcher,
+        second_play,
+        second_market,
+        sport="MLB",
+        matchup="Los Angeles Dodgers at San Francisco Giants",
+        detected_at=second_play.updated_at,
+        economic_key=economic_key,
+        selected_side="San Francisco Giants",
+    )
+
+    assert first["deduplicated"] is False
+    assert duplicate["deduplicated"] is True
+    assert len(transport.calls) == 1
+    active = alert_dispatcher.store.active_buys("MLB")
+    assert len(active) == 1
+    assert active[0]["economic_key"] == economic_key
+    assert active[0]["selected_side"] == "San Francisco Giants"
+
+
+def test_economic_lifecycle_stays_active_when_equivalent_contract_is_still_buy(tmp_path):
+    transport = FakeTransport()
+    alert_dispatcher = dispatcher(tmp_path, transport)
+    first_market = _mlb_market("Los Angeles Dodgers", "LAD-NO")
+    first_play = _mlb_play("LAD-NO", Side.NO, "Los Angeles D", 0.25, 16.5)
+    watch = _mlb_play("LAD-NO", Side.NO, "Los Angeles D", 0.40, 1.5)
+    watch.suggested_action = Action.WATCH
+    replacement = _mlb_play("SF-YES", Side.YES, "San Francisco", 0.26, 15.5)
+    economic_key = "MLB:823165:sanfranciscogiants"
+
+    dispatch_scored_buy(
+        alert_dispatcher,
+        first_play,
+        first_market,
+        sport="MLB",
+        matchup="Los Angeles Dodgers at San Francisco Giants",
+        detected_at=first_play.updated_at,
+        economic_key=economic_key,
+        selected_side="San Francisco Giants",
+    )
+    result = reconcile_active_buy_alerts(
+        alert_dispatcher,
+        [watch, replacement],
+        sport="MLB",
+        detected_at="2026-09-25T18:40:00+00:00",
+        economic_key_for_play=lambda _play: economic_key,
+    )
+
+    assert result == {"withdrawn": 0, "expired": 0, "failed": 0}
+    assert len(transport.calls) == 1
+
+
+def test_schema_migration_supersedes_only_legacy_active_mlb_rows(tmp_path):
+    path = tmp_path / "alerts.sqlite"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE buy_alert_state (
+                sport TEXT NOT NULL,
+                venue TEXT NOT NULL,
+                market_id TEXT NOT NULL,
+                side TEXT NOT NULL,
+                status TEXT NOT NULL,
+                matchup TEXT NOT NULL,
+                selected_side TEXT NOT NULL,
+                activated_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                game_start TEXT,
+                resolution_time TEXT,
+                last_price REAL,
+                model_probability REAL,
+                edge_points REAL,
+                closed_at TEXT,
+                close_reason TEXT,
+                PRIMARY KEY (sport, venue, market_id, side)
+            )
+            """
+        )
+        row = (
+            "KALSHI",
+            "market",
+            "YES",
+            "ACTIVE",
+            "matchup",
+            "team",
+            "2026-09-25T18:00:00+00:00",
+            "2026-09-25T18:00:00+00:00",
+            None,
+            None,
+            0.25,
+            0.40,
+            15.0,
+            None,
+            None,
+        )
+        conn.execute(
+            """
+            INSERT INTO buy_alert_state (
+                sport, venue, market_id, side, status, matchup, selected_side,
+                activated_at, updated_at, game_start, resolution_time,
+                last_price, model_probability, edge_points, closed_at, close_reason
+            ) VALUES ('MLB', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            row,
+        )
+        conn.execute(
+            """
+            INSERT INTO buy_alert_state (
+                sport, venue, market_id, side, status, matchup, selected_side,
+                activated_at, updated_at, game_start, resolution_time,
+                last_price, model_probability, edge_points, closed_at, close_reason
+            ) VALUES ('NFL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            row,
+        )
+
+    store = AlertDeliveryStore(path)
+
+    assert store.active_buys("MLB") == []
+    assert len(store.active_buys("NFL")) == 1
+    with sqlite3.connect(path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(buy_alert_state)")}
+        mlb_status = conn.execute(
+            "SELECT status FROM buy_alert_state WHERE sport = 'MLB'"
+        ).fetchone()[0]
+    assert "economic_key" in columns
+    assert mlb_status == "SUPERSEDED"
