@@ -822,24 +822,22 @@ def reconcile_active_buy_alerts(
         lifecycle = None
         reason = None
         replacement_action = None
-        if play is not None and play.suggested_action != Action.BUY:
-            resolution = timestamp(play.resolution_time)
-            if resolution is not None and resolution <= now:
-                lifecycle = "EXPIRED"
-                reason = "The market resolution window has passed."
-            else:
-                lifecycle = "WITHDRAWN"
-                replacement_action = str(play.suggested_action)
-                reason = f"PARALLAX rescored this position as {replacement_action}."
-        elif play is None:
-            game_start = timestamp(active.get("game_start"))
-            resolution = timestamp(active.get("resolution_time"))
-            if game_start is not None and game_start <= now:
-                lifecycle = "EXPIRED"
-                reason = "The scheduled game has started."
-            elif resolution is not None and resolution <= now:
-                lifecycle = "EXPIRED"
-                reason = "The market resolution window has passed."
+        game_start = timestamp(active.get("game_start"))
+        active_resolution = timestamp(active.get("resolution_time"))
+        play_resolution = timestamp(play.resolution_time) if play is not None else None
+        if game_start is not None and game_start <= now:
+            lifecycle = "EXPIRED"
+            reason = "The scheduled game has started."
+        elif (
+            (play_resolution is not None and play_resolution <= now)
+            or (active_resolution is not None and active_resolution <= now)
+        ):
+            lifecycle = "EXPIRED"
+            reason = "The market resolution window has passed."
+        elif play is not None and play.suggested_action != Action.BUY:
+            lifecycle = "WITHDRAWN"
+            replacement_action = str(play.suggested_action)
+            reason = f"PARALLAX rescored this position as {replacement_action}."
 
         if lifecycle is None or reason is None:
             continue
