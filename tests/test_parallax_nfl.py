@@ -37,6 +37,42 @@ def test_parse_nfl_schedule_uses_existing_local_kickoff_time():
     assert parse_games(payload)[0].kickoff == "2026-09-13T17:00:00+00:00"
 
 
+def test_nfl_upcoming_slate_count_is_schedule_driven_not_hardcoded():
+    dt = __import__("datetime")
+    now = dt.datetime(2026, 9, 24, 12, 0, tzinfo=dt.UTC)
+    games = [
+        NFLGame(
+            f"sun-{index}",
+            2026,
+            "REG",
+            f"2026-09-27T{17 + index // 4:02d}:{(index % 4) * 10:02d}:00+00:00",
+            f"H{index}",
+            f"A{index}",
+            None,
+            None,
+        )
+        for index in range(14)
+    ]
+    games.append(
+        NFLGame(
+            "outside-window",
+            2026,
+            "REG",
+            "2026-10-05T17:00:00+00:00",
+            "HX",
+            "AX",
+            None,
+            None,
+        )
+    )
+
+    slate = nfl_live_scan._upcoming_slate(games, now)
+
+    assert len(slate) == 14
+    assert {row["game_id"] for row in slate} == {f"sun-{index}" for index in range(14)}
+    assert {row["date"] for row in slate} == {"2026-09-27"}
+
+
 def test_nfl_holdout_is_chronological_and_reproducible():
     games = []
     for season in (2020, 2021, 2022, 2023, 2024, 2025):
