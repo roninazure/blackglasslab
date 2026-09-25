@@ -150,6 +150,7 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
     markets: list[NormalizedMarket] = []
     collected_evidence = {}
     market_game_ids: dict[str, str] = {}
+    data_unavailable_game_ids: set[str] = set()
     metrics: Counter = Counter()
     errors: list[dict] = []
     pmus_discovery_complete = False
@@ -186,6 +187,7 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
         metrics["POLYMARKET.markets_discovered"] = len(all_rows)
         provider = MLBEvidenceProvider()
         for row in rows:
+            mapped_game_id = None
             try:
                 # Mapping/evidence is deliberately attempted before the book.
                 candidate = normalize_pmus(row, {}, discovery_at)
@@ -193,19 +195,23 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
                 if proof is None:
                     failure("POLYMARKET", "mapping_or_evidence", ValueError("no exact MLB match or evidence"))
                     continue
+                mapped_game_id = _mlb_game_id(proof.review_reference)
                 book = pmus.book(row["slug"])
                 market = normalize_pmus(row, book, utcnow().isoformat())
                 market = attach_fees(market, utcnow())
                 markets.append(market)
                 collected_evidence[(market.venue, market.venue_market_id)] = proof
-                game_id = _mlb_game_id(proof.review_reference)
-                if game_id:
-                    market_game_ids[f"{market.venue.value}:{market.venue_market_id}"] = game_id
+                if mapped_game_id:
+                    market_game_ids[f"{market.venue.value}:{market.venue_market_id}"] = mapped_game_id
                 metrics["POLYMARKET.markets_observed"] += 1
                 metrics["POLYMARKET.evidence_produced"] += 1
             except (ValueError, TypeError, KeyError) as exc:
+                if mapped_game_id:
+                    data_unavailable_game_ids.add(mapped_game_id)
                 failure("POLYMARKET", "market", exc)
             except Exception as exc:  # noqa: BLE001 - isolate one live market
+                if mapped_game_id:
+                    data_unavailable_game_ids.add(mapped_game_id)
                 failure("POLYMARKET", "market", exc)
 
         # The generic/direct seam is intentionally evidence-neutral.  It keeps
@@ -265,6 +271,7 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
         for row in rows:
             book, trades = {}, None
             event, fee_series = None, None
+            mapped_game_id = None
             try:
                 event_id = row["event_ticker"]
                 if event_id not in events:
@@ -284,6 +291,7 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
                 if proof is None:
                     failure("KALSHI", "mapping_or_evidence", ValueError("no exact MLB match or evidence"))
                     continue
+                mapped_game_id = _mlb_game_id(proof.review_reference)
                 book = kalshi.book(row["ticker"])
                 observed_at = utcnow().isoformat()
                 market = normalize_kalshi(row, book, observed_at, trades, event)
@@ -291,14 +299,17 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
                 market = attach_fees(market, utcnow(), event=event, series=fee_series)
                 markets.append(market)
                 collected_evidence[(market.venue, market.venue_market_id)] = proof
-                game_id = _mlb_game_id(proof.review_reference)
-                if game_id:
-                    market_game_ids[f"{market.venue.value}:{market.venue_market_id}"] = game_id
+                if mapped_game_id:
+                    market_game_ids[f"{market.venue.value}:{market.venue_market_id}"] = mapped_game_id
                 metrics["KALSHI.markets_observed"] += 1
                 metrics["KALSHI.evidence_produced"] += 1
             except (ValueError, TypeError, KeyError) as exc:
+                if mapped_game_id:
+                    data_unavailable_game_ids.add(mapped_game_id)
                 failure("KALSHI", "market", exc)
             except Exception as exc:  # noqa: BLE001 - isolate one live market
+                if mapped_game_id:
+                    data_unavailable_game_ids.add(mapped_game_id)
                 failure("KALSHI", "market", exc)
     except (OSError, ValueError, KeyError) as exc:
         failure("KALSHI", "discovery", exc)
@@ -327,8 +338,13 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
         "scope": "complete-or-explicitly-bounded current MLB moneyline discovery across PMUS and Kalshi KXMLBGAME",
         "_slate_schedule": slate_schedule,
         "_slate_schedule_state": slate_schedule_state,
-        "_slate_discovery_complete": pmus_discovery_complete and kalshi_discovery_complete,
+        "_slate_discovery_complete": (
+            pmus_discovery_complete
+            and kalshi_discovery_complete
+            and not any(error["stage"] == "mapping_or_evidence" for error in errors)
+        ),
         "_market_game_ids": market_game_ids,
+        "_slate_data_unavailable_game_ids": sorted(data_unavailable_game_ids),
         # Request-local transport for the normal service scorer.  This is
         # consumed immediately by PlayService and is never persisted.
         "_evidence": collected_evidence,
