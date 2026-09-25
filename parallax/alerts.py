@@ -822,6 +822,8 @@ def dispatch_scored_buy(
     matchup: str,
     detected_at: str,
     game_start: str | None = None,
+    economic_key: str | None = None,
+    selected_side: str | None = None,
 ) -> dict[str, Any] | None:
     """Dispatch one deduplicated immediate alert for a freshly scored BUY."""
     if play.suggested_action != Action.BUY:
@@ -831,6 +833,7 @@ def dispatch_scored_buy(
         str(play.venue),
         play.market_id,
         str(play.side),
+        economic_key=economic_key,
     )
     lifecycle_generation = (
         str(prior_state.get("closed_at") or prior_state.get("updated_at") or "")
@@ -845,6 +848,8 @@ def dispatch_scored_buy(
         detected_at=detected_at,
         game_start=game_start,
         lifecycle_generation=lifecycle_generation,
+        economic_key=economic_key,
+        selected_side=selected_side,
     )
     existing = dispatcher.store.delivery(dispatcher.channel, item["inbox_id"])
     dispatcher.dispatch([item])
@@ -872,6 +877,7 @@ def reconcile_active_buy_alerts(
     *,
     sport: str,
     detected_at: str,
+    economic_key_for_play: callable | None = None,
 ) -> dict[str, int]:
     """Close only previously delivered BUYs with explicit invalidation evidence."""
     now = timestamp(detected_at) or utcnow()
@@ -883,10 +889,23 @@ def reconcile_active_buy_alerts(
         ): play
         for play in plays
     }
+    current_by_economic_key: dict[str, list[ParallaxPlay]] = {}
+    if economic_key_for_play is not None:
+        for play in plays:
+            key = economic_key_for_play(play)
+            if key:
+                current_by_economic_key.setdefault(str(key), []).append(play)
     summary = {"withdrawn": 0, "expired": 0, "failed": 0}
     for active in dispatcher.store.active_buys(sport):
         key = (active["venue"], active["market_id"], active["side"])
         play = current.get(key)
+        economic_key = str(active.get("economic_key") or "")
+        if economic_key and current_by_economic_key:
+            equivalents = current_by_economic_key.get(economic_key, [])
+            play = next(
+                (candidate for candidate in equivalents if candidate.suggested_action == Action.BUY),
+                equivalents[0] if equivalents else None,
+            )
         lifecycle = None
         reason = None
         replacement_action = None
@@ -950,11 +969,14 @@ def _scored_buy_item(
     detected_at: str,
     game_start: str | None = None,
     lifecycle_generation: str | None = None,
+    economic_key: str | None = None,
+    selected_side: str | None = None,
 ) -> dict[str, Any]:
     material_state = {
-        "venue": str(play.venue),
-        "market_id": play.market_id,
-        "side": str(play.side),
+        "economic_key": economic_key,
+        "venue": None if economic_key else str(play.venue),
+        "market_id": None if economic_key else play.market_id,
+        "side": None if economic_key else str(play.side),
         "price": _rounded(play.executable_price, 2),
         "probability": _rounded(play.model_probability, 2),
         "edge_points": _rounded(play.edge_points, 1),
@@ -965,9 +987,18 @@ def _scored_buy_item(
     fingerprint = hashlib.sha256(
         json.dumps(material_state, allow_nan=False, sort_keys=True).encode()
     ).hexdigest()[:16]
-    selected_side = play.side_description or str(play.side)
+    selected_side = selected_side or play.side_description or str(play.side)
+    economic_identity = (
+        hashlib.sha256(economic_key.encode()).hexdigest()[:12]
+        if economic_key
+        else None
+    )
     return {
-        "inbox_id": f"inbox-scored-buy-{play.venue}-{play.market_id}-{fingerprint}",
+        "inbox_id": (
+            f"inbox-scored-buy-economic-{economic_identity}-{fingerprint}"
+            if economic_identity
+            else f"inbox-scored-buy-{play.venue}-{play.market_id}-{fingerprint}"
+        ),
         "attention_class": AttentionClass.ACTIONABLE_PLAY.value,
         "status": "ACTIVE",
         "venue": str(play.venue),
@@ -980,6 +1011,7 @@ def _scored_buy_item(
         "detected_at": detected_at,
         "alert_kind": "SCORED_BUY",
         "sport": sport.upper(),
+        "economic_key": economic_key or "",
         "matchup": matchup,
         "selected_side": selected_side,
         "side": str(play.side),
@@ -1012,6 +1044,7 @@ def _scored_buy_lifecycle_item(
     identity = "|".join(
         (
             active["sport"],
+            str(active.get("economic_key") or ""),
             active["venue"],
             active["market_id"],
             active["side"],
