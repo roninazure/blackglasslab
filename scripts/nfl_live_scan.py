@@ -277,7 +277,14 @@ def _scan() -> dict:
                     data_unavailable_game_ids.add(mapping.game.game_id)
                     row["scoring_error"] = type(exc).__name__
             rows_out.append(row)
-    scheduled = _upcoming_slate(games, utcnow())
+    lifecycle_at = utcnow()
+    result["buy_lifecycle"] = reconcile_active_buy_alerts(
+        alert_dispatcher,
+        scored_plays,
+        sport="NFL",
+        detected_at=lifecycle_at.isoformat(),
+    )
+    scheduled = _upcoming_slate(games, lifecycle_at)
     result["slate"] = reconcile_slate(
         scheduled,
         rows_out,
