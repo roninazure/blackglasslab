@@ -5,13 +5,14 @@ import json
 from pathlib import Path
 from threading import Event, Thread
 
-from .alerts import dispatch_scored_buy
+from .alerts import dispatch_scored_buy, reconcile_active_buy_alerts
 from .api import server
 from .demo import demo_inputs
 from .entitlements import Plan
-from .models import Action
+from .models import Action, utcnow
 from .service import PlayService
 from .sources import collect_markets
+from .slate import reconcile_slate
 from .track_record import TrackRecord
 
 
@@ -37,6 +38,19 @@ def refresh(service: PlayService, *, demo: bool, limit: int):
         service.replace_inputs(markets, collection=collection)
 
 
+def _market_game_start(market) -> str | None:
+    metadata = market.original_metadata.get("market", {})
+    if not isinstance(metadata, dict):
+        return None
+    mlb = metadata.get("mlb")
+    if isinstance(mlb, dict) and mlb.get("start_time"):
+        return str(mlb["start_time"])
+    for key in ("gameStartTime", "game_start_time", "startTime", "start_time"):
+        if metadata.get(key):
+            return str(metadata[key])
+    return None
+
+
 def dispatch_scan_buy_alerts(service: PlayService, *, sport: str) -> dict[str, int]:
     """Dispatch immediate ntfy alerts for freshly scored live BUY plays."""
     markets = {
@@ -59,6 +73,7 @@ def dispatch_scan_buy_alerts(service: PlayService, *, sport: str) -> dict[str, i
                 sport=sport,
                 matchup=market.title,
                 detected_at=play.updated_at,
+                game_start=_market_game_start(market),
             )
         except Exception:  # Alert delivery must never fail the scan.
             summary["failed"] += 1
@@ -72,6 +87,58 @@ def dispatch_scan_buy_alerts(service: PlayService, *, sport: str) -> dict[str, i
         elif result["status"] in {"FAILED", "UNKNOWN", "PENDING"}:
             summary["failed"] += 1
     return summary
+
+
+def mlb_slate_report(service: PlayService) -> dict:
+    """Reconcile today's authoritative MLB schedule against scored markets."""
+    collection = service.collection if isinstance(service.collection, dict) else {}
+    schedule_state = str(collection.get("_slate_schedule_state") or "DATA_UNAVAILABLE")
+    schedule = collection.get("_slate_schedule")
+    if schedule_state != "COMPLETE" or not isinstance(schedule, list):
+        return {
+            "schedule_state": schedule_state,
+            "expected_games": None,
+            "accounted_games": 0,
+            "all_games_accounted": False,
+            "market_data_complete": False,
+            "status_counts": {"DATA_UNAVAILABLE": 1},
+            "dates": [],
+        }
+
+    market_game_ids = collection.get("_market_game_ids")
+    if not isinstance(market_game_ids, dict):
+        market_game_ids = {}
+    observations = []
+    for play in service._plays():
+        venue = play.venue.value if hasattr(play.venue, "value") else str(play.venue)
+        game_id = market_game_ids.get(f"{venue}:{play.market_id}")
+        if game_id:
+            action = (
+                play.suggested_action.value
+                if hasattr(play.suggested_action, "value")
+                else str(play.suggested_action)
+            )
+            observations.append({"game_id": game_id, "verdict": action})
+
+    report = reconcile_slate(
+        schedule,
+        observations,
+        discovery_complete=bool(collection.get("_slate_discovery_complete")),
+        data_unavailable_game_ids=collection.get(
+            "_slate_data_unavailable_game_ids", ()
+        ),
+    )
+    report["schedule_state"] = schedule_state
+    return report
+
+
+def reconcile_scan_buy_lifecycle(service: PlayService, *, sport: str) -> dict[str, int]:
+    return reconcile_active_buy_alerts(
+        service.alert_dispatcher,
+        service._plays(),
+        sport=sport,
+        detected_at=utcnow().isoformat(),
+    )
 
 
 def start_refresh_loop(service: PlayService, *, demo: bool, limit: int) -> Event:
@@ -113,6 +180,9 @@ def main():
             else dispatch_scan_buy_alerts(service, sport="MLB")
         )
         payload = {"health": service.health(), "buy_alerts": buy_alerts}
+        if not args.demo:
+            payload["buy_lifecycle"] = reconcile_scan_buy_lifecycle(service, sport="MLB")
+            payload["slate"] = mlb_slate_report(service)
         payload["plays"] = service.plays(Plan.PRO)
         payload["signals"] = service.signals(Plan.PRO)
         if args.summary:

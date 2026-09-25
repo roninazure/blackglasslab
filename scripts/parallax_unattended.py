@@ -126,8 +126,9 @@ class UnattendedScheduler:
         self.timeout_seconds = timeout_seconds
         self.started_at = clock()
         self.last_success: dict[str, str | None] = {lane: None for lane in LANES}
+        startup = self.monotonic()
         self.next_due: dict[str, float] = {
-            lane: self.monotonic() + SPORTS_INTERVAL_SECONDS for lane in SPORTS_LANES
+            lane: startup for lane in SPORTS_LANES
         }
         self.recent_errors: list[str] = []
 
@@ -139,13 +140,22 @@ class UnattendedScheduler:
     def lock_path(self) -> Path:
         return self.state_dir / LOCK_FILENAME
 
+    def _cfb_enabled(self) -> bool:
+        value = self._environment().get("PARALLAX_CFB_ENABLED", "").strip().casefold()
+        return value in {"1", "true", "yes", "on"}
+
     def commands(self) -> dict[str, list[str]]:
-        return {
+        commands = {
             "nfl": [sys.executable, str(self.root / "scripts/nfl_live_scan.py")],
-            "cfb": [sys.executable, str(self.root / "scripts/cfb_live_scan.py")],
-            "mlb": [sys.executable, "-m", "parallax", "scan", "--limit", "6"],
-            "reconciliation": [sys.executable, str(self.root / "scripts/parallax_reconcile_prospective.py")],
         }
+        if self._cfb_enabled():
+            commands["cfb"] = [sys.executable, str(self.root / "scripts/cfb_live_scan.py")]
+        commands["mlb"] = [sys.executable, "-m", "parallax", "scan", "--limit", "6"]
+        commands["reconciliation"] = [
+            sys.executable,
+            str(self.root / "scripts/parallax_reconcile_prospective.py"),
+        ]
+        return commands
 
     def _environment(self) -> dict[str, str]:
         env = dict(os.environ)
@@ -172,7 +182,8 @@ class UnattendedScheduler:
         successful = 0
         errors: list[str] = []
         now = self.monotonic()
-        for lane, command in self.commands().items():
+        commands = self.commands()
+        for lane, command in commands.items():
             if lane in SPORTS_LANES and now < self.next_due[lane]:
                 continue
             if lane in SPORTS_LANES:
@@ -213,7 +224,7 @@ class UnattendedScheduler:
         state = "RUNNING" if not errors else ("FAILED" if successful == 0 else "DEGRADED")
         health = self._health(state, heartbeat)
         atomic_write_json(self.health_path, health)
-        print(f"[health] state={state} successful_lanes={successful}/{len(LANES)}", flush=True)
+        print(f"[health] state={state} successful_lanes={successful}/{len(commands)}", flush=True)
         return health
 
     def run_forever(self, interval_seconds: int) -> None:

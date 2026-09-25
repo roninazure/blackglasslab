@@ -152,6 +152,58 @@ class MLBStatsAPI:
         with urlopen(request, timeout=10) as response:
             return json.load(response)
 
+    def scheduled_games_for_date(self, target_date: str) -> list[dict[str, Any]]:
+        """Return the authoritative MLB slate for one calendar date.
+
+        gamePk is the identity so doubleheaders between the same clubs remain
+        separate scheduled games.
+        """
+        payload = self.transport(
+            "/schedule?"
+            + urlencode({"sportId": 1, "date": target_date, "hydrate": "team"})
+        )
+        scheduled: list[dict[str, Any]] = []
+        for day in payload.get("dates", []):
+            for row in day.get("games", []):
+                if row.get("gameType", "R") != "R":
+                    continue
+                game_id = str(row.get("gamePk") or "").strip()
+                start = _parse_time(row.get("gameDate"))
+                teams = row.get("teams", {})
+                home = str(teams.get("home", {}).get("team", {}).get("name") or "").strip()
+                away = str(teams.get("away", {}).get("team", {}).get("name") or "").strip()
+                if not game_id or start is None or not home or not away:
+                    continue
+                status = row.get("status", {})
+                detailed = str(status.get("detailedState") or "").upper()
+                abstract = str(status.get("abstractGameState") or "").upper()
+                combined = f"{abstract} {detailed}"
+                if "POSTPON" in combined:
+                    schedule_status = "POSTPONED"
+                elif "CANCEL" in combined:
+                    schedule_status = "CANCELLED"
+                elif "SUSPEND" in combined:
+                    schedule_status = "SUSPENDED"
+                elif "DELAY" in combined:
+                    schedule_status = "DELAYED"
+                elif abstract == "FINAL" or "FINAL" in detailed:
+                    schedule_status = "FINAL"
+                elif abstract == "LIVE" or "IN PROGRESS" in detailed:
+                    schedule_status = "IN_PROGRESS"
+                else:
+                    schedule_status = "SCHEDULED"
+                scheduled.append(
+                    {
+                        "game_id": game_id,
+                        "date": target_date,
+                        "start_time": start.isoformat(),
+                        "away_team": away,
+                        "home_team": home,
+                        "schedule_status": schedule_status,
+                    }
+                )
+        return scheduled
+
     def game_for_market(self, market: NormalizedMarket) -> MLBGameFact | None:
         metadata = market.original_metadata.get("market", {})
         mlb = metadata.get("mlb") if isinstance(metadata, dict) else None

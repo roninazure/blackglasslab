@@ -12,7 +12,7 @@ from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .models import Action, AttentionClass, NormalizedMarket, ParallaxPlay, utcnow
+from .models import Action, AttentionClass, NormalizedMarket, ParallaxPlay, timestamp, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +226,168 @@ class AlertDeliveryStore:
                 ON alert_deliveries(channel, venue, market_id, attention_class)
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS buy_alert_state (
+                    sport TEXT NOT NULL,
+                    venue TEXT NOT NULL,
+                    market_id TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    matchup TEXT NOT NULL,
+                    selected_side TEXT NOT NULL,
+                    activated_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    game_start TEXT,
+                    resolution_time TEXT,
+                    last_price REAL,
+                    model_probability REAL,
+                    edge_points REAL,
+                    closed_at TEXT,
+                    close_reason TEXT,
+                    PRIMARY KEY (sport, venue, market_id, side)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS buy_alert_state_status
+                ON buy_alert_state(sport, status, updated_at)
+                """
+            )
+
+    def mark_buy_active(self, item: dict[str, Any]) -> None:
+        """Persist the lifecycle of a BUY only after it has been delivered."""
+        now = utcnow().isoformat()
+        key = (
+            str(item["sport"]).upper(),
+            str(item["venue"]),
+            str(item["market_id"]),
+            str(item["side"]),
+        )
+        with self._connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT status, activated_at
+                FROM buy_alert_state
+                WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
+                """,
+                key,
+            ).fetchone()
+            activated_at = (
+                existing["activated_at"]
+                if existing is not None and existing["status"] == "ACTIVE"
+                else str(item.get("detected_at") or now)
+            )
+            conn.execute(
+                """
+                INSERT INTO buy_alert_state (
+                    sport, venue, market_id, side, status, matchup, selected_side,
+                    activated_at, updated_at, game_start, resolution_time,
+                    last_price, model_probability, edge_points, closed_at, close_reason
+                )
+                VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+                ON CONFLICT(sport, venue, market_id, side) DO UPDATE SET
+                    status = 'ACTIVE',
+                    matchup = excluded.matchup,
+                    selected_side = excluded.selected_side,
+                    activated_at = excluded.activated_at,
+                    updated_at = excluded.updated_at,
+                    game_start = excluded.game_start,
+                    resolution_time = excluded.resolution_time,
+                    last_price = excluded.last_price,
+                    model_probability = excluded.model_probability,
+                    edge_points = excluded.edge_points,
+                    closed_at = NULL,
+                    close_reason = NULL
+                """,
+                (
+                    *key,
+                    str(item.get("matchup") or ""),
+                    str(item.get("selected_side") or item.get("side") or ""),
+                    activated_at,
+                    now,
+                    item.get("game_start"),
+                    item.get("resolution_time"),
+                    item.get("executable_price"),
+                    item.get("model_probability"),
+                    item.get("edge_points"),
+                ),
+            )
+
+    def buy_state(
+        self,
+        sport: str,
+        venue: str,
+        market_id: str,
+        side: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM buy_alert_state
+                WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
+                """,
+                (sport.upper(), venue, market_id, side),
+            ).fetchone()
+        return None if row is None else dict(row)
+
+    def active_buys(self, sport: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM buy_alert_state
+                WHERE sport = ? AND status = 'ACTIVE'
+                ORDER BY activated_at, venue, market_id, side
+                """,
+                (sport.upper(),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def close_buy(
+        self,
+        *,
+        sport: str,
+        venue: str,
+        market_id: str,
+        side: str,
+        status: str,
+        reason: str,
+    ) -> bool:
+        if status not in {"WITHDRAWN", "EXPIRED"}:
+            raise ValueError("buy lifecycle close status must be WITHDRAWN or EXPIRED")
+        now = utcnow().isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status
+                FROM buy_alert_state
+                WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
+                """,
+                (sport.upper(), venue, market_id, side),
+            ).fetchone()
+            if row is None or row["status"] != "ACTIVE":
+                return False
+            conn.execute(
+                """
+                UPDATE buy_alert_state
+                SET status = ?, updated_at = ?, closed_at = ?, close_reason = ?
+                WHERE sport = ? AND venue = ? AND market_id = ? AND side = ?
+                """,
+                (
+                    status,
+                    now,
+                    now,
+                    reason,
+                    sport.upper(),
+                    venue,
+                    market_id,
+                    side,
+                ),
+            )
+        return True
 
     @staticmethod
     def delivery_id(channel: str, inbox_id: str) -> str:
@@ -532,6 +694,10 @@ def ntfy_payload(item: dict[str, Any], priority: str, topic: str) -> dict[str, A
         "title": (
             "PARALLAX BUY"
             if item.get("alert_kind") == "SCORED_BUY"
+            else "PARALLAX BUY WITHDRAWN"
+            if item.get("alert_kind") == "SCORED_BUY_WITHDRAWN"
+            else "PARALLAX BUY EXPIRED"
+            if item.get("alert_kind") == "SCORED_BUY_EXPIRED"
             else ALERT_TITLES[str(item["attention_class"])]
         ),
         "priority": NTFY_PRIORITIES[priority],
@@ -545,6 +711,8 @@ def ntfy_publish_url(server: str) -> str:
 def format_alert_message(item: dict[str, Any]) -> str:
     if item.get("alert_kind") == "SCORED_BUY":
         return _scored_buy_message(item)
+    if item.get("alert_kind") in {"SCORED_BUY_WITHDRAWN", "SCORED_BUY_EXPIRED"}:
+        return _scored_buy_lifecycle_message(item)
     attention_class = item["attention_class"]
     if attention_class == AttentionClass.ACTIONABLE_PLAY.value:
         return _actionable_message(item)
@@ -585,16 +753,30 @@ def dispatch_scored_buy(
     sport: str,
     matchup: str,
     detected_at: str,
+    game_start: str | None = None,
 ) -> dict[str, Any] | None:
     """Dispatch one deduplicated immediate alert for a freshly scored BUY."""
     if play.suggested_action != Action.BUY:
         return None
+    prior_state = dispatcher.store.buy_state(
+        sport,
+        str(play.venue),
+        play.market_id,
+        str(play.side),
+    )
+    lifecycle_generation = (
+        str(prior_state.get("closed_at") or prior_state.get("updated_at") or "")
+        if prior_state is not None and prior_state.get("status") != "ACTIVE"
+        else None
+    )
     item = _scored_buy_item(
         play,
         market,
         sport=sport,
         matchup=matchup,
         detected_at=detected_at,
+        game_start=game_start,
+        lifecycle_generation=lifecycle_generation,
     )
     existing = dispatcher.store.delivery(dispatcher.channel, item["inbox_id"])
     dispatcher.dispatch([item])
@@ -606,12 +788,89 @@ def dispatch_scored_buy(
             "http_status": None,
             "error_code": None,
         }
+    if delivery["status"] == "SENT":
+        dispatcher.store.mark_buy_active(item)
     return {
         "status": delivery["status"],
         "deduplicated": existing is not None,
         "http_status": delivery["http_status"],
         "error_code": delivery["error_code"],
     }
+
+
+def reconcile_active_buy_alerts(
+    dispatcher: AlertDispatcher,
+    plays: list[ParallaxPlay],
+    *,
+    sport: str,
+    detected_at: str,
+) -> dict[str, int]:
+    """Close only previously delivered BUYs with explicit invalidation evidence."""
+    now = timestamp(detected_at) or utcnow()
+    current = {
+        (
+            str(play.venue),
+            play.market_id,
+            str(play.side),
+        ): play
+        for play in plays
+    }
+    summary = {"withdrawn": 0, "expired": 0, "failed": 0}
+    for active in dispatcher.store.active_buys(sport):
+        key = (active["venue"], active["market_id"], active["side"])
+        play = current.get(key)
+        lifecycle = None
+        reason = None
+        replacement_action = None
+        game_start = timestamp(active.get("game_start"))
+        active_resolution = timestamp(active.get("resolution_time"))
+        play_resolution = timestamp(play.resolution_time) if play is not None else None
+        if game_start is not None and game_start <= now:
+            lifecycle = "EXPIRED"
+            reason = "The scheduled game has started."
+        elif (
+            (play_resolution is not None and play_resolution <= now)
+            or (active_resolution is not None and active_resolution <= now)
+        ):
+            lifecycle = "EXPIRED"
+            reason = "The market resolution window has passed."
+        elif play is not None and play.suggested_action != Action.BUY:
+            lifecycle = "WITHDRAWN"
+            replacement_action = str(play.suggested_action)
+            reason = f"PARALLAX rescored this position as {replacement_action}."
+
+        if lifecycle is None or reason is None:
+            continue
+        item = _scored_buy_lifecycle_item(
+            active,
+            lifecycle=lifecycle,
+            reason=reason,
+            replacement_action=replacement_action,
+            detected_at=detected_at,
+        )
+        existing = dispatcher.store.delivery(dispatcher.channel, item["inbox_id"])
+        try:
+            dispatcher.dispatch([item])
+            delivery = dispatcher.store.delivery(dispatcher.channel, item["inbox_id"])
+        except Exception:
+            summary["failed"] += 1
+            continue
+        if delivery is None or delivery["status"] != "SENT":
+            if delivery is not None and delivery["status"] in {"FAILED", "UNKNOWN", "PENDING"}:
+                summary["failed"] += 1
+            continue
+        if not dispatcher.store.close_buy(
+            sport=sport,
+            venue=active["venue"],
+            market_id=active["market_id"],
+            side=active["side"],
+            status=lifecycle,
+            reason=reason,
+        ):
+            continue
+        if existing is None:
+            summary["expired" if lifecycle == "EXPIRED" else "withdrawn"] += 1
+    return summary
 
 
 def _scored_buy_item(
@@ -621,6 +880,8 @@ def _scored_buy_item(
     sport: str,
     matchup: str,
     detected_at: str,
+    game_start: str | None = None,
+    lifecycle_generation: str | None = None,
 ) -> dict[str, Any]:
     material_state = {
         "venue": str(play.venue),
@@ -631,6 +892,8 @@ def _scored_buy_item(
         "edge_points": _rounded(play.edge_points, 1),
         "liquidity": _rounded(play.executable_size, 0),
     }
+    if lifecycle_generation is not None:
+        material_state["lifecycle_generation"] = lifecycle_generation
     fingerprint = hashlib.sha256(
         json.dumps(material_state, allow_nan=False, sort_keys=True).encode()
     ).hexdigest()[:16]
@@ -651,12 +914,83 @@ def _scored_buy_item(
         "sport": sport.upper(),
         "matchup": matchup,
         "selected_side": selected_side,
+        "side": str(play.side),
+        "game_start": (
+            game_start
+            or (
+                str(market.original_metadata.get("market", {}).get("gameStartTime"))
+                if isinstance(market.original_metadata.get("market"), dict)
+                and market.original_metadata.get("market", {}).get("gameStartTime")
+                else None
+            )
+        ),
+        "resolution_time": play.resolution_time,
         "executable_price": play.executable_price,
         "model_probability": play.model_probability,
         "edge_points": play.edge_points,
         "liquidity": play.executable_size,
         "contract_url": market.source_url or play.market_url,
     }
+
+
+def _scored_buy_lifecycle_item(
+    active: dict[str, Any],
+    *,
+    lifecycle: str,
+    reason: str,
+    replacement_action: str | None,
+    detected_at: str,
+) -> dict[str, Any]:
+    identity = "|".join(
+        (
+            active["sport"],
+            active["venue"],
+            active["market_id"],
+            active["side"],
+            active["activated_at"],
+            lifecycle,
+        )
+    )
+    fingerprint = hashlib.sha256(identity.encode()).hexdigest()[:16]
+    return {
+        "inbox_id": f"inbox-scored-buy-{lifecycle.casefold()}-{fingerprint}",
+        "attention_class": AttentionClass.ACTIONABLE_PLAY.value,
+        "status": "ACTIVE",
+        "venue": active["venue"],
+        "market_id": active["market_id"],
+        "headline": f"PARALLAX BUY {lifecycle}",
+        "market": active["matchup"],
+        "verdict": lifecycle,
+        "actionability": "ACTION_REQUIRED",
+        "trade_confidence": "N/A",
+        "detected_at": detected_at,
+        "alert_kind": (
+            "SCORED_BUY_EXPIRED"
+            if lifecycle == "EXPIRED"
+            else "SCORED_BUY_WITHDRAWN"
+        ),
+        "sport": active["sport"],
+        "matchup": active["matchup"],
+        "selected_side": active["selected_side"],
+        "reason": reason,
+        "replacement_action": replacement_action,
+    }
+
+
+def _scored_buy_lifecycle_message(item: dict[str, Any]) -> str:
+    label = "EXPIRED" if item["alert_kind"] == "SCORED_BUY_EXPIRED" else "WITHDRAWN"
+    lines = [
+        f"PARALLAX BUY {label}",
+        f"Sport: {item['sport']}",
+        f"Venue: {item['venue']}",
+        f"Matchup: {item['matchup']}",
+        f"Selected side: {item['selected_side']}",
+        f"Reason: {item['reason']}",
+    ]
+    if item.get("replacement_action"):
+        lines.append(f"Current verdict: {item['replacement_action']}")
+    lines.append(f"Timestamp: {item['detected_at']}")
+    return "\n".join(lines)
 
 
 def _rounded(value: float | None, digits: int) -> float | None:

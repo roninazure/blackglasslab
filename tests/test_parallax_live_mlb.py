@@ -4,6 +4,7 @@ from parallax import sources
 from parallax.demo import demo_inputs
 from parallax.inbox import InboxStore
 from parallax.models import Action, Evidence, Venue
+from parallax.mlb import MLBStatsAPI
 from parallax.normalization import rules_digest
 from parallax.service import PlayService
 from parallax.track_record import TrackRecord
@@ -33,6 +34,48 @@ def book(slug):
     }
 
 
+class FakeSchedule:
+    def scheduled_games_for_date(self, _target_date):
+        return []
+
+
+def test_mlb_official_schedule_preserves_doubleheaders_as_separate_games():
+    payload = {
+        "dates": [
+            {
+                "games": [
+                    {
+                        "gamePk": 1001,
+                        "gameType": "R",
+                        "gameDate": "2026-09-24T17:05:00Z",
+                        "status": {"detailedState": "Scheduled"},
+                        "teams": {
+                            "away": {"team": {"name": "Milwaukee Brewers"}},
+                            "home": {"team": {"name": "Philadelphia Phillies"}},
+                        },
+                    },
+                    {
+                        "gamePk": 1002,
+                        "gameType": "R",
+                        "gameDate": "2026-09-24T21:05:00Z",
+                        "status": {"detailedState": "Scheduled"},
+                        "teams": {
+                            "away": {"team": {"name": "Milwaukee Brewers"}},
+                            "home": {"team": {"name": "Philadelphia Phillies"}},
+                        },
+                    },
+                ]
+            }
+        ]
+    }
+    api = MLBStatsAPI(transport=lambda _path: payload)
+
+    slate = api.scheduled_games_for_date("2026-09-24")
+
+    assert [row["game_id"] for row in slate] == ["1001", "1002"]
+    assert all(row["date"] == "2026-09-24" for row in slate)
+
+
 def test_current_nested_pmus_metadata_is_mlb_moneyline():
     assert sources._is_mlb_moneyline(pmus_row())
     assert not sources._is_mlb_moneyline({"raw": {"marketType": "moneyline", "question": "NFL winner"}})
@@ -56,7 +99,7 @@ def test_bulk_mapping_precedes_book_and_isolates_book_failure(monkeypatch):
             pass
 
     class FakeKalshi:
-        def mlb_markets_page(self, limit=100):
+        def mlb_markets_page(self, limit=100, cursor=""):
             return {"markets": []}
 
     class FakeProvider:
@@ -67,6 +110,7 @@ def test_bulk_mapping_precedes_book_and_isolates_book_failure(monkeypatch):
     monkeypatch.setattr(sources, "PolymarketUSPublicClient", FakePMUS)
     monkeypatch.setattr(sources, "KalshiPublicClient", FakeKalshi)
     monkeypatch.setattr(sources, "MLBEvidenceProvider", FakeProvider)
+    monkeypatch.setattr(sources, "MLBStatsAPI", FakeSchedule)
     markets, report = sources.collect_markets(limit=2)
     assert [m.slug for m in markets] == [first["slug"]]
     assert calls == [first["slug"], second["slug"]]
@@ -90,7 +134,7 @@ def test_duplicate_pmus_market_gets_one_book_request(monkeypatch):
             pass
 
     class FakeKalshi:
-        def mlb_markets_page(self, limit=100):
+        def mlb_markets_page(self, limit=100, cursor=""):
             return {"markets": []}
 
     class FakeProvider:
@@ -100,6 +144,7 @@ def test_duplicate_pmus_market_gets_one_book_request(monkeypatch):
     monkeypatch.setattr(sources, "PolymarketUSPublicClient", FakePMUS)
     monkeypatch.setattr(sources, "KalshiPublicClient", FakeKalshi)
     monkeypatch.setattr(sources, "MLBEvidenceProvider", FakeProvider)
+    monkeypatch.setattr(sources, "MLBStatsAPI", FakeSchedule)
     sources.collect_markets(limit=2)
     assert calls == [row["slug"]]
 
@@ -249,3 +294,57 @@ def test_live_mlb_capture_is_once_per_side_per_service_invocation(tmp_path, monk
     second.replace_inputs(markets, evidence)
     second._plays()
     assert len(prospective.prospective_records()) == 28
+
+
+def test_mlb_slate_report_accounts_for_every_scheduled_game():
+    from types import SimpleNamespace
+    import parallax.__main__ as parallax_main
+
+    schedule = [
+        {
+            "game_id": f"game-{index}",
+            "date": "2026-09-24",
+            "start_time": f"2026-09-24T{17 + index:02d}:00:00+00:00",
+            "away_team": f"A{index}",
+            "home_team": f"H{index}",
+            "schedule_status": "SCHEDULED",
+        }
+        for index in range(4)
+    ]
+    plays = [
+        SimpleNamespace(
+            venue=Venue.POLYMARKET,
+            market_id="m0",
+            suggested_action=Action.BUY,
+        ),
+        SimpleNamespace(
+            venue=Venue.KALSHI,
+            market_id="m1",
+            suggested_action=Action.WATCH,
+        ),
+    ]
+    service = SimpleNamespace(
+        collection={
+            "_slate_schedule": schedule,
+            "_slate_schedule_state": "COMPLETE",
+            "_slate_discovery_complete": True,
+            "_market_game_ids": {
+                "POLYMARKET:m0": "game-0",
+                "KALSHI:m1": "game-1",
+            },
+            "_slate_data_unavailable_game_ids": ["game-2"],
+        },
+        _plays=lambda: plays,
+    )
+
+    report = parallax_main.mlb_slate_report(service)
+
+    assert report["expected_games"] == 4
+    assert report["accounted_games"] == 4
+    assert report["all_games_accounted"] is True
+    assert [row["status"] for row in report["dates"][0]["games"]] == [
+        "BUY",
+        "WATCH",
+        "DATA_UNAVAILABLE",
+        "NO_MARKET",
+    ]
