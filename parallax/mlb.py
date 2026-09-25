@@ -16,7 +16,7 @@ from typing import Any, Callable
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from .models import Evidence, NormalizedMarket, PlayType, Venue, utcnow
+from .models import Evidence, NormalizedMarket, PlayType, Side, Venue, utcnow
 from .normalization import rules_digest
 
 MLB_API = "https://statsapi.mlb.com/api/v1"
@@ -38,6 +38,35 @@ def _team_key(value: Any) -> str:
         "sandiego": "sandiegopadres", "sanfrancisco": "sanfranciscogiants", "boston": "bostonredsox", "kansascity": "kansascityroyals", "washington": "washingtonnationals",
     }
     return aliases.get(key, key)
+
+
+def selected_team_for_moneyline(
+    market: NormalizedMarket,
+    side: Side,
+) -> str | None:
+    """Return the actual team bought by a two-team MLB moneyline side.
+
+    Kalshi names the YES contract team and can repeat that label on NO, so NO
+    must be oriented to the other official team rather than trusting the
+    display subtitle.
+    """
+    metadata = market.original_metadata.get("market", {})
+    mlb = metadata.get("mlb") if isinstance(metadata, dict) else None
+    if not isinstance(mlb, dict):
+        return None
+    home = str(mlb.get("home_team") or "").strip()
+    away = str(mlb.get("away_team") or "").strip()
+    if not home or not away:
+        return None
+    yes_key = _team_key(market.outcomes.get("YES"))
+    home_key, away_key = _team_key(home), _team_key(away)
+    if yes_key == home_key:
+        yes_team, no_team = home, away
+    elif yes_key == away_key:
+        yes_team, no_team = away, home
+    else:
+        return None
+    return yes_team if side == Side.YES else no_team
 
 
 def _parse_time(value: Any) -> datetime | None:
