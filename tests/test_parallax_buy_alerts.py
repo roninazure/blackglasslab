@@ -69,6 +69,7 @@ def play(action=Action.BUY, *, price=0.44):
         confidence_band=Confidence.HIGH,
         demo=False,
         updated_at="2026-09-23T15:01:02+00:00",
+        resolution_time="2026-09-28T00:20:00+00:00",
     )
 
 
