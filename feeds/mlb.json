@@ -1,24 +1,7 @@
 {
-  "generated_at": "2026-09-26T16:56:24.542709+00:00",
+  "generated_at": "2026-09-26T18:01:30.358482+00:00",
   "lane": "MLB",
   "plays": [
-    {
-      "away_team": "Cincinnati Reds",
-      "date": "2026-09-26",
-      "economic_key": "MLB:822759:cincinnatireds",
-      "edge_pp": 5.07786557,
-      "game_id": "822759",
-      "home_team": "Toronto Blue Jays",
-      "lifecycle_updated_at": "2026-09-26T16:53:51.509530+00:00",
-      "market_id": "1014149",
-      "model_probability": 0.4557786557090502,
-      "opponent": "Toronto Blue Jays",
-      "price": 0.405,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Cincinnati Reds",
-      "start_time": "2026-09-26T19:07:00+00:00",
-      "venue": "POLYMARKET"
-    },
     {
       "away_team": "Los Angeles Dodgers",
       "date": "2026-09-26",
@@ -26,7 +9,7 @@
       "edge_pp": 12.57917927,
       "game_id": "823165",
       "home_team": "San Francisco Giants",
-      "lifecycle_updated_at": "2026-09-26T16:53:51.982722+00:00",
+      "lifecycle_updated_at": "2026-09-26T17:58:43.595680+00:00",
       "market_id": "KXMLBGAME-26SEP261605LADSF-SF",
       "model_probability": 0.4057917927005471,
       "opponent": "Los Angeles Dodgers",
@@ -35,31 +18,14 @@
       "selected_team": "San Francisco Giants",
       "start_time": "2026-09-26T20:05:00+00:00",
       "venue": "KALSHI"
-    },
-    {
-      "away_team": "St. Louis Cardinals",
-      "date": "2026-09-26",
-      "economic_key": "MLB:823733:milwaukeebrewers",
-      "edge_pp": 6.05394035,
-      "game_id": "823733",
-      "home_team": "Milwaukee Brewers",
-      "lifecycle_updated_at": "2026-09-26T16:53:51.350567+00:00",
-      "market_id": "1014121",
-      "model_probability": 0.6555394035025097,
-      "opponent": "St. Louis Cardinals",
-      "price": 0.595,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Milwaukee Brewers",
-      "start_time": "2026-09-26T23:10:00+00:00",
-      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-09-26T16:53:52.314556+00:00",
+  "source_feed_generated_at": "2026-09-26T17:58:43.918633+00:00",
   "source_schedule_state": "COMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 3
+    "buy": 1
   }
 }
