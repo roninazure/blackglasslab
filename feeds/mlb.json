@@ -1,24 +1,7 @@
 {
-  "generated_at": "2026-09-26T14:55:55.057588+00:00",
+  "generated_at": "2026-09-26T15:56:18.830936+00:00",
   "lane": "MLB",
   "plays": [
-    {
-      "away_team": "Pittsburgh Pirates",
-      "date": "2026-09-26",
-      "economic_key": "MLB:824219:pittsburghpirates",
-      "edge_pp": 5.72879451,
-      "game_id": "824219",
-      "home_team": "Detroit Tigers",
-      "lifecycle_updated_at": "2026-09-26T14:49:04.344050+00:00",
-      "market_id": "KXMLBGAME-26SEP261310PITDET-PIT",
-      "model_probability": 0.527287945072592,
-      "opponent": "Detroit Tigers",
-      "price": 0.47,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Pittsburgh Pirates",
-      "start_time": "2026-09-26T17:10:00+00:00",
-      "venue": "KALSHI"
-    },
     {
       "away_team": "Los Angeles Dodgers",
       "date": "2026-09-26",
@@ -26,8 +9,8 @@
       "edge_pp": 12.57917927,
       "game_id": "823165",
       "home_team": "San Francisco Giants",
-      "lifecycle_updated_at": "2026-09-26T14:49:05.005580+00:00",
-      "market_id": "KXMLBGAME-26SEP261605LADSF-LAD",
+      "lifecycle_updated_at": "2026-09-26T15:54:17.778592+00:00",
+      "market_id": "KXMLBGAME-26SEP261605LADSF-SF",
       "model_probability": 0.4057917927005471,
       "opponent": "Los Angeles Dodgers",
       "price": 0.28,
@@ -39,10 +22,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-09-26T14:49:05.149474+00:00",
+  "source_feed_generated_at": "2026-09-26T15:54:18.116015+00:00",
   "source_schedule_state": "COMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 2
+    "buy": 1
   }
 }
