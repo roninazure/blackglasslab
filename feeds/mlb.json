@@ -1,31 +1,13 @@
 {
-  "generated_at": "2026-09-26T19:06:36.275098+00:00",
+  "generated_at": "2026-09-26T20:06:41.814580+00:00",
   "lane": "MLB",
-  "plays": [
-    {
-      "away_team": "Los Angeles Dodgers",
-      "date": "2026-09-26",
-      "economic_key": "MLB:823165:sanfranciscogiants",
-      "edge_pp": 12.07917927,
-      "game_id": "823165",
-      "home_team": "San Francisco Giants",
-      "lifecycle_updated_at": "2026-09-26T19:03:18.000849+00:00",
-      "market_id": "1014078",
-      "model_probability": 0.4057917927005471,
-      "opponent": "Los Angeles Dodgers",
-      "price": 0.285,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "San Francisco Giants",
-      "start_time": "2026-09-26T20:05:00+00:00",
-      "venue": "POLYMARKET"
-    }
-  ],
+  "plays": [],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
   "source_feed_generated_at": "2026-09-26T19:03:18.446409+00:00",
   "source_schedule_state": "COMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 1
+    "buy": 0
   }
 }
