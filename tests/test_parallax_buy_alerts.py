@@ -448,6 +448,64 @@ def _mlb_play(market_id, side, label, price, edge):
     )
 
 
+def test_mlb_economic_position_normalizes_cross_venue_team_aliases():
+    import parallax.__main__ as parallax_main
+
+    kalshi_market = replace(
+        _mlb_market("Los Angeles Dodgers", "KAL-LAD"),
+        original_metadata={
+            "market": {
+                "mlb": {
+                    "league": "MLB",
+                    "market_type": "moneyline",
+                    "away_team": "Los Angeles Dodgers",
+                    "home_team": "San Francisco",
+                    "start_time": "2026-09-27T19:05:00Z",
+                }
+            }
+        },
+    )
+    polymarket_market = replace(
+        _mlb_market("San Francisco Giants", "POLY-SF"),
+        venue=Venue.POLYMARKET,
+        original_metadata={
+            "market": {
+                "mlb": {
+                    "league": "MLB",
+                    "market_type": "moneyline",
+                    "away_team": "Los Angeles Dodgers",
+                    "home_team": "San Francisco Giants",
+                    "start_time": "2026-09-27T19:05:00Z",
+                }
+            }
+        },
+    )
+
+    kalshi_play = _mlb_play("KAL-LAD", Side.NO, "Los Angeles D", 0.32, 9.5)
+    polymarket_play = _mlb_play("POLY-SF", Side.YES, "San Francisco Giants", 0.33, 8.5)
+    polymarket_play.venue = Venue.POLYMARKET
+
+    service = SimpleNamespace(
+        collection={
+            "_market_game_ids": {
+                "KALSHI:KAL-LAD": "823164",
+                "POLYMARKET:POLY-SF": "823164",
+            }
+        }
+    )
+
+    kalshi_key, kalshi_team = parallax_main._mlb_economic_position(
+        service, kalshi_play, kalshi_market
+    )
+    polymarket_key, polymarket_team = parallax_main._mlb_economic_position(
+        service, polymarket_play, polymarket_market
+    )
+
+    assert kalshi_team == "San Francisco"
+    assert polymarket_team == "San Francisco Giants"
+    assert kalshi_key == polymarket_key == "MLB:823164:sanfranciscogiants"
+
+
 def test_mlb_scan_collapses_equivalent_kalshi_buys_to_one_best_price(monkeypatch):
     import parallax.__main__ as parallax_main
 
