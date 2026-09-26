@@ -9,7 +9,7 @@ from .alerts import dispatch_scored_buy, reconcile_active_buy_alerts
 from .api import server
 from .demo import demo_inputs
 from .entitlements import Plan
-from .mlb import selected_team_for_moneyline
+from .mlb import _team_key, selected_team_for_moneyline
 from .models import Action, utcnow
 from .service import PlayService
 from .sources import collect_markets
@@ -67,7 +67,7 @@ def _mlb_economic_position(
     selected_team = selected_team_for_moneyline(market, play.side)
     if not game_id or not selected_team:
         return None, selected_team
-    team_key = "".join(ch for ch in selected_team.casefold() if ch.isalnum())
+    team_key = _team_key(selected_team)
     if not team_key:
         return None, selected_team
     return f"MLB:{game_id}:{team_key}", selected_team
