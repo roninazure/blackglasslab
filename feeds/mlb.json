@@ -1,31 +1,13 @@
 {
-  "generated_at": "2026-09-26T23:11:58.785863+00:00",
+  "generated_at": "2026-09-26T23:17:00.795989+00:00",
   "lane": "MLB",
-  "plays": [
-    {
-      "away_team": "Tampa Bay Rays",
-      "date": "2026-09-26",
-      "economic_key": "MLB:823407:tampabayrays",
-      "edge_pp": 5.37683857,
-      "game_id": "823407",
-      "home_team": "Philadelphia Phillies",
-      "lifecycle_updated_at": "2026-09-26T22:17:01.405357+00:00",
-      "market_id": "1014083",
-      "model_probability": 0.52376838569218,
-      "opponent": "Philadelphia Phillies",
-      "price": 0.47,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Tampa Bay Rays",
-      "start_time": "2026-09-26T23:15:00+00:00",
-      "venue": "POLYMARKET"
-    }
-  ],
+  "plays": [],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
   "source_feed_generated_at": "2026-09-26T22:17:02.021374+00:00",
   "source_schedule_state": "COMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 1
+    "buy": 0
   }
 }
