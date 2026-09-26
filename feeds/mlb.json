@@ -1,41 +1,7 @@
 {
-  "generated_at": "2026-09-26T22:21:53.953746+00:00",
+  "generated_at": "2026-09-26T23:11:58.785863+00:00",
   "lane": "MLB",
   "plays": [
-    {
-      "away_team": "St. Louis Cardinals",
-      "date": "2026-09-26",
-      "economic_key": "MLB:823733:milwaukeebrewers",
-      "edge_pp": 6.05394035,
-      "game_id": "823733",
-      "home_team": "Milwaukee Brewers",
-      "lifecycle_updated_at": "2026-09-26T22:17:01.730470+00:00",
-      "market_id": "1014121",
-      "model_probability": 0.6555394035025097,
-      "opponent": "St. Louis Cardinals",
-      "price": 0.595,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Milwaukee Brewers",
-      "start_time": "2026-09-26T23:10:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "away_team": "Cleveland Guardians",
-      "date": "2026-09-26",
-      "economic_key": "MLB:824057:clevelandguardians",
-      "edge_pp": 5.11047496,
-      "game_id": "824057",
-      "home_team": "Kansas City Royals",
-      "lifecycle_updated_at": "2026-09-26T22:17:01.242435+00:00",
-      "market_id": "1014092",
-      "model_probability": 0.5561047495998503,
-      "opponent": "Kansas City Royals",
-      "price": 0.505,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Cleveland Guardians",
-      "start_time": "2026-09-26T23:10:00+00:00",
-      "venue": "POLYMARKET"
-    },
     {
       "away_team": "Tampa Bay Rays",
       "date": "2026-09-26",
@@ -60,6 +26,6 @@
   "source_schedule_state": "COMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 3
+    "buy": 1
   }
 }
