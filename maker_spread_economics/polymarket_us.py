@@ -848,10 +848,17 @@ class PolymarketUSPublicClient:
         return {"public_rest_requests_per_minute": self.meter.per_minute()}
 
     def markets_page(
-        self, *, limit: int, offset: int, categories: list[str] | None = None
+        self,
+        *,
+        limit: int,
+        offset: int,
+        categories: list[str] | None = None,
+        slugs: list[str] | None = None,
+        retry_transport_errors: bool = True,
     ) -> list[dict[str, Any]]:
         last_error: Exception | None = None
-        for attempt in range(1, PMUS_DISCOVERY_MAX_ATTEMPTS + 1):
+        max_attempts = PMUS_DISCOVERY_MAX_ATTEMPTS if retry_transport_errors else 1
+        for attempt in range(1, max_attempts + 1):
             try:
                 params = {
                     "active": True,
@@ -863,6 +870,8 @@ class PolymarketUSPublicClient:
                 }
                 if categories:
                     params["categories"] = categories
+                if slugs:
+                    params["slug"] = slugs
                 payload = self._public_call(
                     "market discovery",
                     lambda: self.client.markets.list(params),
@@ -876,7 +885,7 @@ class PolymarketUSPublicClient:
                     raise SafetyStop(
                         f"Polymarket US market discovery failed: {redact_sensitive(exc)}"
                     ) from exc
-                if attempt == PMUS_DISCOVERY_MAX_ATTEMPTS:
+                if attempt == max_attempts:
                     raise PolymarketUSDiscoveryFailure(
                         f"Polymarket US market discovery failed after {attempt} attempts: {redact_sensitive(exc)}",
                         attempts=attempt, underlying_error=exc,

@@ -258,7 +258,10 @@ def is_supported_market(market: NormalizedMarket) -> bool:
         for value in (raw.get("ticker"), raw.get("event_ticker"), market.event)
     )
     banned = ("spread", "total", "over/under", "first half", "quarter", "touchdown", "prop", "future", "super bowl", "playoff berth", "season win")
-    return market.venue in {Venue.POLYMARKET, Venue.KALSHI} and ("nfl" in text or nfl_sides or kalshi_nfl_family) and any(x in text for x in ("moneyline", "game winner", "wins", "winner")) and not any(x in text for x in banned)
+    winner_semantics = kalshi_nfl_family or any(
+        x in text for x in ("moneyline", "game winner", "wins", "winner")
+    )
+    return market.venue in {Venue.POLYMARKET, Venue.KALSHI} and ("nfl" in text or nfl_sides or kalshi_nfl_family) and winner_semantics and not any(x in text for x in banned)
 
 
 def nfl_calibration_safe(edge: float | None) -> bool:
@@ -301,9 +304,10 @@ def map_market_to_game(market: NormalizedMarket, games: list[NFLGame], *, now: d
     if not is_supported_market(market):
         return NFLMapping("NON_GAME_WINNER", None, "market is not an NFL pregame game-winner/moneyline")
     raw = market.original_metadata.get("market", {})
-    home = str(raw.get("home_team") or raw.get("homeTeam") or "").strip()
-    away = str(raw.get("away_team") or raw.get("awayTeam") or "").strip()
-    text = " ".join((market.title, market.description, market.resolution_rules))
+    event = market.original_metadata.get("event") or {}
+    home = str(raw.get("home_team") or raw.get("homeTeam") or event.get("home_team") or "").strip()
+    away = str(raw.get("away_team") or raw.get("awayTeam") or event.get("away_team") or "").strip()
+    text = " ".join((market.event_title or "", market.title, market.description, market.resolution_rules))
     sides = raw.get("marketSides") or []
     if isinstance(sides, list) and len(sides) == 2:
         for side in sides:
@@ -319,7 +323,7 @@ def map_market_to_game(market: NormalizedMarket, games: list[NFLGame], *, now: d
         if match:
             away, home = match.group(1).strip(" :-"), match.group(2).strip(" :-")
     wanted = {_team_key(home), _team_key(away)} - {""}
-    start_text = str(raw.get("gameStartTime") or raw.get("scheduled_start") or raw.get("start_time") or raw.get("open_time") or "")
+    start_text = str(raw.get("gameStartTime") or raw.get("scheduled_start") or raw.get("start_time") or raw.get("open_time") or event.get("scheduled_start") or "")
     date_hint = start_text[:10] if len(start_text) >= 10 else ""
     candidates = [game for game in games if game.game_type in {"REG", "POST"} and (not date_hint or game.kickoff[:10] == date_hint) and {_team_key(game.home_team), _team_key(game.away_team)} == wanted]
     if len(candidates) == 0:

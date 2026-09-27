@@ -211,6 +211,16 @@ class KalshiPublicClient:
     def mlb_markets_page(self, *, limit: int = 100, cursor: str = "") -> dict:
         return self.get("/markets", status="open", limit=limit, cursor=cursor, series_ticker="KXMLBGAME")
 
+    def nfl_markets_page(self, *, limit: int = 100, cursor: str = "") -> dict:
+        return self.get(
+            "/markets",
+            status="open",
+            limit=limit,
+            cursor=cursor,
+            series_ticker="KXNFLGAME",
+            mve_filter="exclude",
+        )
+
     def book(self, ticker: str) -> dict:
         return self.get(f"/markets/{quote(ticker, safe='')}/orderbook", depth=20)
 

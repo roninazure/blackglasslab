@@ -24,7 +24,7 @@ from parallax.nfl import (
     parse_games,
     validate,
 )
-from parallax.normalization import normalize_pmus
+from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.sources import (
     KalshiPublicClient,
     KalshiPublicRateLimit,
@@ -115,33 +115,137 @@ def test_kalshi_rate_limit_locks_client_without_second_provider_call():
 
 def test_kalshi_nfl_discovery_cannot_exceed_hard_request_ceiling(monkeypatch):
     calls = []
+    scheduled = [{
+        "game_id": "g",
+        "date": "2026-09-13",
+        "start_time": "2026-09-13T20:25:00+00:00",
+        "away_team": "ARI",
+        "home_team": "LAC",
+        "schedule_status": "SCHEDULED",
+    }]
 
     class Client:
-        def events_page(self, *, series_ticker, limit, cursor):
-            calls.append(("events", series_ticker, cursor))
-            events = [
-                {"ticker": f"KXNFLGAME-EVENT-{index}"}
-                for index in range(nfl_live_scan.KALSHI_NFL_MAX_EVENTS + 20)
-            ]
-            return {"events": events, "cursor": "more"}
-
-        def event_markets_page(self, *, event_ticker, limit, cursor):
-            calls.append(("markets", event_ticker, cursor))
+        def nfl_markets_page(self, *, limit, cursor):
+            calls.append((limit, cursor))
             return {
-                "markets": [{"ticker": f"{event_ticker}-TEAM"}],
-                "cursor": "",
+                "markets": [
+                    {
+                        "ticker": "KXNFLGAME-26SEP13ARILAC-LAC",
+                        "event_ticker": "KXNFLGAME-26SEP13ARILAC",
+                    }
+                ] * 100,
+                "cursor": f"page-{len(calls)}",
             }
 
     monkeypatch.setattr(
         nfl_live_scan, "_scoped_call", lambda function, **kwargs: function(**kwargs)
     )
-    _rows, coverage = nfl_live_scan._scope_kalshi(Client())
+    _rows, coverage = nfl_live_scan._scope_kalshi(Client(), scheduled)
 
-    assert len(calls) <= nfl_live_scan.KALSHI_NFL_DISCOVERY_MAX_REQUESTS
+    assert len(calls) == nfl_live_scan.KALSHI_NFL_DISCOVERY_MAX_REQUESTS
     assert coverage["request_count"] == len(calls)
     assert coverage["request_ceiling"] == nfl_live_scan.KALSHI_NFL_DISCOVERY_MAX_REQUESTS
-    assert coverage["state"] != "COMPLETE"
-    assert {call[1] for call in calls if call[0] == "events"} == {"KXNFLGAME"}
+    assert coverage["state"] == "BOUNDED"
+
+
+def test_kalshi_nfl_discovery_uses_one_series_request_and_schedule(monkeypatch):
+    calls = []
+    scheduled = [{
+        "game_id": "g",
+        "date": "2026-09-13",
+        "start_time": "2026-09-13T20:25:00+00:00",
+        "away_team": "ARI",
+        "home_team": "LAC",
+        "schedule_status": "SCHEDULED",
+    }]
+
+    class Client:
+        def nfl_markets_page(self, *, limit, cursor):
+            calls.append((limit, cursor))
+            return {"markets": [
+                {"ticker": "KXNFLGAME-26SEP13ARILAC-ARI", "event_ticker": "KXNFLGAME-26SEP13ARILAC"},
+                {"ticker": "KXNFLGAME-26SEP13ARILAC-LAC", "event_ticker": "KXNFLGAME-26SEP13ARILAC"},
+                {"ticker": "KXNFLGAME-26SEP14BUFNYJ-BUF", "event_ticker": "KXNFLGAME-26SEP14BUFNYJ"},
+            ], "cursor": ""}
+
+    monkeypatch.setattr(nfl_live_scan, "_scoped_call", lambda function, **kwargs: function(**kwargs))
+    rows, coverage = nfl_live_scan._scope_kalshi(Client(), scheduled)
+
+    assert calls == [(100, "")]
+    assert [row["ticker"] for row in rows] == [
+        "KXNFLGAME-26SEP13ARILAC-ARI",
+        "KXNFLGAME-26SEP13ARILAC-LAC",
+    ]
+    assert all(row["home_team"] == "LAC" and row["away_team"] == "ARI" for row in rows)
+    assert coverage["state"] == "COMPLETE"
+    assert coverage["request_count"] == 1
+
+
+def test_discovered_kalshi_game_contract_maps_from_schedule_enrichment(monkeypatch):
+    scheduled = [{
+        "game_id": "g",
+        "date": "2026-09-13",
+        "start_time": "2026-09-13T20:25:00+00:00",
+        "away_team": "ARI",
+        "home_team": "LAC",
+        "schedule_status": "SCHEDULED",
+    }]
+
+    class Client:
+        def nfl_markets_page(self, *, limit, cursor):
+            return {"markets": [{
+                "ticker": "KXNFLGAME-26SEP13ARILAC-LAC",
+                "event_ticker": "KXNFLGAME-26SEP13ARILAC",
+                "title": "Los Angeles C",
+                "yes_sub_title": "LAC",
+                "status": "open",
+                "rules_primary": "Contract resolves from the official league result.",
+            }], "cursor": ""}
+
+    monkeypatch.setattr(nfl_live_scan, "_scoped_call", lambda function, **kwargs: function(**kwargs))
+    rows, _coverage = nfl_live_scan._scope_kalshi(Client(), scheduled)
+    market = normalize_kalshi(
+        rows[0], {}, "2026-09-10T00:00:00+00:00", event=rows[0]["_discovery_event"]
+    )
+    game = NFLGame(
+        "g", 2026, "REG", scheduled[0]["start_time"], "LAC", "ARI", None, None
+    )
+
+    assert is_supported_market(market)
+    assert map_market_to_game(
+        market, [game], now=datetime(2026, 9, 10, tzinfo=UTC)
+    ).status == "MAPPED_GAME_WINNER"
+
+
+def test_kalshi_mismatched_market_event_identity_fails_closed(monkeypatch):
+    scheduled = [{
+        "game_id": "g",
+        "date": "2026-09-13",
+        "start_time": "2026-09-13T20:25:00+00:00",
+        "away_team": "ARI",
+        "home_team": "LAC",
+        "schedule_status": "SCHEDULED",
+    }]
+    source = {
+        "ticker": "KXNFLGAME-26SEP14BUFNYJ-BUF",
+        "event_ticker": "KXNFLGAME-26SEP13ARILAC",
+    }
+
+    class Client:
+        def nfl_markets_page(self, *, limit, cursor):
+            return {"markets": [source], "cursor": ""}
+
+    monkeypatch.setattr(nfl_live_scan, "_scoped_call", lambda function, **kwargs: function(**kwargs))
+    rows, coverage = nfl_live_scan._scope_kalshi(Client(), scheduled)
+
+    assert rows == []
+    assert coverage["state"] == "PARTIAL"
+    assert coverage["failed_scopes"] == [{
+        "scope": source["ticker"],
+        "stage": "market_event_identity",
+        "error": "TickerMismatch",
+    }]
+    assert "home_team" not in source and "scheduled_start" not in source
 
 
 def test_existing_pmus_public_rate_limit_lockout_remains_intact():
@@ -282,6 +386,7 @@ def test_nfl_pmus_structured_long_side_resolves_real_game_winner_shape(monkeypat
     market = normalize_pmus({"id": market_id, "slug": slug, "question": raw["question"], "event_id": slug, "active": True, "closed": False, "accepting_orders": True, "raw": raw}, {}, "2026-09-21T00:00:00Z")
     game = NFLGame("g", 2026, "REG", "2026-09-27T17:00:00+00:00", "LA" if home == "Los Angeles Rams" else "WAS", "NYG" if away == "New York Giants" else "SEA", None, None)
     monkeypatch.setattr("parallax.nfl.probability_for_game", lambda *_: .83)
+    monkeypatch.setattr("parallax.nfl.utcnow", lambda: __import__("datetime").datetime(2026, 9, 21, tzinfo=__import__("datetime").UTC))
     mapping = map_market_to_game(market, [game], now=__import__("datetime").datetime(2026, 9, 21, tzinfo=__import__("datetime").UTC))
     assert mapping.status == "MAPPED_GAME_WINNER"
     assert mapping.selected_team == (game.home_team if selected == home else game.away_team)
@@ -296,6 +401,7 @@ def test_nfl_pmus_structured_long_side_orients_home_team_yes(monkeypatch):
     ]}
     market = NormalizedMarket(title="Who will win in the upcoming football event Seattle Seahawks vs Washington Commanders?", venue=Venue.POLYMARKET, venue_market_id="pmus-home", slug="pmus-home", description="This market will settle to the winner of the Seattle Seahawks vs Washington Commanders professional football game.", category="sports", event="pmus-home", outcomes={"YES": "YES", "NO": "NO"}, resolution_rules=raw["marketSides"][0]["description"], resolution_time=game.kickoff, status="OPEN", yes_bid=.4, yes_ask=.5, no_bid=.4, no_ask=.5, best_bid_size=1, best_ask_size=1, executable_depth={}, recent_volume=None, recent_trade_count=None, last_trade_time=None, book_timestamp=None, data_timestamp="2026-09-21T00:00:00Z", source_url=None, mechanics=Mechanics(), original_metadata={"market": raw})
     monkeypatch.setattr("parallax.nfl.probability_for_game", lambda *_: .83)
+    monkeypatch.setattr("parallax.nfl.utcnow", lambda: __import__("datetime").datetime(2026, 9, 21, tzinfo=__import__("datetime").UTC))
     assert map_market_to_game(market, [game], now=__import__("datetime").datetime(2026, 9, 21, tzinfo=__import__("datetime").UTC)).selected_team == "WAS"
     assert NFLEvidenceProvider(lambda: [game]).assess(market).fair_probability == pytest.approx(.83)
 
@@ -355,6 +461,50 @@ def test_current_kalshi_nfl_game_family_is_supported():
         original_metadata={"market": raw},
     )
     assert is_supported_market(market)
+
+
+def test_kalshi_nfl_family_supplies_winner_semantics_but_rejects_derivatives():
+    raw = {
+        "ticker": "KXNFLGAME-26SEP13ARILAC-LAC",
+        "event_ticker": "KXNFLGAME-26SEP13ARILAC",
+    }
+    market = NormalizedMarket(
+        venue=Venue.KALSHI,
+        venue_market_id=raw["ticker"],
+        slug=raw["ticker"],
+        title="Los Angeles C",
+        description="Los Angeles C",
+        category="Uncategorized",
+        event=raw["event_ticker"],
+        outcomes={"YES": "Los Angeles C", "NO": "NO"},
+        resolution_rules="Contract resolves from the official league result.",
+        resolution_time="2026-09-14T02:25:00Z",
+        status="OPEN",
+        yes_bid=.4,
+        yes_ask=.5,
+        no_bid=.4,
+        no_ask=.5,
+        best_bid_size=1,
+        best_ask_size=1,
+        executable_depth={},
+        recent_volume=None,
+        recent_trade_count=None,
+        last_trade_time=None,
+        book_timestamp=None,
+        data_timestamp="2026-09-13T21:00:00Z",
+        source_url=None,
+        mechanics=Mechanics(),
+        original_metadata={"market": raw},
+    )
+    assert is_supported_market(market)
+    assert not is_supported_market(
+        replace(
+            market,
+            title="Los Angeles C point spread",
+            description="NFL spread",
+            resolution_rules="Resolves against the point spread.",
+        )
+    )
 
 
 def test_nfl_evaluated_play_reaches_prospective_capture(monkeypatch):
@@ -475,6 +625,67 @@ def test_pmus_discovery_passes_supported_sports_category_filter():
     ]
 
 
+def test_pmus_discovery_passes_exact_schedule_slug_filter():
+    calls = []
+
+    class Markets:
+        def list(self, params):
+            calls.append(params)
+            return {"markets": []}
+
+    client = SimpleNamespace(markets=Markets())
+    PolymarketUSPublicClient(client=client).markets_page(
+        limit=2,
+        offset=0,
+        slugs=["nfl-ari-lac-2026-09-13", "aec-nfl-ari-lac-2026-09-13"],
+    )
+    assert calls[0]["slug"] == [
+        "nfl-ari-lac-2026-09-13",
+        "aec-nfl-ari-lac-2026-09-13",
+    ]
+    assert "categories" not in calls[0]
+
+
+def test_pmus_discovery_rate_limit_is_no_retry_and_locks_out():
+    calls = []
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    class Markets:
+        def list(self, params):
+            calls.append(params)
+            raise RateLimitError("rate limited")
+
+    client = PolymarketUSPublicClient(
+        client=SimpleNamespace(markets=Markets()), minimum_interval_seconds=0
+    )
+    with pytest.raises(PolymarketUSRateLimit):
+        client.markets_page(limit=1, offset=0, slugs=["nfl-ari-lac-2026-09-13"])
+    with pytest.raises(PolymarketUSRateLimit, match="locked out"):
+        client.markets_page(limit=1, offset=0, slugs=["nfl-ari-lac-2026-09-13"])
+    assert len(calls) == 1
+
+
+def test_pmus_discovery_budget_exhaustion_blocks_provider_call():
+    calls = []
+
+    class Markets:
+        def list(self, params):
+            calls.append(params)
+            return {"markets": []}
+
+    client = PolymarketUSPublicClient(
+        client=SimpleNamespace(markets=Markets()),
+        minimum_interval_seconds=0,
+        max_requests_per_minute=1,
+    )
+    client.markets_page(limit=1, offset=0, slugs=["nfl-ari-lac-2026-09-13"])
+    with pytest.raises(PolymarketUSRateLimit, match="budget exhausted"):
+        client.markets_page(limit=1, offset=0, slugs=["nfl-ari-lac-2026-09-13"])
+    assert len(calls) == 1
+
+
 def test_pmus_book_rate_limit_uses_public_client_lockout_semantics():
     class RateLimitError(Exception):
         status_code = 429
@@ -497,7 +708,17 @@ def test_pmus_book_rate_limit_uses_public_client_lockout_semantics():
     assert "<html>" not in str(caught.value)
 
 
-def _run_pmus_scan(monkeypatch, tmp_path, *, rows, book, action=Action.PASS):
+def _run_pmus_scan(
+    monkeypatch,
+    tmp_path,
+    *,
+    rows,
+    book,
+    action=Action.PASS,
+    discovery_error=None,
+    scan_games=None,
+    utcnow_values=None,
+):
     constructed = []
     now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
     game = NFLGame(
@@ -518,9 +739,23 @@ def _run_pmus_scan(monkeypatch, tmp_path, *, rows, book, action=Action.PASS):
             self.discovery_calls = []
             constructed.append(self)
 
-        def markets_page(self, *, limit, offset, categories=None):
-            self.discovery_calls.append((limit, offset, categories))
-            return rows if offset == 0 else []
+        max_requests_per_minute = 20
+
+        def markets_page(
+            self,
+            *,
+            limit,
+            offset,
+            categories=None,
+            slugs=None,
+            retry_transport_errors=True,
+        ):
+            self.discovery_calls.append(
+                (limit, offset, categories, slugs, retry_transport_errors)
+            )
+            if discovery_error is not None:
+                raise discovery_error
+            return rows
 
         def book(self, slug):
             self.book_calls.append(slug)
@@ -550,8 +785,12 @@ def _run_pmus_scan(monkeypatch, tmp_path, *, rows, book, action=Action.PASS):
         )
 
     monkeypatch.setattr(nfl_live_scan, "PolymarketUSPublicClient", FakePMUS)
-    monkeypatch.setattr(nfl_live_scan, "fetch_games", lambda: [game])
-    monkeypatch.setattr(nfl_live_scan, "utcnow", lambda: now)
+    monkeypatch.setattr(nfl_live_scan, "fetch_games", lambda: scan_games or [game])
+    if utcnow_values is None:
+        monkeypatch.setattr(nfl_live_scan, "utcnow", lambda: now)
+    else:
+        clock = iter(utcnow_values)
+        monkeypatch.setattr(nfl_live_scan, "utcnow", lambda: next(clock))
     monkeypatch.setattr(nfl_live_scan, "TrackRecord", lambda _path: object())
     monkeypatch.setattr(
         nfl_live_scan,
@@ -564,7 +803,7 @@ def _run_pmus_scan(monkeypatch, tmp_path, *, rows, book, action=Action.PASS):
     monkeypatch.setattr(
         nfl_live_scan,
         "_scope_kalshi",
-        lambda _client: ([], {"state": "COMPLETE", "failed_scopes": []}),
+        lambda _client, _scheduled: ([], {"state": "COMPLETE", "failed_scopes": []}),
     )
     monkeypatch.setattr(nfl_live_scan, "normalize_pmus", lambda *_args, **_kwargs: market)
     monkeypatch.setattr(nfl_live_scan, "attach_fees", lambda value, *_args, **_kwargs: value)
@@ -607,17 +846,148 @@ def _pmus_nfl_row(market_id, slug):
     }
 
 
+def test_targeted_pmus_timeout_makes_exactly_one_provider_request(monkeypatch):
+    calls = []
+
+    class APITimeoutError(Exception):
+        pass
+
+    class Markets:
+        def list(self, params):
+            calls.append(params)
+            raise APITimeoutError("read timeout")
+
+    client = PolymarketUSPublicClient(
+        client=SimpleNamespace(markets=Markets()), minimum_interval_seconds=0
+    )
+    scheduled = [{
+        "game_id": "g",
+        "date": "2026-09-13",
+        "start_time": "2026-09-13T20:25:00+00:00",
+        "away_team": "ARI",
+        "home_team": "LAC",
+        "schedule_status": "SCHEDULED",
+    }]
+    monkeypatch.setattr(nfl_live_scan, "_scoped_call", lambda function, **kwargs: function(**kwargs))
+
+    with pytest.raises(PolymarketUSDiscoveryFailure) as caught:
+        nfl_live_scan._scope_pmus(client, scheduled)
+
+    assert caught.value.attempts == 1
+    assert len(calls) == 1
+
+
+def test_pmus_unexpected_returned_slug_is_partial_and_not_discovered(monkeypatch):
+    class Client:
+        max_requests_per_minute = 20
+
+        def markets_page(self, **_kwargs):
+            return [_pmus_nfl_row("wrong", "nfl-buf-nyj-2026-09-14")]
+
+    scheduled = [{
+        "game_id": "g",
+        "date": "2026-09-13",
+        "start_time": "2026-09-13T20:25:00+00:00",
+        "away_team": "ARI",
+        "home_team": "LAC",
+        "schedule_status": "SCHEDULED",
+    }]
+    monkeypatch.setattr(nfl_live_scan, "_scoped_call", lambda function, **kwargs: function(**kwargs))
+
+    rows, coverage = nfl_live_scan._scope_pmus(Client(), scheduled)
+
+    assert rows == []
+    assert coverage["state"] == "PARTIAL"
+    assert coverage["unexpected_markets"] == 1
+
+
+def test_pmus_oversized_slug_set_is_partial_without_request():
+    class Client:
+        max_requests_per_minute = 20
+
+        def markets_page(self, **_kwargs):
+            raise AssertionError("oversized slate must not call provider")
+
+    scheduled = [
+        {
+            "game_id": f"g-{index}",
+            "date": "2026-09-13",
+            "start_time": "2026-09-13T20:25:00+00:00",
+            "away_team": f"A{index}",
+            "home_team": f"H{index}",
+            "schedule_status": "SCHEDULED",
+        }
+        for index in range(51)
+    ]
+
+    rows, coverage = nfl_live_scan._scope_pmus(Client(), scheduled)
+
+    assert rows == []
+    assert coverage["state"] == "PARTIAL"
+    assert coverage["request_count"] == 0
+
+
+def test_pmus_malformed_slate_raises_before_provider_request():
+    calls = []
+
+    class Client:
+        max_requests_per_minute = 20
+
+        def markets_page(self, **_kwargs):
+            calls.append(1)
+
+    with pytest.raises(KeyError):
+        nfl_live_scan._scope_pmus(Client(), [{"date": "2026-09-13"}])
+    assert calls == []
+
+
+def test_pmus_empty_slate_is_complete_without_request():
+    class Client:
+        max_requests_per_minute = 20
+
+        def markets_page(self, **_kwargs):
+            raise AssertionError("empty slate must not call provider")
+
+    rows, coverage = nfl_live_scan._scope_pmus(Client(), [])
+
+    assert rows == []
+    assert coverage["state"] == "COMPLETE"
+    assert coverage["request_count"] == 0
+
+
+def test_pmus_la_team_code_constructs_plain_and_aec_lar_slugs():
+    scheduled = [{
+        "game_id": "g",
+        "date": "2026-09-21",
+        "start_time": "2026-09-22T00:15:00+00:00",
+        "away_team": "NYG",
+        "home_team": "LA",
+        "schedule_status": "SCHEDULED",
+    }]
+
+    assert nfl_live_scan._pmus_slugs(scheduled) == [
+        "nfl-nyg-lar-2026-09-21",
+        "aec-nfl-nyg-lar-2026-09-21",
+    ]
+
+
 def test_nfl_scan_reuses_one_pmus_client_for_discovery_and_multiple_books(monkeypatch, tmp_path):
     rows = [
         _pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27"),
-        _pmus_nfl_row("825205-alt", "nfl-cin-pit-2026-09-27-alt"),
+        _pmus_nfl_row("825205-aec", "aec-nfl-cin-pit-2026-09-27"),
     ]
     result, clients = _run_pmus_scan(
         monkeypatch, tmp_path, rows=rows, book=lambda slug: {"slug": slug}
     )
 
     assert len(clients) == 1
-    assert clients[0].discovery_calls == [(100, 0, ["sports"])]
+    assert clients[0].discovery_calls == [(
+        2,
+        0,
+        None,
+        ["nfl-cin-pit-2026-09-27", "aec-nfl-cin-pit-2026-09-27"],
+        False,
+    )]
     assert clients[0].book_calls == [row["slug"] for row in rows]
     assert clients[0].closed == 1
     assert result["read_only"] is True and result["orders"] == 0
@@ -649,6 +1019,69 @@ def test_nfl_pmus_rate_limit_is_data_unavailable_with_bounded_diagnostic(monkeyp
     assert not any("verdict" in row for row in result["summary"]["rows"])
     assert result["read_only"] is True and result["orders"] == 0
     assert len(clients) == 1 and clients[0].closed == 1
+
+
+def test_incomplete_pmus_discovery_keeps_market_data_incomplete(monkeypatch, tmp_path):
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[],
+        book=lambda _slug: {},
+        discovery_error=PolymarketUSRateLimit(
+            "public REST safety budget exhausted during market discovery"
+        ),
+    )
+
+    assert result["venues"]["PMUS"]["coverage"]["state"] == "PARTIAL"
+    assert result["slate"]["market_data_complete"] is False
+    assert result["slate"]["status_counts"] == {"NO_MARKET": 1}
+    assert len(clients) == 1 and clients[0].closed == 1
+
+
+def test_scan_reuses_discovery_slate_across_eastern_date_boundary(monkeypatch, tmp_path):
+    discovery_at = datetime(2026, 9, 28, 3, 59, tzinfo=UTC)
+    lifecycle_at = datetime(2026, 9, 28, 4, 1, tzinfo=UTC)
+    games = [
+        NFLGame(
+            "visible-at-discovery",
+            2026,
+            "REG",
+            "2026-10-04T17:00:00+00:00",
+            "PIT",
+            "CIN",
+            None,
+            None,
+        ),
+        NFLGame(
+            "enters-after-midnight",
+            2026,
+            "REG",
+            "2026-10-05T17:00:00+00:00",
+            "LAC",
+            "ARI",
+            None,
+            None,
+        ),
+    ]
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[],
+        book=lambda _slug: {},
+        scan_games=games,
+        utcnow_values=[discovery_at, lifecycle_at],
+    )
+
+    assert result["slate"]["expected_games"] == 1
+    assert [row["game_id"] for row in result["slate"]["dates"][0]["games"]] == [
+        "visible-at-discovery"
+    ]
+    assert result["slate"]["market_data_complete"] is True
+    assert clients[0].discovery_calls[0][3] == [
+        "nfl-cin-pit-2026-10-04",
+        "aec-nfl-cin-pit-2026-10-04",
+    ]
 
 
 @pytest.mark.parametrize("action", [Action.BUY, Action.WATCH, Action.PASS])

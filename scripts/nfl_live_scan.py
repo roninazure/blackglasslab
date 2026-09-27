@@ -24,8 +24,6 @@ from parallax.alerts import (
     reconcile_active_buy_alerts,
 )
 from parallax.discovery import (
-    MAX_ACTIVE_MARKETS_PER_VENUE,
-    paginate,
     paginate_collection,
 )
 from parallax.economics import retail_example
@@ -50,13 +48,11 @@ PROSPECTIVE_DB = Path("data/parallax-commercial/prospective.sqlite")
 NFL_SLATE_HORIZON_DAYS = 7
 NFL_TZ = ZoneInfo("America/New_York")
 KALSHI_NFL_SERIES_TICKER = "KXNFLGAME"
-KALSHI_NFL_MAX_EVENT_PAGES = 2
-KALSHI_NFL_MAX_EVENTS = 10
-KALSHI_NFL_MAX_MARKET_PAGES_PER_EVENT = 1
-KALSHI_NFL_DISCOVERY_MAX_REQUESTS = (
-    KALSHI_NFL_MAX_EVENT_PAGES
-    + KALSHI_NFL_MAX_EVENTS * KALSHI_NFL_MAX_MARKET_PAGES_PER_EVENT
-)
+KALSHI_NFL_DISCOVERY_MAX_REQUESTS = 12
+PMUS_NFL_MAX_SLUGS = 100
+
+# nflverse uses LA for the Rams; both venues use LAR in contract identity.
+NFL_VENUE_TEAM_CODES = {"LA": "LAR"}
 
 
 def _upcoming_slate(games, now):
@@ -80,6 +76,80 @@ def _upcoming_slate(games, now):
             }
         )
     return scheduled
+
+
+def _venue_team_code(value: object) -> str:
+    code = str(value or "").strip().upper()
+    return NFL_VENUE_TEAM_CODES.get(code, code)
+
+
+def _pmus_slugs(scheduled: list[dict]) -> list[str]:
+    """Construct the two observed PMUS NFL slug forms from schedule identity."""
+    slugs: list[str] = []
+    for game in scheduled:
+        away = _venue_team_code(game["away_team"]).lower()
+        home = _venue_team_code(game["home_team"]).lower()
+        base = f"nfl-{away}-{home}-{game['date']}"
+        slugs.extend((base, f"aec-{base}"))
+    return list(dict.fromkeys(slugs))
+
+
+def _scope_pmus(client: PolymarketUSPublicClient, scheduled: list[dict]) -> tuple[list[dict], dict]:
+    """Fetch only schedule-derived NFL slugs in one provider-supported query."""
+    candidates = _pmus_slugs(scheduled)
+    if len(candidates) > PMUS_NFL_MAX_SLUGS:
+        return [], {
+            "state": "PARTIAL",
+            "reason": "schedule-derived PMUS slug ceiling exceeded",
+            "candidate_slugs": len(candidates),
+            "request_count": 0,
+            "request_ceiling": client.max_requests_per_minute,
+        }
+    if not candidates:
+        return [], {
+            "state": "COMPLETE",
+            "reason": "authoritative NFL slate is empty",
+            "candidate_slugs": 0,
+            "request_count": 0,
+            "request_ceiling": client.max_requests_per_minute,
+        }
+    rows = _scoped_call(
+        client.markets_page,
+        limit=len(candidates),
+        offset=0,
+        slugs=candidates,
+        retry_transport_errors=False,
+    )
+    unexpected = [row for row in rows if str(row.get("slug") or "") not in candidates]
+    nfl_rows = [
+        row
+        for row in rows
+        if str(row.get("slug") or "") in candidates
+        and row.get("active")
+        and not row.get("closed")
+        and _is_nfl(row, row.get("raw", {}))
+    ]
+    return nfl_rows, {
+        "state": "PARTIAL" if unexpected else "COMPLETE",
+        "reason": (
+            "PMUS response escaped exact slug scope"
+            if unexpected
+            else "exact schedule-derived PMUS slug set queried"
+        ),
+        "candidate_slugs": len(candidates),
+        "markets_returned": len(rows),
+        "unique_markets": len({str(row.get("id") or row.get("slug") or "") for row in rows}),
+        "unexpected_markets": len(unexpected),
+        "request_count": 1,
+        "request_ceiling": client.max_requests_per_minute,
+    }
+
+
+def _kalshi_event_ticker(game: dict) -> str:
+    date = datetime.fromisoformat(game["date"]).strftime("%y%b%d").upper()
+    away = _venue_team_code(game["away_team"])
+    home = _venue_team_code(game["home_team"])
+    return f"{KALSHI_NFL_SERIES_TICKER}-{date}{away}{home}"
 
 
 def _capture_evaluated(store, market, side, evidence, now):
@@ -168,13 +238,10 @@ def _scoped_call(function, **kwargs):
         signal.alarm(0)
 
 
-def _scope_kalshi(client: KalshiPublicClient) -> tuple[list[dict], dict]:
-    """Discover only the known NFL game series within an absolute call ceiling."""
+def _scope_kalshi(client: KalshiPublicClient, scheduled: list[dict]) -> tuple[list[dict], dict]:
+    """Fetch the NFL series directly, then retain only schedule-backed events."""
     series_row = {"ticker": KALSHI_NFL_SERIES_TICKER, "sport": "NFL"}
-    rows: list[dict] = []
-    failures: list[dict] = []
     request_count = 0
-    bounded = False
 
     def bounded_call(function, **kwargs):
         nonlocal request_count
@@ -184,16 +251,14 @@ def _scope_kalshi(client: KalshiPublicClient) -> tuple[list[dict], dict]:
         return _scoped_call(function, **kwargs)
 
     try:
-        events, event_cov = paginate_collection(
+        markets, market_cov = paginate_collection(
             lambda *, limit, cursor: bounded_call(
-                client.events_page,
-                series_ticker=KALSHI_NFL_SERIES_TICKER,
+                client.nfl_markets_page,
                 limit=limit,
                 cursor=cursor,
             ),
-            key="events",
-            max_pages=KALSHI_NFL_MAX_EVENT_PAGES,
-            max_rows=KALSHI_NFL_MAX_EVENTS,
+            key="markets",
+            max_pages=KALSHI_NFL_DISCOVERY_MAX_REQUESTS,
         )
     except Exception as exc:
         return [], {
@@ -205,62 +270,67 @@ def _scope_kalshi(client: KalshiPublicClient) -> tuple[list[dict], dict]:
             "request_count": request_count,
             "request_ceiling": KALSHI_NFL_DISCOVERY_MAX_REQUESTS,
             "failed_scopes": [
-                {"scope": KALSHI_NFL_SERIES_TICKER, "stage": "events", "error": type(exc).__name__}
+                {"scope": KALSHI_NFL_SERIES_TICKER, "stage": "markets", "error": type(exc).__name__}
             ],
         }
 
-    bounded = event_cov.state.value != "COMPLETE"
-    for event in events:
-        eid = str(event.get("ticker") or event.get("event_ticker") or event.get("id") or "")
-        if not eid:
-            failures.append({"scope": KALSHI_NFL_SERIES_TICKER, "stage": "event_id", "error": "MissingIdentifier"})
+    slate_by_event = {_kalshi_event_ticker(game): game for game in scheduled}
+    rows: list[dict] = []
+    failures: list[dict] = []
+    for market in markets:
+        event_ticker = str(market.get("event_ticker") or "").upper()
+        market_ticker = str(market.get("ticker") or "").upper()
+        if not event_ticker or not market_ticker.startswith(f"{event_ticker}-"):
+            failures.append({
+                "scope": market_ticker or KALSHI_NFL_SERIES_TICKER,
+                "stage": "market_event_identity",
+                "error": "TickerMismatch",
+            })
             continue
-        if request_count >= KALSHI_NFL_DISCOVERY_MAX_REQUESTS:
-            bounded = True
-            break
-        try:
-            markets, market_cov = paginate_collection(
-                lambda *, limit, cursor, eid=eid: bounded_call(
-                    client.event_markets_page,
-                    event_ticker=eid,
-                    limit=limit,
-                    cursor=cursor,
-                ),
-                key="markets",
-                max_pages=KALSHI_NFL_MAX_MARKET_PAGES_PER_EVENT,
-                max_rows=100,
-            )
-        except Exception as exc:
-            failures.append({"scope": eid, "stage": "markets", "error": type(exc).__name__})
+        game = slate_by_event.get(event_ticker)
+        if game is None:
             continue
-        if market_cov.state.value != "COMPLETE":
-            bounded = True
-        rows.extend(
-            {**market, "_discovery_event": event, "_discovery_series": series_row}
-            for market in markets
-        )
+        event = {
+            "ticker": event_ticker,
+            "title": f"{game['away_team']} vs {game['home_team']} NFL game",
+            "sport": "NFL",
+            "away_team": game["away_team"],
+            "home_team": game["home_team"],
+            "scheduled_start": game["start_time"],
+        }
+        rows.append({
+            **market,
+            "away_team": market.get("away_team") or game["away_team"],
+            "home_team": market.get("home_team") or game["home_team"],
+            "scheduled_start": market.get("scheduled_start") or game["start_time"],
+            "_discovery_event": event,
+            "_discovery_series": series_row,
+        })
     unique = {}
     for row in rows:
         key = str(row.get("ticker") or row.get("id") or "")
         if key:
             unique.setdefault(key, row)
-    state = "PARTIAL" if failures else ("BOUNDED" if bounded else "COMPLETE")
+    state = "PARTIAL" if failures else market_cov.state.value
     return list(unique.values()), {
         "state": state,
         "series_ticker": KALSHI_NFL_SERIES_TICKER,
-        "event_pages": event_cov.pages,
-        "events_observed": len(events),
-        "markets_returned": len(rows),
+        "market_pages": market_cov.pages,
+        "events_observed": len({row.get("event_ticker") for row in rows}),
+        "markets_returned": len(markets),
+        "slate_markets": len(rows),
         "unique_markets": len(unique),
         "request_count": request_count,
         "request_ceiling": KALSHI_NFL_DISCOVERY_MAX_REQUESTS,
         "failed_scopes": failures,
-        "event_coverage_reason": event_cov.reason,
+        "market_coverage_reason": market_cov.reason,
     }
 
 
 def _scan() -> dict:
     games = fetch_games()
+    discovery_at = utcnow()
+    scheduled_for_discovery = _upcoming_slate(games, discovery_at)
     result = {"read_only": True, "orders": 0, "alerts": 0, "published": 0, "prospective_captured": 0, "validation_ece": VALIDATION_ECE, "venues": {}}
     prospective_store = TrackRecord(PROSPECTIVE_DB)
     alert_dispatcher = AlertDispatcher(
@@ -272,17 +342,13 @@ def _scan() -> dict:
     pmus = PolymarketUSPublicClient()
     try:
         try:
-            raw_pmus, cov = paginate(
-                lambda *, limit, offset: pmus.markets_page(
-                    limit=limit, offset=offset, categories=["sports"]
-                ),
-                page_size=100,
-                max_pages=100,
-                max_rows=MAX_ACTIVE_MARKETS_PER_VENUE,
-            )
-            pmus_rows = [r for r in raw_pmus if r.get("active") and not r.get("closed") and _is_nfl(r, r.get("raw", {}))]
-            result["venues"]["PMUS"] = {"coverage": cov.__dict__, "universe_rows": len(raw_pmus), "nfl_rows": len(pmus_rows)}
-            pmus_discovery_complete = cov.state.value == "COMPLETE"
+            pmus_rows, pmus_cov = _scope_pmus(pmus, scheduled_for_discovery)
+            result["venues"]["PMUS"] = {
+                "coverage": pmus_cov,
+                "universe_rows": len(pmus_rows),
+                "nfl_rows": len(pmus_rows),
+            }
+            pmus_discovery_complete = pmus_cov.get("state") == "COMPLETE"
         except Exception as exc:
             result["venues"]["PMUS"] = {
                 "coverage": {"state": "PARTIAL", "reason": "market discovery unavailable"},
@@ -298,7 +364,7 @@ def _scan() -> dict:
             }
         kalshi = KalshiPublicClient()
         try:
-            kalshi_rows, kalshi_cov = _scope_kalshi(kalshi)
+            kalshi_rows, kalshi_cov = _scope_kalshi(kalshi, scheduled_for_discovery)
             result["venues"]["KALSHI"] = {"coverage": kalshi_cov, "nfl_rows": len(kalshi_rows)}
             kalshi_discovery_complete = kalshi_cov.get("state") == "COMPLETE"
         except Exception as exc:
@@ -393,9 +459,8 @@ def _scan() -> dict:
         sport="NFL",
         detected_at=lifecycle_at.isoformat(),
     )
-    scheduled = _upcoming_slate(games, lifecycle_at)
     result["slate"] = reconcile_slate(
-        scheduled,
+        scheduled_for_discovery,
         rows_out,
         discovery_complete=pmus_discovery_complete and kalshi_discovery_complete,
         data_unavailable_game_ids=data_unavailable_game_ids,
