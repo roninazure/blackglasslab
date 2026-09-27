@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-27T12:08:11.006892+00:00",
+  "generated_at": "2026-09-27T13:13:16.681497+00:00",
   "lane": "MLB",
   "plays": [
     {
@@ -9,13 +9,30 @@
       "edge_pp": 8.68042854,
       "game_id": "823164",
       "home_team": "San Francisco Giants",
-      "lifecycle_updated_at": "2026-09-27T12:06:57.689005+00:00",
-      "market_id": "1028012",
-      "model_probability": 0.3968042854065228,
+      "lifecycle_updated_at": "2026-09-27T13:11:19.327747+00:00",
+      "market_id": "KXMLBGAME-26SEP271505LADSF-SF",
+      "model_probability": 0.39680428540652274,
       "opponent": "Los Angeles Dodgers",
       "price": 0.31,
       "schedule_status": "SCHEDULED",
       "selected_team": "San Francisco Giants",
+      "start_time": "2026-09-27T19:05:00+00:00",
+      "venue": "KALSHI"
+    },
+    {
+      "away_team": "Tampa Bay Rays",
+      "date": "2026-09-27",
+      "economic_key": "MLB:823408:tampabayrays",
+      "edge_pp": 12.21310618,
+      "game_id": "823408",
+      "home_team": "Philadelphia Phillies",
+      "lifecycle_updated_at": "2026-09-27T13:11:18.851692+00:00",
+      "market_id": "1028049",
+      "model_probability": 0.537131061845338,
+      "opponent": "Philadelphia Phillies",
+      "price": 0.415,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Tampa Bay Rays",
       "start_time": "2026-09-27T19:05:00+00:00",
       "venue": "POLYMARKET"
     },
@@ -26,7 +43,7 @@
       "edge_pp": 8.28729437,
       "game_id": "822761",
       "home_team": "Toronto Blue Jays",
-      "lifecycle_updated_at": "2026-09-27T12:06:57.843392+00:00",
+      "lifecycle_updated_at": "2026-09-27T13:11:19.171532+00:00",
       "market_id": "1028069",
       "model_probability": 0.47287294365386745,
       "opponent": "Toronto Blue Jays",
@@ -40,26 +57,26 @@
       "away_team": "Arizona Diamondbacks",
       "date": "2026-09-27",
       "economic_key": "MLB:823246:sandiegopadres",
-      "edge_pp": 11.24181681,
+      "edge_pp": 13.24181681,
       "game_id": "823246",
       "home_team": "San Diego Padres",
-      "lifecycle_updated_at": "2026-09-27T12:06:58.000712+00:00",
-      "market_id": "KXMLBGAME-26SEP271510AZSD-SD",
+      "lifecycle_updated_at": "2026-09-27T13:11:19.004458+00:00",
+      "market_id": "1028080",
       "model_probability": 0.5624181680832493,
       "opponent": "Arizona Diamondbacks",
-      "price": 0.45,
+      "price": 0.43,
       "schedule_status": "SCHEDULED",
       "selected_team": "San Diego Padres",
       "start_time": "2026-09-27T19:10:00+00:00",
-      "venue": "KALSHI"
+      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-09-27T12:06:58.122268+00:00",
+  "source_feed_generated_at": "2026-09-27T13:11:19.447033+00:00",
   "source_schedule_state": "COMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 3
+    "buy": 4
   }
 }
