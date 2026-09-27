@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-27T06:47:42.644163+00:00",
+  "generated_at": "2026-09-27T07:52:48.436771+00:00",
   "lane": "MLB",
   "plays": [
     {
@@ -9,14 +9,31 @@
       "edge_pp": 8.68042854,
       "game_id": "823164",
       "home_team": "San Francisco Giants",
-      "lifecycle_updated_at": "2026-09-27T06:46:51.580542+00:00",
-      "market_id": "1028012",
-      "model_probability": 0.3968042854065228,
+      "lifecycle_updated_at": "2026-09-27T07:50:44.694410+00:00",
+      "market_id": "KXMLBGAME-26SEP271505LADSF-SF",
+      "model_probability": 0.39680428540652274,
       "opponent": "Los Angeles Dodgers",
       "price": 0.31,
       "schedule_status": "SCHEDULED",
       "selected_team": "San Francisco Giants",
       "start_time": "2026-09-27T19:05:00+00:00",
+      "venue": "KALSHI"
+    },
+    {
+      "away_team": "Cincinnati Reds",
+      "date": "2026-09-27",
+      "economic_key": "MLB:822761:cincinnatireds",
+      "edge_pp": 8.28729437,
+      "game_id": "822761",
+      "home_team": "Toronto Blue Jays",
+      "lifecycle_updated_at": "2026-09-27T07:50:45.032963+00:00",
+      "market_id": "1028069",
+      "model_probability": 0.47287294365386745,
+      "opponent": "Toronto Blue Jays",
+      "price": 0.39,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Cincinnati Reds",
+      "start_time": "2026-09-27T19:07:00+00:00",
       "venue": "POLYMARKET"
     },
     {
@@ -26,7 +43,7 @@
       "edge_pp": 10.24181681,
       "game_id": "823246",
       "home_team": "San Diego Padres",
-      "lifecycle_updated_at": "2026-09-27T06:46:51.738961+00:00",
+      "lifecycle_updated_at": "2026-09-27T07:50:44.868588+00:00",
       "market_id": "1028080",
       "model_probability": 0.5624181680832493,
       "opponent": "Arizona Diamondbacks",
@@ -39,10 +56,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-09-27T06:46:51.854961+00:00",
+  "source_feed_generated_at": "2026-09-27T07:50:45.153393+00:00",
   "source_schedule_state": "COMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 2
+    "buy": 3
   }
 }
