@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-27T18:08:43.590054+00:00",
+  "generated_at": "2026-09-27T18:48:47.785110+00:00",
   "lane": "MLB",
   "plays": [
     {
@@ -9,15 +9,15 @@
       "edge_pp": 8.68042854,
       "game_id": "823164",
       "home_team": "San Francisco Giants",
-      "lifecycle_updated_at": "2026-09-27T18:04:38.081841+00:00",
-      "market_id": "1028012",
-      "model_probability": 0.3968042854065228,
+      "lifecycle_updated_at": "2026-09-27T18:48:17.000219+00:00",
+      "market_id": "KXMLBGAME-26SEP271505LADSF-SF",
+      "model_probability": 0.39680428540652274,
       "opponent": "Los Angeles Dodgers",
       "price": 0.31,
       "schedule_status": "SCHEDULED",
       "selected_team": "San Francisco Giants",
       "start_time": "2026-09-27T19:05:00+00:00",
-      "venue": "POLYMARKET"
+      "venue": "KALSHI"
     },
     {
       "away_team": "Houston Astros",
@@ -40,14 +40,14 @@
       "away_team": "Arizona Diamondbacks",
       "date": "2026-09-27",
       "economic_key": "MLB:823246:sandiegopadres",
-      "edge_pp": 14.24181681,
+      "edge_pp": 15.24181681,
       "game_id": "823246",
       "home_team": "San Diego Padres",
-      "lifecycle_updated_at": "2026-09-27T18:04:38.393323+00:00",
+      "lifecycle_updated_at": "2026-09-27T18:48:17.158328+00:00",
       "market_id": "KXMLBGAME-26SEP271510AZSD-SD",
       "model_probability": 0.5624181680832493,
       "opponent": "Arizona Diamondbacks",
-      "price": 0.42,
+      "price": 0.41,
       "schedule_status": "SCHEDULED",
       "selected_team": "San Diego Padres",
       "start_time": "2026-09-27T19:10:00+00:00",
@@ -60,7 +60,7 @@
       "edge_pp": 5.15515387,
       "game_id": "823814",
       "home_team": "Miami Marlins",
-      "lifecycle_updated_at": "2026-09-27T18:04:38.556234+00:00",
+      "lifecycle_updated_at": "2026-09-27T18:48:17.316572+00:00",
       "market_id": "KXMLBGAME-26SEP271510ATLMIA-MIA",
       "model_probability": 0.5215515386713934,
       "opponent": "Miami Marlins",
