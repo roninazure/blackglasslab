@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from collections import Counter
 from dataclasses import replace
 from urllib.parse import quote, urlencode
@@ -23,6 +25,31 @@ from .normalization import normalize_kalshi, normalize_pmus
 
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 MLB_TZ = ZoneInfo("America/New_York")
+KALSHI_PUBLIC_MINIMUM_INTERVAL_SECONDS = 2.0
+KALSHI_PUBLIC_MAX_REQUESTS = 40
+
+
+class KalshiPublicSafetyStop(RuntimeError):
+    """PARALLAX public-request safety policy stopped a Kalshi call."""
+
+
+class KalshiPublicRateLimit(KalshiPublicSafetyStop):
+    """Kalshi rate limiting permanently locked this client instance."""
+
+
+def _is_kalshi_rate_limit(exc: BaseException) -> bool:
+    status = getattr(exc, "status", None)
+    code = getattr(exc, "code", None)
+    status_code = getattr(exc, "status_code", None)
+    text = str(exc).casefold()
+    return (
+        status == 429
+        or code == 429
+        or status_code == 429
+        or "rate limit" in text
+        or "rate-limit" in text
+        or "too many requests" in text
+    )
 
 
 def _is_mlb_moneyline(row: dict) -> bool:
@@ -97,6 +124,27 @@ class KalshiPublicClient:
     No credentials, account paths, order methods or environment loading.
     """
 
+    def __init__(
+        self,
+        *,
+        minimum_interval_seconds: float = KALSHI_PUBLIC_MINIMUM_INTERVAL_SECONDS,
+        max_requests: int = KALSHI_PUBLIC_MAX_REQUESTS,
+        opener=None,
+    ) -> None:
+        if minimum_interval_seconds < 0 or max_requests < 1:
+            raise ValueError("invalid Kalshi public-request safety policy")
+        self.minimum_interval_seconds = minimum_interval_seconds
+        self.max_requests = max_requests
+        self._opener = opener or urlopen
+        self._request_lock = threading.Lock()
+        self._request_count = 0
+        self._next_request_at = 0.0
+        self._locked_out = False
+
+    @property
+    def request_count(self) -> int:
+        return self._request_count
+
     def get(self, path: str, **params: str | int) -> dict:
         parts = path.split("/")
         if (
@@ -106,13 +154,45 @@ class KalshiPublicClient:
             or (len(parts) == 4 and (parts[1] != "markets" or parts[3] != "orderbook"))
         ):
             raise ValueError("Only public market paths are supported")
-        request = Request(
-            f"{KALSHI_BASE}{path}?{urlencode(params)}",
-            headers={"User-Agent": "PARALLAX-read-only/1"},
-            method="GET",
-        )
-        with urlopen(request, timeout=8) as response:
-            return json.load(response)
+        with self._request_lock:
+            if self._locked_out:
+                raise KalshiPublicRateLimit(
+                    "Kalshi public REST locked out for this client"
+                )
+            if self._request_count >= self.max_requests:
+                raise KalshiPublicSafetyStop(
+                    "PARALLAX Kalshi public-request safety budget exhausted"
+                )
+
+            delay = self._next_request_at - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            self._next_request_at = (
+                time.monotonic() + self.minimum_interval_seconds
+            )
+            self._request_count += 1
+            request = Request(
+                f"{KALSHI_BASE}{path}?{urlencode(params)}",
+                headers={"User-Agent": "PARALLAX-read-only/1"},
+                method="GET",
+            )
+            try:
+                with self._opener(request, timeout=8) as response:
+                    if getattr(response, "status", None) == 429:
+                        raise KalshiPublicRateLimit(
+                            "Kalshi public REST returned HTTP 429"
+                        )
+                    return json.load(response)
+            except Exception as exc:
+                if isinstance(exc, KalshiPublicRateLimit) or _is_kalshi_rate_limit(exc):
+                    self._locked_out = True
+                    if isinstance(exc, KalshiPublicRateLimit):
+                        raise
+                    raise KalshiPublicRateLimit(
+                        "Kalshi public REST rate limited; further requests disabled "
+                        "for this client"
+                    ) from exc
+                raise
 
     def markets_page(self, *, limit: int, cursor: str = "") -> dict:
         return self.get(

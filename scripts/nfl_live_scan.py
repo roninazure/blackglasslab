@@ -49,6 +49,14 @@ from parallax.track_record import TrackRecord
 PROSPECTIVE_DB = Path("data/parallax-commercial/prospective.sqlite")
 NFL_SLATE_HORIZON_DAYS = 7
 NFL_TZ = ZoneInfo("America/New_York")
+KALSHI_NFL_SERIES_TICKER = "KXNFLGAME"
+KALSHI_NFL_MAX_EVENT_PAGES = 2
+KALSHI_NFL_MAX_EVENTS = 10
+KALSHI_NFL_MAX_MARKET_PAGES_PER_EVENT = 1
+KALSHI_NFL_DISCOVERY_MAX_REQUESTS = (
+    KALSHI_NFL_MAX_EVENT_PAGES
+    + KALSHI_NFL_MAX_EVENTS * KALSHI_NFL_MAX_MARKET_PAGES_PER_EVENT
+)
 
 
 def _upcoming_slate(games, now):
@@ -161,49 +169,94 @@ def _scoped_call(function, **kwargs):
 
 
 def _scope_kalshi(client: KalshiPublicClient) -> tuple[list[dict], dict]:
-    series, series_coverage = paginate_collection(lambda **kwargs: _scoped_call(client.series_page, **kwargs), key="series", max_pages=100)
-    nfl_series = [s for s in series if _is_nfl(s)]
+    """Discover only the known NFL game series within an absolute call ceiling."""
+    series_row = {"ticker": KALSHI_NFL_SERIES_TICKER, "sport": "NFL"}
     rows: list[dict] = []
     failures: list[dict] = []
-    events_seen = 0
-    for series_row in nfl_series:
-        sid = str(series_row.get("ticker") or series_row.get("id") or "")
+    request_count = 0
+    bounded = False
+
+    def bounded_call(function, **kwargs):
+        nonlocal request_count
+        if request_count >= KALSHI_NFL_DISCOVERY_MAX_REQUESTS:
+            raise RuntimeError("Kalshi NFL discovery request ceiling reached")
+        request_count += 1
+        return _scoped_call(function, **kwargs)
+
+    try:
+        events, event_cov = paginate_collection(
+            lambda *, limit, cursor: bounded_call(
+                client.events_page,
+                series_ticker=KALSHI_NFL_SERIES_TICKER,
+                limit=limit,
+                cursor=cursor,
+            ),
+            key="events",
+            max_pages=KALSHI_NFL_MAX_EVENT_PAGES,
+            max_rows=KALSHI_NFL_MAX_EVENTS,
+        )
+    except Exception as exc:
+        return [], {
+            "state": "PARTIAL",
+            "series_ticker": KALSHI_NFL_SERIES_TICKER,
+            "events_observed": 0,
+            "markets_returned": 0,
+            "unique_markets": 0,
+            "request_count": request_count,
+            "request_ceiling": KALSHI_NFL_DISCOVERY_MAX_REQUESTS,
+            "failed_scopes": [
+                {"scope": KALSHI_NFL_SERIES_TICKER, "stage": "events", "error": type(exc).__name__}
+            ],
+        }
+
+    bounded = event_cov.state.value != "COMPLETE"
+    for event in events:
+        eid = str(event.get("ticker") or event.get("event_ticker") or event.get("id") or "")
+        if not eid:
+            failures.append({"scope": KALSHI_NFL_SERIES_TICKER, "stage": "event_id", "error": "MissingIdentifier"})
+            continue
+        if request_count >= KALSHI_NFL_DISCOVERY_MAX_REQUESTS:
+            bounded = True
+            break
         try:
-            events, event_cov = paginate_collection(
-                lambda *, limit, cursor, sid=sid: _scoped_call(client.events_page, series_ticker=sid, limit=limit, cursor=cursor),
-                key="events", max_pages=100, max_rows=MAX_ACTIVE_MARKETS_PER_VENUE,
+            markets, market_cov = paginate_collection(
+                lambda *, limit, cursor, eid=eid: bounded_call(
+                    client.event_markets_page,
+                    event_ticker=eid,
+                    limit=limit,
+                    cursor=cursor,
+                ),
+                key="markets",
+                max_pages=KALSHI_NFL_MAX_MARKET_PAGES_PER_EVENT,
+                max_rows=100,
             )
         except Exception as exc:
-            failures.append({"scope": sid, "stage": "events", "error": type(exc).__name__})
+            failures.append({"scope": eid, "stage": "markets", "error": type(exc).__name__})
             continue
-        if event_cov.state.value != "COMPLETE":
-            failures.append({"scope": sid, "stage": "events", "state": event_cov.state.value, "reason": event_cov.reason})
-        for event in events:
-            events_seen += 1
-            eid = str(event.get("ticker") or event.get("event_ticker") or event.get("id") or "")
-            try:
-                markets, market_cov = paginate_collection(
-                    lambda *, limit, cursor, eid=eid: _scoped_call(client.event_markets_page, event_ticker=eid, limit=limit, cursor=cursor),
-                    key="markets", max_pages=100, max_rows=max(1, MAX_ACTIVE_MARKETS_PER_VENUE - len(rows)),
-                )
-            except Exception as exc:
-                failures.append({"scope": eid, "stage": "markets", "error": type(exc).__name__})
-                continue
-            if market_cov.state.value != "COMPLETE":
-                failures.append({"scope": eid, "stage": "markets", "state": market_cov.state.value, "reason": market_cov.reason})
-            rows.extend({**market, "_discovery_event": event, "_discovery_series": series_row} for market in markets)
-            if len(rows) >= MAX_ACTIVE_MARKETS_PER_VENUE:
-                break
-        if len(rows) >= MAX_ACTIVE_MARKETS_PER_VENUE:
-            break
+        if market_cov.state.value != "COMPLETE":
+            bounded = True
+        rows.extend(
+            {**market, "_discovery_event": event, "_discovery_series": series_row}
+            for market in markets
+        )
     unique = {}
     for row in rows:
         key = str(row.get("ticker") or row.get("id") or "")
         if key:
             unique.setdefault(key, row)
-    ceiling = len(unique) >= MAX_ACTIVE_MARKETS_PER_VENUE
-    state = "BOUNDED" if ceiling else ("PARTIAL" if failures or series_coverage.state.value != "COMPLETE" else "COMPLETE")
-    return list(unique.values()), {"state": state, "series_pages": series_coverage.pages, "series_observed": len(series), "nfl_series": len(nfl_series), "events_observed": events_seen, "markets_returned": len(rows), "unique_markets": len(unique), "failed_scopes": failures, "series_coverage_reason": series_coverage.reason}
+    state = "PARTIAL" if failures else ("BOUNDED" if bounded else "COMPLETE")
+    return list(unique.values()), {
+        "state": state,
+        "series_ticker": KALSHI_NFL_SERIES_TICKER,
+        "event_pages": event_cov.pages,
+        "events_observed": len(events),
+        "markets_returned": len(rows),
+        "unique_markets": len(unique),
+        "request_count": request_count,
+        "request_ceiling": KALSHI_NFL_DISCOVERY_MAX_REQUESTS,
+        "failed_scopes": failures,
+        "event_coverage_reason": event_cov.reason,
+    }
 
 
 def _scan() -> dict:
@@ -289,7 +342,7 @@ def _scan() -> dict:
                         else:
                             # Kalshi discovery rows are normalized with their public book
                             # below when the venue exposes one; failures stay explicit.
-                            book = KalshiPublicClient().book(raw["ticker"])
+                            book = kalshi.book(raw["ticker"])
                             market = attach_fees(normalize_kalshi(raw, book, utcnow().isoformat(), event=event), utcnow(), event=event, series=raw.get("_discovery_series"))
                         evidence = NFLEvidenceProvider(lambda: games).assess(market)
                         if evidence is None:

@@ -51,7 +51,7 @@ def test_strongest_evaluated_action_wins_at_game_level():
     ]
 
 
-def test_partial_discovery_never_mislabels_unseen_game_as_no_market():
+def test_partial_venue_does_not_globally_contaminate_unseen_game():
     report = reconcile_slate(
         games(2),
         [{"game_id": "g-0", "verdict": "PASS"}],
@@ -59,7 +59,28 @@ def test_partial_discovery_never_mislabels_unseen_game_as_no_market():
     )
 
     assert report["dates"][0]["games"][0]["status"] == "PASS"
-    assert report["dates"][0]["games"][1]["status"] == "DATA_UNAVAILABLE"
+    assert report["dates"][0]["games"][1]["status"] == "NO_MARKET"
+    assert report["market_data_complete"] is False
+
+
+def test_evaluated_action_wins_over_explicit_game_failure():
+    report = reconcile_slate(
+        games(3),
+        [
+            {"game_id": "g-0", "verdict": "PASS"},
+            {"game_id": "g-1", "verdict": "WATCH"},
+            {"game_id": "g-2", "verdict": "BUY"},
+        ],
+        discovery_complete=False,
+        data_unavailable_game_ids={"g-0", "g-1", "g-2"},
+        mapping_failure_game_ids={"g-0", "g-1", "g-2"},
+    )
+
+    assert [row["status"] for row in report["dates"][0]["games"]] == [
+        "PASS",
+        "WATCH",
+        "BUY",
+    ]
     assert report["market_data_complete"] is False
 
 

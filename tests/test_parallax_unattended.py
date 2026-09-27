@@ -240,3 +240,38 @@ def test_exporter_exception_preserves_successful_scan_and_later_lanes(
     assert health["last_successful_mlb_scan"] is not None
     assert health["state"] == "RUNNING"
     assert health["recent_errors"] == []
+
+
+def test_incomplete_market_data_does_not_advance_sports_success(tmp_path, monkeypatch):
+    old_success = "2026-09-23T00:00:00+00:00"
+    exports = []
+
+    def runner(command, **_kwargs):
+        if command[1].endswith("nfl_live_scan.py"):
+            output = '{"slate": {"market_data_complete": false}}'
+        elif command[1] == "-m":
+            output = '{"slate": {"market_data_complete": true}}'
+        else:
+            output = "{}"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(
+        "parallax_unattended.export_completed_scan",
+        lambda lane, *_args: exports.append(lane),
+    )
+    scheduler = UnattendedScheduler(
+        root=tmp_path / "release",
+        state_dir=tmp_path / "state",
+        runner=runner,
+        monotonic=lambda: 0.0,
+        clock=lambda: "2026-09-24T00:00:00+00:00",
+    )
+    scheduler.last_success["nfl"] = old_success
+
+    health = scheduler.run_cycle()
+
+    assert health["last_successful_nfl_scan"] == old_success
+    assert health["last_successful_mlb_scan"] == "2026-09-24T00:00:00+00:00"
+    assert health["state"] == "DEGRADED"
+    assert exports == ["mlb"]
+    assert any("market_data_complete is false" in error for error in health["recent_errors"])

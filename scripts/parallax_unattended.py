@@ -105,6 +105,18 @@ def release_sha(root: Path) -> str:
         return candidate if len(candidate) == 40 else "unknown"
 
 
+def _reported_market_data_incomplete(stdout: str) -> bool:
+    """Recognize an explicit incomplete sports slate in successful JSON output."""
+    try:
+        payload = json.loads(stdout)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if isinstance(payload, dict) and payload.get("market_data_complete") is False:
+        return True
+    slate = payload.get("slate") if isinstance(payload, dict) else None
+    return isinstance(slate, dict) and slate.get("market_data_complete") is False
+
+
 class UnattendedScheduler:
     def __init__(
         self,
@@ -201,6 +213,10 @@ class UnattendedScheduler:
                 if completed.returncode != 0:
                     detail = (completed.stderr or completed.stdout or "no output").strip().replace("\n", " ")
                     raise RuntimeError(f"exit {completed.returncode}: {detail[:400]}")
+                if lane in {"nfl", "mlb"} and _reported_market_data_incomplete(
+                    completed.stdout
+                ):
+                    raise RuntimeError("market_data_complete is false")
                 self.last_success[lane] = self.clock()
                 successful += 1
                 if completed.stdout:

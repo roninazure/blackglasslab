@@ -11,6 +11,7 @@ from maker_spread_economics.live_engine import SafetyStop
 from maker_spread_economics.polymarket_us import (
     PolymarketUSDiscoveryFailure,
     PolymarketUSPublicClient,
+    PolymarketUSRateLimit,
 )
 from parallax.models import Action, Mechanics, NormalizedMarket, Side, Venue
 from parallax.nfl import (
@@ -24,6 +25,11 @@ from parallax.nfl import (
     validate,
 )
 from parallax.normalization import normalize_pmus
+from parallax.sources import (
+    KalshiPublicClient,
+    KalshiPublicRateLimit,
+    KalshiPublicSafetyStop,
+)
 
 nfl_live_scan_spec = importlib.util.spec_from_file_location(
     "nfl_live_scan", Path(__file__).parents[1] / "scripts" / "nfl_live_scan.py"
@@ -31,6 +37,134 @@ nfl_live_scan_spec = importlib.util.spec_from_file_location(
 nfl_live_scan = importlib.util.module_from_spec(nfl_live_scan_spec)
 assert nfl_live_scan_spec.loader is not None
 nfl_live_scan_spec.loader.exec_module(nfl_live_scan)
+
+
+class _JSONResponse:
+    def __init__(self, payload, *, status=200):
+        self.payload = json.dumps(payload).encode()
+        self.status = status
+
+    def __enter__(self):
+        from io import BytesIO
+
+        self._stream = BytesIO(self.payload)
+        self.read = self._stream.read
+        return self
+
+    def __exit__(self, *_args):
+        self._stream.close()
+
+
+def test_kalshi_public_request_budget_blocks_underlying_call():
+    calls = []
+
+    def opener(request, **_kwargs):
+        calls.append(request.full_url)
+        return _JSONResponse({"markets": []})
+
+    client = KalshiPublicClient(
+        opener=opener, minimum_interval_seconds=0, max_requests=1
+    )
+    assert client.markets_page(limit=1) == {"markets": []}
+    with pytest.raises(KalshiPublicSafetyStop, match="budget exhausted"):
+        client.book("KXNFLGAME-BLOCKED")
+    assert len(calls) == 1
+
+
+def test_kalshi_public_requests_are_spaced_per_client(monkeypatch):
+    calls = []
+    sleeps = []
+    now = [0.0]
+
+    def opener(request, **_kwargs):
+        calls.append(request.full_url)
+        return _JSONResponse({"markets": []})
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr("parallax.sources.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("parallax.sources.time.sleep", sleep)
+    client = KalshiPublicClient(
+        opener=opener, minimum_interval_seconds=2, max_requests=2
+    )
+    client.markets_page(limit=1)
+    client.markets_page(limit=1)
+
+    assert len(calls) == 2
+    assert sleeps == [2.0]
+
+
+def test_kalshi_rate_limit_locks_client_without_second_provider_call():
+    calls = []
+
+    def opener(request, **_kwargs):
+        calls.append(request.full_url)
+        return _JSONResponse({}, status=429)
+
+    client = KalshiPublicClient(
+        opener=opener, minimum_interval_seconds=0, max_requests=5
+    )
+    with pytest.raises(KalshiPublicRateLimit):
+        client.markets_page(limit=1)
+    with pytest.raises(KalshiPublicRateLimit, match="locked out"):
+        client.markets_page(limit=1)
+    assert len(calls) == 1
+
+
+def test_kalshi_nfl_discovery_cannot_exceed_hard_request_ceiling(monkeypatch):
+    calls = []
+
+    class Client:
+        def events_page(self, *, series_ticker, limit, cursor):
+            calls.append(("events", series_ticker, cursor))
+            events = [
+                {"ticker": f"KXNFLGAME-EVENT-{index}"}
+                for index in range(nfl_live_scan.KALSHI_NFL_MAX_EVENTS + 20)
+            ]
+            return {"events": events, "cursor": "more"}
+
+        def event_markets_page(self, *, event_ticker, limit, cursor):
+            calls.append(("markets", event_ticker, cursor))
+            return {
+                "markets": [{"ticker": f"{event_ticker}-TEAM"}],
+                "cursor": "",
+            }
+
+    monkeypatch.setattr(
+        nfl_live_scan, "_scoped_call", lambda function, **kwargs: function(**kwargs)
+    )
+    _rows, coverage = nfl_live_scan._scope_kalshi(Client())
+
+    assert len(calls) <= nfl_live_scan.KALSHI_NFL_DISCOVERY_MAX_REQUESTS
+    assert coverage["request_count"] == len(calls)
+    assert coverage["request_ceiling"] == nfl_live_scan.KALSHI_NFL_DISCOVERY_MAX_REQUESTS
+    assert coverage["state"] != "COMPLETE"
+    assert {call[1] for call in calls if call[0] == "events"} == {"KXNFLGAME"}
+
+
+def test_existing_pmus_public_rate_limit_lockout_remains_intact():
+    calls = []
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    class Markets:
+        def book(self, slug):
+            calls.append(slug)
+            raise RateLimitError("rate limited")
+
+    client = PolymarketUSPublicClient(
+        client=SimpleNamespace(markets=Markets()),
+        minimum_interval_seconds=0,
+        max_requests_per_minute=5,
+    )
+    with pytest.raises(PolymarketUSRateLimit):
+        client.book("nfl-one")
+    with pytest.raises(PolymarketUSRateLimit, match="locked out"):
+        client.book("nfl-two")
+    assert calls == ["nfl-one"]
 
 
 def test_parse_nfl_schedule_results_filters_non_games_and_uses_scores_after_parse():
@@ -285,7 +419,9 @@ def test_pmus_discovery_retries_timeout_then_succeeds(monkeypatch):
     sleeps = []
     monkeypatch.setattr("maker_spread_economics.polymarket_us.time.sleep", sleeps.append)
     client = Client()
-    assert PolymarketUSPublicClient(client=client).markets_page(limit=100, offset=0) == []
+    assert PolymarketUSPublicClient(
+        client=client, minimum_interval_seconds=0
+    ).markets_page(limit=100, offset=0) == []
     assert client.markets.calls == 3 and sleeps == [0.1, 0.2]
 
 
@@ -339,7 +475,7 @@ def test_pmus_discovery_passes_supported_sports_category_filter():
     ]
 
 
-def test_pmus_book_rate_limit_preserves_generic_safetystop_semantics():
+def test_pmus_book_rate_limit_uses_public_client_lockout_semantics():
     class RateLimitError(Exception):
         status_code = 429
         body = "<html>Cloudflare Error 1015 " + ("x" * 5000) + "</html>"
@@ -353,10 +489,10 @@ def test_pmus_book_rate_limit_preserves_generic_safetystop_semantics():
             "nfl-cin-pit-2026-09-27"
         )
 
-    assert type(caught.value) is SafetyStop
+    assert type(caught.value) is PolymarketUSRateLimit
     assert str(caught.value) == (
-        "Polymarket US book retrieval failed for nfl-cin-pit-2026-09-27: "
-        "You are being rate limited"
+        "public REST rate limited during book retrieval; "
+        "further requests disabled for this client"
     )
     assert "<html>" not in str(caught.value)
 

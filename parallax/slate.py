@@ -87,7 +87,7 @@ def reconcile_slate(
             status = max(actions, key=ACTION_PRIORITY.__getitem__)
         elif game["game_id"] in mapping_failures:
             status = "MAPPING_FAILURE"
-        elif game["game_id"] in unavailable or not discovery_complete:
+        elif game["game_id"] in unavailable:
             status = "DATA_UNAVAILABLE"
         else:
             status = "NO_MARKET"
@@ -107,7 +107,7 @@ def reconcile_slate(
                 "expected_games": len(rows),
                 "accounted_games": len(rows),
                 "all_games_accounted": len({row["game_id"] for row in rows}) == len(rows),
-                "market_data_complete": not bool(
+                "market_data_complete": discovery_complete and not bool(
                     counts["DATA_UNAVAILABLE"] or counts["MAPPING_FAILURE"]
                 ),
                 "status_counts": dict(counts),
@@ -120,7 +120,7 @@ def reconcile_slate(
         "expected_games": len(expected),
         "accounted_games": len(games_out),
         "all_games_accounted": len({row["game_id"] for row in games_out}) == len(expected),
-        "market_data_complete": not bool(
+        "market_data_complete": discovery_complete and not bool(
             counts["DATA_UNAVAILABLE"] or counts["MAPPING_FAILURE"]
         ),
         "status_counts": dict(counts),

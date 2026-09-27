@@ -786,7 +786,14 @@ def normalize_positions(payload: Any) -> list[dict[str, Any]]:
 
 
 class PolymarketUSPublicClient:
-    def __init__(self, *, client: Any | None = None, timeout_seconds: float = 8.0) -> None:
+    def __init__(
+        self,
+        *,
+        client: Any | None = None,
+        timeout_seconds: float = 8.0,
+        minimum_interval_seconds: float = 2.0,
+        max_requests_per_minute: int = 20,
+    ) -> None:
         if client is None:
             try:
                 from polymarket_us import PolymarketUS
@@ -795,6 +802,42 @@ class PolymarketUSPublicClient:
             client = PolymarketUS(timeout=timeout_seconds)
         self.client = client
         self.meter = RequestMeter()
+        self.minimum_interval_seconds = minimum_interval_seconds
+        self.max_requests_per_minute = max_requests_per_minute
+        self._request_lock = threading.Lock()
+        self._next_request_at = 0.0
+        self._locked_out = False
+
+    def _public_call(self, operation: str, request: Any) -> Any:
+        with self._request_lock:
+            if self._locked_out:
+                raise PolymarketUSRateLimit(
+                    f"public REST locked out during {operation}"
+                )
+
+            if self.meter.per_minute() >= self.max_requests_per_minute:
+                raise PolymarketUSRateLimit(
+                    f"public REST safety budget exhausted during {operation}"
+                )
+
+            now = time.monotonic()
+            delay = self._next_request_at - now
+            if delay > 0:
+                time.sleep(delay)
+
+            self._next_request_at = time.monotonic() + self.minimum_interval_seconds
+            self.meter.record()
+
+            try:
+                return request()
+            except Exception as exc:
+                if _is_rate_limit(exc):
+                    self._locked_out = True
+                    raise PolymarketUSRateLimit(
+                        f"public REST rate limited during {operation}; "
+                        "further requests disabled for this client"
+                    ) from exc
+                raise
 
     def close(self) -> None:
         close = getattr(self.client, "close", None)
@@ -810,7 +853,6 @@ class PolymarketUSPublicClient:
         last_error: Exception | None = None
         for attempt in range(1, PMUS_DISCOVERY_MAX_ATTEMPTS + 1):
             try:
-                self.meter.record()
                 params = {
                     "active": True,
                     "closed": False,
@@ -821,7 +863,10 @@ class PolymarketUSPublicClient:
                 }
                 if categories:
                     params["categories"] = categories
-                payload = self.client.markets.list(params)
+                payload = self._public_call(
+                    "market discovery",
+                    lambda: self.client.markets.list(params),
+                )
                 return normalize_market_page(payload)
             except Exception as exc:
                 last_error = exc
@@ -842,8 +887,10 @@ class PolymarketUSPublicClient:
     def market_by_id(self, market_id: str) -> dict[str, Any]:
         """Fetch one exact public market without scanning the ranked universe."""
         try:
-            self.meter.record()
-            payload = self.client.markets.retrieve(int(market_id))
+            payload = self._public_call(
+                "exact market retrieval",
+                lambda: self.client.markets.retrieve(int(market_id)),
+            )
             rows = normalize_market_page({"markets": [payload.get("market", payload)]})
             if len(rows) != 1 or rows[0]["id"] != str(market_id):
                 raise ReconciliationError("Polymarket US market ID mismatch")
@@ -857,8 +904,11 @@ class PolymarketUSPublicClient:
 
     def book(self, slug: str) -> dict[str, Any]:
         try:
-            self.meter.record()
-            return normalize_book(self.client.markets.book(slug), expected_slug=slug)
+            payload = self._public_call(
+                "book retrieval",
+                lambda: self.client.markets.book(slug),
+            )
+            return normalize_book(payload, expected_slug=slug)
         except Exception as exc:
             if isinstance(exc, (SafetyStop, ReconciliationError)):
                 raise
@@ -876,8 +926,12 @@ class PolymarketUSPublicClient:
         if not callable(method):
             return []
         try:
-            self.meter.record()
-            payload = method(slug)
+            payload = self._public_call(
+                "public trade retrieval",
+                lambda: method(slug),
+            )
+        except PolymarketUSRateLimit:
+            raise
         except Exception:
             return []
         rows = payload.get("trades", []) if isinstance(payload, dict) else payload
