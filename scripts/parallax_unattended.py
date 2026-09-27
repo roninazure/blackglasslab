@@ -216,6 +216,7 @@ class UnattendedScheduler:
                 if lane in {"nfl", "mlb"} and _reported_market_data_incomplete(
                     completed.stdout
                 ):
+                    print(f"[{lane}] {completed.stdout.strip()}", flush=True)
                     raise RuntimeError("market_data_complete is false")
                 self.last_success[lane] = self.clock()
                 successful += 1
