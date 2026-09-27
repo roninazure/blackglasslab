@@ -1,14 +1,29 @@
 import importlib.util
 import json
-from pathlib import Path
 from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
-from parallax.nfl import NFLGame, NFLEvidenceProvider, VALIDATION_ECE, is_supported_market, map_market_to_game, nfl_calibration_safe, parse_games, validate
-from parallax.models import NormalizedMarket, Venue, Mechanics, Side
-from parallax.normalization import normalize_pmus
 from maker_spread_economics.live_engine import SafetyStop
-from maker_spread_economics.polymarket_us import PolymarketUSDiscoveryFailure, PolymarketUSPublicClient
+from maker_spread_economics.polymarket_us import (
+    PolymarketUSDiscoveryFailure,
+    PolymarketUSPublicClient,
+)
+from parallax.models import Action, Mechanics, NormalizedMarket, Side, Venue
+from parallax.nfl import (
+    VALIDATION_ECE,
+    NFLEvidenceProvider,
+    NFLGame,
+    is_supported_market,
+    map_market_to_game,
+    nfl_calibration_safe,
+    parse_games,
+    validate,
+)
+from parallax.normalization import normalize_pmus
 
 nfl_live_scan_spec = importlib.util.spec_from_file_location(
     "nfl_live_scan", Path(__file__).parents[1] / "scripts" / "nfl_live_scan.py"
@@ -299,11 +314,225 @@ def test_pmus_discovery_non_retryable_safetystop_is_not_retried(monkeypatch):
     assert sleeps == []
 
 
+def test_pmus_discovery_passes_supported_sports_category_filter():
+    calls = []
+
+    class Markets:
+        def list(self, params):
+            calls.append(params)
+            return {"markets": []}
+
+    client = SimpleNamespace(markets=Markets())
+    assert PolymarketUSPublicClient(client=client).markets_page(
+        limit=100, offset=0, categories=["sports"]
+    ) == []
+    assert calls == [
+        {
+            "active": True,
+            "closed": False,
+            "limit": 100,
+            "offset": 0,
+            "orderBy": ["volume"],
+            "orderDirection": "desc",
+            "categories": ["sports"],
+        }
+    ]
+
+
+def test_pmus_book_rate_limit_preserves_generic_safetystop_semantics():
+    class RateLimitError(Exception):
+        status_code = 429
+        body = "<html>Cloudflare Error 1015 " + ("x" * 5000) + "</html>"
+
+    class Markets:
+        def book(self, _slug):
+            raise RateLimitError("You are being rate limited")
+
+    with pytest.raises(SafetyStop) as caught:
+        PolymarketUSPublicClient(client=SimpleNamespace(markets=Markets())).book(
+            "nfl-cin-pit-2026-09-27"
+        )
+
+    assert type(caught.value) is SafetyStop
+    assert str(caught.value) == (
+        "Polymarket US book retrieval failed for nfl-cin-pit-2026-09-27: "
+        "You are being rate limited"
+    )
+    assert "<html>" not in str(caught.value)
+
+
+def _run_pmus_scan(monkeypatch, tmp_path, *, rows, book, action=Action.PASS):
+    constructed = []
+    now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
+    game = NFLGame(
+        "2026_04_CIN_PIT",
+        2026,
+        "REG",
+        "2026-09-28T00:20:00+00:00",
+        "PIT",
+        "CIN",
+        None,
+        None,
+    )
+
+    class FakePMUS:
+        def __init__(self, *args, **kwargs):
+            self.closed = 0
+            self.book_calls = []
+            self.discovery_calls = []
+            constructed.append(self)
+
+        def markets_page(self, *, limit, offset, categories=None):
+            self.discovery_calls.append((limit, offset, categories))
+            return rows if offset == 0 else []
+
+        def book(self, slug):
+            self.book_calls.append(slug)
+            return book(slug)
+
+        def close(self):
+            self.closed += 1
+
+    market = SimpleNamespace(venue_market_id="825205", title="CIN at PIT")
+    retail_examples = [SimpleNamespace(available=False, total_cost=None)] * 4
+
+    def captured(_store, _market, side, _evidence, _now):
+        return SimpleNamespace(
+            id=f"play-{side.value}",
+            venue="PMUS",
+            market_id="825205",
+            side=side,
+            model_probability=0.5,
+            executable_price=0.5,
+            edge_points=0.0,
+            fees_estimate=0.0,
+            expected_value=0.0,
+            executable_size=1.0,
+            verdict=SimpleNamespace(failed_gates=()),
+            suggested_action=action,
+            retail_examples=retail_examples,
+        )
+
+    monkeypatch.setattr(nfl_live_scan, "PolymarketUSPublicClient", FakePMUS)
+    monkeypatch.setattr(nfl_live_scan, "fetch_games", lambda: [game])
+    monkeypatch.setattr(nfl_live_scan, "utcnow", lambda: now)
+    monkeypatch.setattr(nfl_live_scan, "TrackRecord", lambda _path: object())
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "default_inbox_store",
+        lambda: SimpleNamespace(path=tmp_path / "inbox.sqlite"),
+    )
+    monkeypatch.setattr(nfl_live_scan, "AlertDeliveryStore", lambda _path: object())
+    monkeypatch.setattr(nfl_live_scan, "AlertDispatcher", lambda _store: object())
+    monkeypatch.setattr(nfl_live_scan, "KalshiPublicClient", lambda: object())
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "_scope_kalshi",
+        lambda _client: ([], {"state": "COMPLETE", "failed_scopes": []}),
+    )
+    monkeypatch.setattr(nfl_live_scan, "normalize_pmus", lambda *_args, **_kwargs: market)
+    monkeypatch.setattr(nfl_live_scan, "attach_fees", lambda value, *_args, **_kwargs: value)
+    monkeypatch.setattr(nfl_live_scan, "is_supported_market", lambda _market: True)
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "map_market_to_game",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status="MAPPED_GAME_WINNER", reason="exact team/date match", game=game
+        ),
+    )
+    monkeypatch.setattr(nfl_live_scan, "probability_for_game", lambda *_args: 0.5)
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "NFLEvidenceProvider",
+        lambda _loader: SimpleNamespace(assess=lambda _market: object()),
+    )
+    monkeypatch.setattr(nfl_live_scan, "_capture_evaluated", captured)
+    monkeypatch.setattr(nfl_live_scan, "_dispatch_buy_alert", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(nfl_live_scan, "reconcile_active_buy_alerts", lambda *_args, **_kwargs: {})
+
+    return nfl_live_scan._scan(), constructed
+
+
+def _pmus_nfl_row(market_id, slug):
+    raw = {
+        "id": market_id,
+        "slug": slug,
+        "question": "Cincinnati Bengals at Pittsburgh Steelers NFL game winner",
+        "category": "sports",
+        "marketType": "moneyline",
+    }
+    return {
+        "id": market_id,
+        "slug": slug,
+        "question": raw["question"],
+        "active": True,
+        "closed": False,
+        "raw": raw,
+    }
+
+
+def test_nfl_scan_reuses_one_pmus_client_for_discovery_and_multiple_books(monkeypatch, tmp_path):
+    rows = [
+        _pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27"),
+        _pmus_nfl_row("825205-alt", "nfl-cin-pit-2026-09-27-alt"),
+    ]
+    result, clients = _run_pmus_scan(
+        monkeypatch, tmp_path, rows=rows, book=lambda slug: {"slug": slug}
+    )
+
+    assert len(clients) == 1
+    assert clients[0].discovery_calls == [(100, 0, ["sports"])]
+    assert clients[0].book_calls == [row["slug"] for row in rows]
+    assert clients[0].closed == 1
+    assert result["read_only"] is True and result["orders"] == 0
+
+
+def test_nfl_pmus_rate_limit_is_data_unavailable_with_bounded_diagnostic(monkeypatch, tmp_path):
+    html = "<html>Cloudflare Error 1015 You are being rate limited " + ("x" * 5000) + "</html>"
+
+    def rate_limited(_slug):
+        raise SafetyStop(html)
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[_pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")],
+        book=rate_limited,
+        action=Action.BUY,
+    )
+
+    diagnostic = next(
+        row for row in result["summary"]["rows"] if "scoring_error" in row
+    )
+    assert diagnostic["scoring_error"] == "RATE_LIMITED"
+    assert diagnostic["scoring_error_reason"] == (
+        "Polymarket US public API rate limited (Cloudflare 1015)"
+    )
+    assert "<html>" not in json.dumps(diagnostic)
+    assert result["slate"]["status_counts"] == {"DATA_UNAVAILABLE": 1}
+    assert not any("verdict" in row for row in result["summary"]["rows"])
+    assert result["read_only"] is True and result["orders"] == 0
+    assert len(clients) == 1 and clients[0].closed == 1
+
+
+@pytest.mark.parametrize("action", [Action.BUY, Action.WATCH, Action.PASS])
+def test_successful_nfl_pmus_scoring_preserves_action(monkeypatch, tmp_path, action):
+    result, _clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[_pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")],
+        book=lambda slug: {"slug": slug},
+        action=action,
+    )
+
+    verdicts = [row["verdict"] for row in result["summary"]["rows"] if "verdict" in row]
+    assert verdicts == [action.value, action.value]
+    assert result["slate"]["status_counts"] == {action.value: 1}
+    assert result["read_only"] is True and result["orders"] == 0
+
+
 
 def test_nfl_scored_buy_dispatches_immediate_alert(monkeypatch):
-    from types import SimpleNamespace
-    from parallax.models import Action
-
     sent = []
 
     def fake_dispatch(dispatcher, scored_play, scored_market, **kwargs):

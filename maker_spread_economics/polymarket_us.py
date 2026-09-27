@@ -804,15 +804,24 @@ class PolymarketUSPublicClient:
     def diagnostics(self) -> dict[str, Any]:
         return {"public_rest_requests_per_minute": self.meter.per_minute()}
 
-    def markets_page(self, *, limit: int, offset: int) -> list[dict[str, Any]]:
+    def markets_page(
+        self, *, limit: int, offset: int, categories: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         last_error: Exception | None = None
         for attempt in range(1, PMUS_DISCOVERY_MAX_ATTEMPTS + 1):
             try:
                 self.meter.record()
-                payload = self.client.markets.list(
-                    {"active": True, "closed": False, "limit": limit, "offset": offset,
-                     "orderBy": ["volume"], "orderDirection": "desc"}
-                )
+                params = {
+                    "active": True,
+                    "closed": False,
+                    "limit": limit,
+                    "offset": offset,
+                    "orderBy": ["volume"],
+                    "orderDirection": "desc",
+                }
+                if categories:
+                    params["categories"] = categories
+                payload = self.client.markets.list(params)
                 return normalize_market_page(payload)
             except Exception as exc:
                 last_error = exc
