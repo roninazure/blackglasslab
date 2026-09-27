@@ -1,41 +1,7 @@
 {
-  "generated_at": "2026-09-27T18:48:47.785110+00:00",
+  "generated_at": "2026-09-27T19:08:50.729097+00:00",
   "lane": "MLB",
   "plays": [
-    {
-      "away_team": "Los Angeles Dodgers",
-      "date": "2026-09-27",
-      "economic_key": "MLB:823164:sanfranciscogiants",
-      "edge_pp": 8.68042854,
-      "game_id": "823164",
-      "home_team": "San Francisco Giants",
-      "lifecycle_updated_at": "2026-09-27T18:48:17.000219+00:00",
-      "market_id": "KXMLBGAME-26SEP271505LADSF-SF",
-      "model_probability": 0.39680428540652274,
-      "opponent": "Los Angeles Dodgers",
-      "price": 0.31,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "San Francisco Giants",
-      "start_time": "2026-09-27T19:05:00+00:00",
-      "venue": "KALSHI"
-    },
-    {
-      "away_team": "Houston Astros",
-      "date": "2026-09-27",
-      "economic_key": "MLB:824948:athletics",
-      "edge_pp": 10.96740879,
-      "game_id": "824948",
-      "home_team": "Athletics",
-      "lifecycle_updated_at": "2026-09-27T18:04:37.927815+00:00",
-      "market_id": "1028020",
-      "model_probability": 0.4646740879267641,
-      "opponent": "Houston Astros",
-      "price": 0.355,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Athletics",
-      "start_time": "2026-09-27T19:05:00+00:00",
-      "venue": "POLYMARKET"
-    },
     {
       "away_team": "Arizona Diamondbacks",
       "date": "2026-09-27",
@@ -94,6 +60,6 @@
   "source_schedule_state": "COMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 5
+    "buy": 3
   }
 }
