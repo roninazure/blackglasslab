@@ -1,26 +1,7 @@
 {
-  "generated_at": "2026-09-27T04:41:09.940881+00:00",
+  "generated_at": "2026-09-27T05:46:12.404826+00:00",
   "lane": "NFL",
   "plays": [
-    {
-      "away_team": "Carolina Panthers",
-      "contract_side": "NO",
-      "date": "2026-09-27",
-      "economic_key": "NFL:2026_03_CAR_CLE:CLE",
-      "edge_pp": 16.46655357,
-      "game_id": "2026_03_CAR_CLE",
-      "home_team": "Cleveland Browns",
-      "lifecycle_updated_at": "2026-09-27T04:37:53.904845+00:00",
-      "market_id": "825196",
-      "model_probability": 0.6146655357290078,
-      "opponent": "Carolina Panthers",
-      "price": 0.45,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Cleveland Browns",
-      "sport": "NFL",
-      "start_time": "2026-09-27T17:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
     {
       "away_team": "Kansas City Chiefs",
       "contract_side": "NO",
@@ -29,7 +10,7 @@
       "edge_pp": 22.84843894,
       "game_id": "2026_03_KC_MIA",
       "home_team": "Miami Dolphins",
-      "lifecycle_updated_at": "2026-09-27T04:37:53.529873+00:00",
+      "lifecycle_updated_at": "2026-09-27T05:41:44.546960+00:00",
       "market_id": "825195",
       "model_probability": 0.3784843894302088,
       "opponent": "Kansas City Chiefs",
@@ -43,10 +24,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-09-27T04:38:10.363737+00:00",
+  "source_feed_generated_at": "2026-09-27T05:41:58.236200+00:00",
   "source_schedule_state": "COMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 2
+    "buy": 1
   }
 }
