@@ -24,6 +24,40 @@ MODEL_VERSION = "mlb-v2"
 SOURCE_ID = "official-mlb-statsapi"
 VALIDITY_SECONDS = 15 * 60
 
+MLB_VENUE_TEAM_CODES = {
+    "arizonadiamondbacks": "ARI",
+    "atlantabraves": "ATL",
+    "baltimoreorioles": "BAL",
+    "bostonredsox": "BOS",
+    "chicagocubs": "CHC",
+    "chicagowhitesox": "CWS",
+    "cincinnatireds": "CIN",
+    "clevelandguardians": "CLE",
+    "coloradorockies": "COL",
+    "detroittigers": "DET",
+    "houstonastros": "HOU",
+    "kansascityroyals": "KC",
+    "losangelesangels": "LAA",
+    "losangelesdodgers": "LAD",
+    "miamimarlins": "MIA",
+    "milwaukeebrewers": "MIL",
+    "minnesotatwins": "MIN",
+    "newyorkmets": "NYM",
+    "newyorkyankees": "NYY",
+    "oaklandathletics": "ATH",
+    "athletics": "ATH",
+    "philadelphiaphillies": "PHI",
+    "pittsburghpirates": "PIT",
+    "sandiegopadres": "SD",
+    "sanfranciscogiants": "SF",
+    "seattlemariners": "SEA",
+    "stlouiscardinals": "STL",
+    "tampabayrays": "TB",
+    "texasrangers": "TEX",
+    "torontobluejays": "TOR",
+    "washingtonnationals": "WSH",
+}
+
 
 def _text(value: Any) -> str:
     return " ".join(str(value or "").lower().replace("&", "and").split())
@@ -38,6 +72,15 @@ def _team_key(value: Any) -> str:
         "sandiego": "sandiegopadres", "sanfrancisco": "sanfranciscogiants", "boston": "bostonredsox", "kansascity": "kansascityroyals", "washington": "washingtonnationals",
     }
     return aliases.get(key, key)
+
+
+def mlb_venue_team_code(name: object, abbreviation: object = None) -> str | None:
+    """Return the schedule-backed code used by observed PMUS MLB slugs."""
+    mapped = MLB_VENUE_TEAM_CODES.get(_team_key(name))
+    if mapped:
+        return mapped
+    candidate = re.sub(r"[^A-Z0-9]", "", str(abbreviation or "").upper())
+    return candidate if 2 <= len(candidate) <= 3 else None
 
 
 def selected_team_for_moneyline(
@@ -228,6 +271,14 @@ class MLBStatsAPI:
                         "start_time": start.isoformat(),
                         "away_team": away,
                         "home_team": home,
+                        "away_team_code": mlb_venue_team_code(
+                            away,
+                            teams.get("away", {}).get("team", {}).get("abbreviation"),
+                        ),
+                        "home_team_code": mlb_venue_team_code(
+                            home,
+                            teams.get("home", {}).get("team", {}).get("abbreviation"),
+                        ),
                         "schedule_status": schedule_status,
                     }
                 )

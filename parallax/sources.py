@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
@@ -13,20 +14,19 @@ from maker_spread_economics.polymarket_us import PolymarketUSPublicClient
 
 from .fair_value import assess_value
 from .fees import attach_fees
-from .direct_contracts import normalized_for_direct_contract
-from .discovery import MAX_ACTIVE_MARKETS_PER_VENUE, paginate, paginate_collection
+from .discovery import MAX_ACTIVE_MARKETS_PER_VENUE, paginate_collection
 from .discovery import classify_market as classify_inventory_market
 from .discovery import normalize_market as normalize_inventory_market
-from .event_discovery import discover_event_candidate
-from .models import Venue
 from .mlb import MLBEvidenceProvider, MLBStatsAPI
 from .models import NormalizedMarket, utcnow
 from .normalization import normalize_kalshi, normalize_pmus
+from .pmus_acquisition import PMUSAcquisition
 
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 MLB_TZ = ZoneInfo("America/New_York")
 KALSHI_PUBLIC_MINIMUM_INTERVAL_SECONDS = 2.0
 KALSHI_PUBLIC_MAX_REQUESTS = 40
+PMUS_MLB_MAX_SLUGS = 100
 
 
 class KalshiPublicSafetyStop(RuntimeError):
@@ -116,6 +116,81 @@ def _dedupe_rows(rows: list[dict], key: str) -> list[dict]:
             seen.add(identity)
         result.append(row)
     return result
+
+
+def _pmus_mlb_slugs(scheduled: list[dict]) -> list[str]:
+    """Construct the two observed PMUS MLB slug forms from official identity."""
+    slugs: list[str] = []
+    for game in scheduled:
+        away = str(game.get("away_team_code") or "").strip().lower()
+        home = str(game.get("home_team_code") or "").strip().lower()
+        date = str(game.get("date") or "").strip()
+        if not away or not home or not date:
+            raise ValueError("official MLB schedule omitted venue slug identity")
+        base = f"mlb-{away}-{home}-{date}"
+        slugs.extend((base, f"aec-{base}"))
+    return list(dict.fromkeys(slugs))
+
+
+def _scope_pmus_mlb(
+    client: PolymarketUSPublicClient,
+    acquisition: PMUSAcquisition,
+    scheduled: list[dict],
+) -> tuple[list[dict], dict]:
+    """Discover only schedule-derived MLB markets; never fall back to a sweep."""
+    candidates = _pmus_mlb_slugs(scheduled)
+    if len(candidates) > PMUS_MLB_MAX_SLUGS:
+        return [], {
+            "state": "PARTIAL",
+            "reason": "schedule-derived PMUS MLB slug ceiling exceeded",
+            "candidate_slugs": len(candidates),
+            "request_count": 0,
+        }
+    if not candidates:
+        return [], {
+            "state": "COMPLETE",
+            "reason": "authoritative MLB slate is empty",
+            "candidate_slugs": 0,
+            "request_count": 0,
+        }
+
+    digest = hashlib.sha256("\n".join(candidates).encode()).hexdigest()[:20]
+
+    def request() -> list[dict]:
+        rows = client.markets_page(
+            limit=len(candidates),
+            offset=0,
+            slugs=candidates,
+            retry_transport_errors=False,
+        )
+        unexpected = [
+            row for row in rows if str(row.get("slug") or "") not in candidates
+        ]
+        if unexpected:
+            raise ValueError("PMUS MLB response escaped exact slug scope")
+        return rows
+
+    requests_before = acquisition.metrics["discovery_requests"]
+    rows = acquisition.discover(f"MLB:{digest}", request)
+    mlb_rows = [
+        row
+        for row in rows
+        if str(row.get("slug") or "") in candidates
+        and row.get("active")
+        and not row.get("closed")
+        and row.get("accepting_orders")
+        and _is_mlb_moneyline(row)
+    ]
+    return _dedupe_rows(mlb_rows, "slug"), {
+        "state": "COMPLETE",
+        "reason": "exact schedule-derived PMUS MLB slug set queried",
+        "candidate_slugs": len(candidates),
+        "markets_returned": len(rows),
+        "unique_markets": len({str(row.get("slug") or "") for row in rows}),
+        "request_count": (
+            acquisition.metrics["discovery_requests"] - requests_before
+        ),
+    }
 
 
 class KalshiPublicClient:
@@ -234,7 +309,11 @@ class KalshiPublicClient:
         return self.get(f"/series/{quote(ticker, safe='')}").get("series", {})
 
 
-def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
+def collect_markets(
+    limit: int = 12,
+    *,
+    pmus_acquisition: PMUSAcquisition | None = None,
+) -> tuple[list[NormalizedMarket], dict]:
     if not 1 <= limit <= 100:
         raise ValueError("Scan limit must be between 1 and 100 per venue")
     markets: list[NormalizedMarket] = []
@@ -245,6 +324,7 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
     errors: list[dict] = []
     pmus_discovery_complete = False
     kalshi_discovery_complete = False
+    acquisition = pmus_acquisition or PMUSAcquisition("MLB")
 
     def failure(venue: str, stage: str, exc: Exception) -> None:
         metrics[f"{venue}.failures"] += 1
@@ -253,28 +333,31 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
             {"venue": venue, "stage": stage, "error_type": type(exc).__name__}
         )
 
+    now = utcnow()
+    target_date = now.astimezone(MLB_TZ).date().isoformat()
+    slate_schedule: list[dict] = []
+    slate_schedule_state = "COMPLETE"
+    try:
+        slate_schedule = MLBStatsAPI().scheduled_games_for_date(target_date)
+    except Exception as exc:  # Official schedule failure must stay explicit.
+        slate_schedule_state = "DATA_UNAVAILABLE"
+        failure("OFFICIAL_MLB", "schedule", exc)
+
     pmus = None
     try:
         pmus = PolymarketUSPublicClient()
-        # The venue orders globally by volume; low-volume MLB games are not
-        # reliably near the front. Page until upstream completion or the shared
-        # hard safety ceiling, and expose bounded coverage explicitly.
-        rows, pmus_coverage = paginate(
-            pmus.markets_page,
-            page_size=100,
-            max_pages=100,
-            max_rows=MAX_ACTIVE_MARKETS_PER_VENUE,
+        if slate_schedule_state != "COMPLETE":
+            raise ValueError("authoritative MLB schedule unavailable")
+        rows, pmus_coverage = _scope_pmus_mlb(
+            pmus, acquisition, slate_schedule
         )
-        pmus_discovery_complete = pmus_coverage.state.value == "COMPLETE"
-        all_rows = [
-            r for r in rows
-            if r.get("active") and not r.get("closed") and r.get("accepting_orders")
-        ]
-        all_rows = _dedupe_rows(all_rows, "slug")
-        rows = [r for r in all_rows if _is_mlb_moneyline(r)]
+        pmus_discovery_complete = pmus_coverage["state"] == "COMPLETE"
         discovery_time = utcnow()
         discovery_at = discovery_time.isoformat()
-        metrics["POLYMARKET.markets_discovered"] = len(all_rows)
+        metrics["POLYMARKET.discovery_requests"] = acquisition.metrics[
+            "discovery_requests"
+        ]
+        metrics["POLYMARKET.markets_discovered"] = len(rows)
         provider = MLBEvidenceProvider()
         for row in rows:
             mapped_game_id = None
@@ -286,8 +369,19 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
                     failure("POLYMARKET", "mapping_or_evidence", ValueError("no exact MLB match or evidence"))
                     continue
                 mapped_game_id = _mlb_game_id(proof.review_reference)
-                book = pmus.book(row["slug"])
-                market = normalize_pmus(row, book, utcnow().isoformat())
+                acquired = acquisition.book(
+                    row["slug"],
+                    lambda row=row: pmus.book(row["slug"]),
+                    fair_probability=proof.fair_probability,
+                )
+                if acquired.book is None or acquired.observed_at is None:
+                    metrics["POLYMARKET.book_requests_avoided"] += 1
+                    if mapped_game_id:
+                        data_unavailable_game_ids.add(mapped_game_id)
+                    continue
+                market = normalize_pmus(
+                    row, acquired.book, acquired.observed_at
+                )
                 market = attach_fees(market, utcnow())
                 markets.append(market)
                 collected_evidence[(market.venue, market.venue_market_id)] = proof
@@ -303,41 +397,6 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
                 if mapped_game_id:
                     data_unavailable_game_ids.add(mapped_game_id)
                 failure("POLYMARKET", "market", exc)
-
-        # The generic/direct seam is intentionally evidence-neutral.  It keeps
-        # exact non-sports contracts in the same normalized market universe;
-        # EvidenceEngine remains the only source allowed to provide a forecast.
-        for row in all_rows:
-            if _is_mlb_moneyline(row) or not _is_fed_rates_market(row):
-                if not _is_mlb_moneyline(row):
-                    metrics["POLYMARKET.generic_scope_skipped"] += 1
-                continue
-            try:
-                candidate = discover_event_candidate(
-                    row, venue=Venue.POLYMARKET, discovered_at=discovery_time
-                )
-                if candidate.candidate is None:
-                    metrics["POLYMARKET.generic_rejected"] += 1
-                    continue
-                book = pmus.book(candidate.candidate.slug or candidate.candidate.market_id)
-                candidate = discover_event_candidate(
-                    row,
-                    venue=Venue.POLYMARKET,
-                    book=book,
-                    discovered_at=discovery_time,
-                )
-                if candidate.candidate is None:
-                    metrics["POLYMARKET.generic_rejected"] += 1
-                    continue
-                market = attach_fees(
-                    normalized_for_direct_contract(candidate.candidate), utcnow()
-                )
-                markets.append(market)
-                metrics["POLYMARKET.generic_markets_observed"] += 1
-            except (ValueError, TypeError, KeyError) as exc:
-                failure("POLYMARKET", "generic_market", exc)
-            except Exception as exc:  # noqa: BLE001 - isolate one live market
-                failure("POLYMARKET", "generic_market", exc)
     except Exception as exc:  # noqa: BLE001 - isolate SDK discovery failures by venue
         failure("POLYMARKET", "discovery", exc)
     finally:
@@ -404,14 +463,6 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
     except (OSError, ValueError, KeyError) as exc:
         failure("KALSHI", "discovery", exc)
     now = utcnow()
-    target_date = now.astimezone(MLB_TZ).date().isoformat()
-    slate_schedule: list[dict] = []
-    slate_schedule_state = "COMPLETE"
-    try:
-        slate_schedule = MLBStatsAPI().scheduled_games_for_date(target_date)
-    except Exception as exc:  # Official schedule failure must stay explicit.
-        slate_schedule_state = "DATA_UNAVAILABLE"
-        failure("OFFICIAL_MLB", "schedule", exc)
     markets = [
         replace(
             m,
@@ -425,7 +476,8 @@ def collect_markets(limit: int = 12) -> tuple[list[NormalizedMarket], dict]:
     return markets, {
         "metrics": dict(metrics),
         "errors": errors,
-        "scope": "complete-or-explicitly-bounded current MLB moneyline discovery across PMUS and Kalshi KXMLBGAME",
+        "scope": "schedule-targeted current MLB moneyline discovery across PMUS and Kalshi KXMLBGAME",
+        "pmus_acquisition": acquisition.diagnostics(),
         "_slate_schedule": slate_schedule,
         "_slate_schedule_state": slate_schedule_state,
         "_slate_discovery_complete": (

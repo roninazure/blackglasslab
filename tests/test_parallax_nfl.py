@@ -1,7 +1,7 @@
 import importlib.util
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +25,7 @@ from parallax.nfl import (
     validate,
 )
 from parallax.normalization import normalize_kalshi, normalize_pmus
+from parallax.pmus_acquisition import PMUSAcquisition, PMUSAcquisitionUnavailable
 from parallax.sources import (
     KalshiPublicClient,
     KalshiPublicRateLimit,
@@ -271,7 +272,7 @@ def test_existing_pmus_public_rate_limit_lockout_remains_intact():
     assert calls == ["nfl-one"]
 
 
-def test_nfl_book_cache_reuses_one_book_for_both_scoring_sides():
+def test_nfl_book_cache_reuses_one_book_for_both_scoring_sides(tmp_path):
     calls = []
     expected = {
         "nfl-one::YES": {"best_bid": 0.49, "best_ask": 0.51},
@@ -283,14 +284,19 @@ def test_nfl_book_cache_reuses_one_book_for_both_scoring_sides():
             calls.append(slug)
             return expected
 
-    books = nfl_live_scan._PMUSBookCache(Client())
+    client = Client()
+    books = PMUSAcquisition("NFL", state_path=tmp_path / "pmus.sqlite")
 
-    assert books.get("nfl-one") is expected
-    assert books.get("nfl-one") is expected
+    assert books.book(
+        "nfl-one", lambda: client.book("nfl-one"), fair_probability=0.7
+    ).book == expected
+    assert books.book(
+        "nfl-one", lambda: client.book("nfl-one"), fair_probability=0.7
+    ).book == expected
     assert calls == ["nfl-one"]
 
 
-def test_nfl_book_cache_rate_limit_blocks_later_client_calls():
+def test_nfl_book_cache_rate_limit_blocks_later_client_calls(tmp_path):
     calls = []
 
     class Client:
@@ -298,16 +304,21 @@ def test_nfl_book_cache_rate_limit_blocks_later_client_calls():
             calls.append(slug)
             raise PolymarketUSRateLimit("Cloudflare 1015")
 
-    books = nfl_live_scan._PMUSBookCache(Client())
+    client = Client()
+    books = PMUSAcquisition("NFL", state_path=tmp_path / "pmus.sqlite")
 
     with pytest.raises(PolymarketUSRateLimit):
-        books.get("nfl-one")
+        books.book(
+            "nfl-one", lambda: client.book("nfl-one"), fair_probability=0.7
+        )
     with pytest.raises(PolymarketUSRateLimit):
-        books.get("nfl-two")
+        books.book(
+            "nfl-two", lambda: client.book("nfl-two"), fair_probability=0.7
+        )
     assert calls == ["nfl-one"]
 
 
-def test_nfl_book_cache_reuses_malformed_failure_and_fails_closed():
+def test_nfl_book_cache_reuses_malformed_failure_and_fails_closed(tmp_path):
     calls = []
 
     class Markets:
@@ -319,12 +330,16 @@ def test_nfl_book_cache_reuses_malformed_failure_and_fails_closed():
         client=SimpleNamespace(markets=Markets()),
         minimum_interval_seconds=0,
     )
-    books = nfl_live_scan._PMUSBookCache(client)
+    books = PMUSAcquisition("NFL", state_path=tmp_path / "pmus.sqlite")
 
     with pytest.raises(ReconciliationError, match="market mismatch"):
-        books.get("nfl-one")
-    with pytest.raises(ReconciliationError, match="market mismatch"):
-        books.get("nfl-one")
+        books.book(
+            "nfl-one", lambda: client.book("nfl-one"), fair_probability=0.7
+        )
+    with pytest.raises(PMUSAcquisitionUnavailable, match="cached PMUS book failure"):
+        books.book(
+            "nfl-one", lambda: client.book("nfl-one"), fair_probability=0.7
+        )
     assert calls == ["nfl-one"]
 
 
@@ -876,13 +891,26 @@ def _run_pmus_scan(
     monkeypatch.setattr(
         nfl_live_scan,
         "NFLEvidenceProvider",
-        lambda _loader: SimpleNamespace(assess=lambda _market: object()),
+        lambda _loader: SimpleNamespace(
+            assess=lambda _market: SimpleNamespace(fair_probability=0.5)
+        ),
     )
     monkeypatch.setattr(nfl_live_scan, "_capture_evaluated", captured)
     monkeypatch.setattr(nfl_live_scan, "_dispatch_buy_alert", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(nfl_live_scan, "reconcile_active_buy_alerts", lambda *_args, **_kwargs: {})
 
-    return nfl_live_scan._scan(), constructed
+    acquisition_now = [now]
+
+    def advance(seconds):
+        acquisition_now[0] += timedelta(seconds=seconds)
+
+    acquisition = PMUSAcquisition(
+        "NFL",
+        state_path=tmp_path / "pmus-acquisition.sqlite",
+        clock=lambda: acquisition_now[0],
+        sleeper=advance,
+    )
+    return nfl_live_scan._scan(pmus_acquisition=acquisition), constructed
 
 
 def _pmus_nfl_row(market_id, slug):
@@ -1061,6 +1089,24 @@ def test_nfl_scan_reuses_duplicate_market_book_for_yes_and_no(monkeypatch, tmp_p
 
     assert clients[0].book_calls == [row["slug"]]
     assert len([item for item in result["summary"]["rows"] if "verdict" in item]) == 4
+
+
+def test_nfl_multiple_candidates_reuse_cross_cycle_books(monkeypatch, tmp_path):
+    rows = [
+        _pmus_nfl_row("plain", "nfl-cin-pit-2026-09-27"),
+        _pmus_nfl_row("aec", "aec-nfl-cin-pit-2026-09-27"),
+    ]
+    first, first_clients = _run_pmus_scan(
+        monkeypatch, tmp_path, rows=rows, book=lambda slug: {"slug": slug}
+    )
+    second, second_clients = _run_pmus_scan(
+        monkeypatch, tmp_path, rows=rows, book=lambda slug: {"slug": slug}
+    )
+
+    assert first_clients[0].book_calls == [row["slug"] for row in rows]
+    assert second_clients[0].book_calls == []
+    assert second["pmus_acquisition"]["cache_hits"] >= 3
+    assert first["read_only"] is True and second["orders"] == 0
 
 
 def test_nfl_scan_rate_limit_stops_all_later_pmus_book_calls(monkeypatch, tmp_path):

@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 from parallax import sources
 from parallax.demo import demo_inputs
@@ -6,6 +7,7 @@ from parallax.inbox import InboxStore
 from parallax.models import Action, Evidence, Venue
 from parallax.mlb import MLBStatsAPI
 from parallax.normalization import rules_digest
+from parallax.pmus_acquisition import PMUSAcquisition
 from parallax.service import PlayService
 from parallax.track_record import TrackRecord
 
@@ -36,7 +38,33 @@ def book(slug):
 
 class FakeSchedule:
     def scheduled_games_for_date(self, _target_date):
-        return []
+        return [
+            {
+                "game_id": f"game-{day}",
+                "date": f"2026-09-{day}",
+                "start_time": f"2026-09-{day}T17:35:00+00:00",
+                "away_team": "Los Angeles Angels",
+                "home_team": "Washington Nationals",
+                "away_team_code": "LAA",
+                "home_team_code": "WSH",
+                "schedule_status": "SCHEDULED",
+            }
+            for day in ("13", "14")
+        ]
+
+
+def offline_acquisition(tmp_path):
+    now = [datetime(2026, 9, 13, 12, tzinfo=UTC)]
+
+    def advance(seconds):
+        now[0] += timedelta(seconds=seconds)
+
+    return PMUSAcquisition(
+        "MLB",
+        state_path=tmp_path / "pmus-acquisition.sqlite",
+        clock=lambda: now[0],
+        sleeper=advance,
+    )
 
 
 def test_mlb_official_schedule_preserves_doubleheaders_as_separate_games():
@@ -81,12 +109,14 @@ def test_current_nested_pmus_metadata_is_mlb_moneyline():
     assert not sources._is_mlb_moneyline({"raw": {"marketType": "moneyline", "question": "NFL winner"}})
 
 
-def test_bulk_mapping_precedes_book_and_isolates_book_failure(monkeypatch):
+def test_bulk_mapping_precedes_book_and_isolates_book_failure(monkeypatch, tmp_path):
     first, second = pmus_row(), pmus_row("aec-mlb-laa-wsh-2026-09-14")
     calls = []
+    discovery_calls = []
 
     class FakePMUS:
-        def markets_page(self, *, limit, offset):
+        def markets_page(self, *, limit, offset, slugs=None, retry_transport_errors=True):
+            discovery_calls.append((limit, offset, slugs, retry_transport_errors))
             return [first, second] if offset == 0 else []
 
         def book(self, slug):
@@ -111,19 +141,34 @@ def test_bulk_mapping_precedes_book_and_isolates_book_failure(monkeypatch):
     monkeypatch.setattr(sources, "KalshiPublicClient", FakeKalshi)
     monkeypatch.setattr(sources, "MLBEvidenceProvider", FakeProvider)
     monkeypatch.setattr(sources, "MLBStatsAPI", FakeSchedule)
-    markets, report = sources.collect_markets(limit=2)
+    markets, report = sources.collect_markets(
+        limit=2, pmus_acquisition=offline_acquisition(tmp_path)
+    )
     assert [m.slug for m in markets] == [first["slug"]]
+    assert discovery_calls == [
+        (
+            4,
+            0,
+            [
+                "mlb-laa-wsh-2026-09-13",
+                "aec-mlb-laa-wsh-2026-09-13",
+                "mlb-laa-wsh-2026-09-14",
+                "aec-mlb-laa-wsh-2026-09-14",
+            ],
+            False,
+        )
+    ]
     assert calls == [first["slug"], second["slug"]]
     assert report["metrics"]["POLYMARKET.evidence_produced"] == 1
     assert any(error["stage"] == "market" for error in report["errors"])
 
 
-def test_duplicate_pmus_market_gets_one_book_request(monkeypatch):
+def test_duplicate_pmus_market_gets_one_book_request(monkeypatch, tmp_path):
     row = pmus_row()
     calls = []
 
     class FakePMUS:
-        def markets_page(self, *, limit, offset):
+        def markets_page(self, *, limit, offset, slugs=None, retry_transport_errors=True):
             return [row, row] if offset == 0 else []
 
         def book(self, slug):
@@ -145,7 +190,9 @@ def test_duplicate_pmus_market_gets_one_book_request(monkeypatch):
     monkeypatch.setattr(sources, "KalshiPublicClient", FakeKalshi)
     monkeypatch.setattr(sources, "MLBEvidenceProvider", FakeProvider)
     monkeypatch.setattr(sources, "MLBStatsAPI", FakeSchedule)
-    sources.collect_markets(limit=2)
+    sources.collect_markets(
+        limit=2, pmus_acquisition=offline_acquisition(tmp_path)
+    )
     assert calls == [row["slug"]]
 
 

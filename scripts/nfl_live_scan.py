@@ -40,6 +40,7 @@ from parallax.nfl import (
     probability_for_game,
 )
 from parallax.normalization import normalize_kalshi, normalize_pmus
+from parallax.pmus_acquisition import PMUSAcquisition
 from parallax.slate import reconcile_slate
 from parallax.sources import KalshiPublicClient
 from parallax.track_record import TrackRecord
@@ -53,33 +54,6 @@ PMUS_NFL_MAX_SLUGS = 100
 
 # nflverse uses LA for the Rams; both venues use LAR in contract identity.
 NFL_VENUE_TEAM_CODES = {"LA": "LAR"}
-
-
-class _PMUSBookCache:
-    """Reuse one fresh book per slug and make cycle rate-limit lockout sticky."""
-
-    def __init__(self, client: PolymarketUSPublicClient) -> None:
-        self.client = client
-        self._books: dict[str, dict] = {}
-        self._failures: dict[str, Exception] = {}
-        self._rate_limit: PolymarketUSRateLimit | None = None
-
-    def get(self, slug: str) -> dict:
-        if slug in self._books:
-            return self._books[slug]
-        if slug in self._failures:
-            raise self._failures[slug]
-        if self._rate_limit is not None:
-            raise self._rate_limit
-        try:
-            book = self.client.book(slug)
-        except Exception as exc:
-            self._failures[slug] = exc
-            if isinstance(exc, PolymarketUSRateLimit):
-                self._rate_limit = exc
-            raise
-        self._books[slug] = book
-        return book
 
 
 def _upcoming_slate(games, now):
@@ -121,7 +95,11 @@ def _pmus_slugs(scheduled: list[dict]) -> list[str]:
     return list(dict.fromkeys(slugs))
 
 
-def _scope_pmus(client: PolymarketUSPublicClient, scheduled: list[dict]) -> tuple[list[dict], dict]:
+def _scope_pmus(
+    client: PolymarketUSPublicClient,
+    scheduled: list[dict],
+    acquisition: PMUSAcquisition | None = None,
+) -> tuple[list[dict], dict]:
     """Fetch only schedule-derived NFL slugs in one provider-supported query."""
     candidates = _pmus_slugs(scheduled)
     if len(candidates) > PMUS_NFL_MAX_SLUGS:
@@ -140,12 +118,28 @@ def _scope_pmus(client: PolymarketUSPublicClient, scheduled: list[dict]) -> tupl
             "request_count": 0,
             "request_ceiling": client.max_requests_per_minute,
         }
-    rows = _scoped_call(
-        client.markets_page,
-        limit=len(candidates),
-        offset=0,
-        slugs=candidates,
-        retry_transport_errors=False,
+    def request() -> list[dict]:
+        rows = _scoped_call(
+            client.markets_page,
+            limit=len(candidates),
+            offset=0,
+            slugs=candidates,
+            retry_transport_errors=False,
+        )
+        unexpected = [
+            row for row in rows if str(row.get("slug") or "") not in candidates
+        ]
+        if unexpected and acquisition is not None:
+            raise ValueError("PMUS response escaped exact NFL slug scope")
+        return rows
+
+    requests_before = acquisition.metrics["discovery_requests"] if acquisition else 0
+    rows = (
+        acquisition.discover(
+            f"NFL:{scheduled[0]['date']}:{'|'.join(candidates)}", request
+        )
+        if acquisition
+        else request()
     )
     unexpected = [row for row in rows if str(row.get("slug") or "") not in candidates]
     nfl_rows = [
@@ -167,7 +161,11 @@ def _scope_pmus(client: PolymarketUSPublicClient, scheduled: list[dict]) -> tupl
         "markets_returned": len(rows),
         "unique_markets": len({str(row.get("id") or row.get("slug") or "") for row in rows}),
         "unexpected_markets": len(unexpected),
-        "request_count": 1,
+        "request_count": (
+            acquisition.metrics["discovery_requests"] - requests_before
+            if acquisition
+            else 1
+        ),
         "request_ceiling": client.max_requests_per_minute,
     }
 
@@ -354,7 +352,7 @@ def _scope_kalshi(client: KalshiPublicClient, scheduled: list[dict]) -> tuple[li
     }
 
 
-def _scan() -> dict:
+def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
     games = fetch_games()
     discovery_at = utcnow()
     scheduled_for_discovery = _upcoming_slate(games, discovery_at)
@@ -366,11 +364,13 @@ def _scan() -> dict:
     pmus_rows: list[dict] = []
     pmus_discovery_complete = False
     kalshi_discovery_complete = False
+    acquisition = pmus_acquisition or PMUSAcquisition("NFL")
     pmus = PolymarketUSPublicClient()
-    pmus_books = _PMUSBookCache(pmus)
     try:
         try:
-            pmus_rows, pmus_cov = _scope_pmus(pmus, scheduled_for_discovery)
+            pmus_rows, pmus_cov = _scope_pmus(
+                pmus, scheduled_for_discovery, acquisition
+            )
             result["venues"]["PMUS"] = {
                 "coverage": pmus_cov,
                 "universe_rows": len(pmus_rows),
@@ -431,14 +431,37 @@ def _scan() -> dict:
                     row["model_probability"] = probability_for_game(mapping.game, games)
                     try:
                         if venue == "PMUS":
-                            book = pmus_books.get(raw["slug"])
-                            market = attach_fees(normalize_pmus(raw, book, utcnow().isoformat()), utcnow())
+                            evidence = NFLEvidenceProvider(lambda: games).assess(market)
+                            if evidence is None:
+                                statuses["EVIDENCE_MISSING"] += 1
+                                data_unavailable_game_ids.add(mapping.game.game_id)
+                                rows_out.append(row)
+                                continue
+                            acquired = acquisition.book(
+                                raw["slug"],
+                                lambda raw=raw: pmus.book(raw["slug"]),
+                                fair_probability=evidence.fair_probability,
+                                calibration_edge=VALIDATION_ECE,
+                            )
+                            if acquired.book is None or acquired.observed_at is None:
+                                statuses["BOOK_REQUEST_AVOIDED"] += 1
+                                data_unavailable_game_ids.add(mapping.game.game_id)
+                                row["scoring_error"] = "ACQUISITION_AVOIDED"
+                                row["scoring_error_reason"] = acquired.avoided_reason
+                                rows_out.append(row)
+                                continue
+                            market = attach_fees(
+                                normalize_pmus(
+                                    raw, acquired.book, acquired.observed_at
+                                ),
+                                utcnow(),
+                            )
                         else:
                             # Kalshi discovery rows are normalized with their public book
                             # below when the venue exposes one; failures stay explicit.
                             book = kalshi.book(raw["ticker"])
                             market = attach_fees(normalize_kalshi(raw, book, utcnow().isoformat(), event=event), utcnow(), event=event, series=raw.get("_discovery_series"))
-                        evidence = NFLEvidenceProvider(lambda: games).assess(market)
+                            evidence = NFLEvidenceProvider(lambda: games).assess(market)
                         if evidence is None:
                             statuses["EVIDENCE_MISSING"] += 1
                             data_unavailable_game_ids.add(mapping.game.game_id)
@@ -487,6 +510,7 @@ def _scan() -> dict:
         sport="NFL",
         detected_at=lifecycle_at.isoformat(),
     )
+    result["pmus_acquisition"] = acquisition.diagnostics()
     result["slate"] = reconcile_slate(
         scheduled_for_discovery,
         rows_out,
