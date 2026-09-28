@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from maker_spread_economics.live_engine import SafetyStop
+from maker_spread_economics.live_engine import ReconciliationError, SafetyStop
 from maker_spread_economics.polymarket_us import (
     PolymarketUSDiscoveryFailure,
     PolymarketUSPublicClient,
@@ -268,6 +268,63 @@ def test_existing_pmus_public_rate_limit_lockout_remains_intact():
         client.book("nfl-one")
     with pytest.raises(PolymarketUSRateLimit, match="locked out"):
         client.book("nfl-two")
+    assert calls == ["nfl-one"]
+
+
+def test_nfl_book_cache_reuses_one_book_for_both_scoring_sides():
+    calls = []
+    expected = {
+        "nfl-one::YES": {"best_bid": 0.49, "best_ask": 0.51},
+        "nfl-one::NO": {"best_bid": 0.49, "best_ask": 0.51},
+    }
+
+    class Client:
+        def book(self, slug):
+            calls.append(slug)
+            return expected
+
+    books = nfl_live_scan._PMUSBookCache(Client())
+
+    assert books.get("nfl-one") is expected
+    assert books.get("nfl-one") is expected
+    assert calls == ["nfl-one"]
+
+
+def test_nfl_book_cache_rate_limit_blocks_later_client_calls():
+    calls = []
+
+    class Client:
+        def book(self, slug):
+            calls.append(slug)
+            raise PolymarketUSRateLimit("Cloudflare 1015")
+
+    books = nfl_live_scan._PMUSBookCache(Client())
+
+    with pytest.raises(PolymarketUSRateLimit):
+        books.get("nfl-one")
+    with pytest.raises(PolymarketUSRateLimit):
+        books.get("nfl-two")
+    assert calls == ["nfl-one"]
+
+
+def test_nfl_book_cache_reuses_malformed_failure_and_fails_closed():
+    calls = []
+
+    class Markets:
+        def book(self, slug):
+            calls.append(slug)
+            return {}
+
+    client = PolymarketUSPublicClient(
+        client=SimpleNamespace(markets=Markets()),
+        minimum_interval_seconds=0,
+    )
+    books = nfl_live_scan._PMUSBookCache(client)
+
+    with pytest.raises(ReconciliationError, match="market mismatch"):
+        books.get("nfl-one")
+    with pytest.raises(ReconciliationError, match="market mismatch"):
+        books.get("nfl-one")
     assert calls == ["nfl-one"]
 
 
@@ -991,6 +1048,43 @@ def test_nfl_scan_reuses_one_pmus_client_for_discovery_and_multiple_books(monkey
     assert clients[0].book_calls == [row["slug"] for row in rows]
     assert clients[0].closed == 1
     assert result["read_only"] is True and result["orders"] == 0
+
+
+def test_nfl_scan_reuses_duplicate_market_book_for_yes_and_no(monkeypatch, tmp_path):
+    row = _pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[row, dict(row)],
+        book=lambda slug: {"slug": slug},
+    )
+
+    assert clients[0].book_calls == [row["slug"]]
+    assert len([item for item in result["summary"]["rows"] if "verdict" in item]) == 4
+
+
+def test_nfl_scan_rate_limit_stops_all_later_pmus_book_calls(monkeypatch, tmp_path):
+    rows = [
+        _pmus_nfl_row("plain", "nfl-cin-pit-2026-09-27"),
+        _pmus_nfl_row("aec", "aec-nfl-cin-pit-2026-09-27"),
+    ]
+
+    def rate_limited(_slug):
+        raise PolymarketUSRateLimit("Cloudflare 1015")
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=rows,
+        book=rate_limited,
+    )
+
+    assert clients[0].book_calls == [rows[0]["slug"]]
+    failures = [
+        item for item in result["summary"]["rows"] if "scoring_error" in item
+    ]
+    assert len(failures) == 2
+    assert {item["scoring_error"] for item in failures} == {"RATE_LIMITED"}
 
 
 def test_nfl_pmus_rate_limit_is_data_unavailable_with_bounded_diagnostic(monkeypatch, tmp_path):

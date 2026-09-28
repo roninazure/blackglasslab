@@ -55,6 +55,33 @@ PMUS_NFL_MAX_SLUGS = 100
 NFL_VENUE_TEAM_CODES = {"LA": "LAR"}
 
 
+class _PMUSBookCache:
+    """Reuse one fresh book per slug and make cycle rate-limit lockout sticky."""
+
+    def __init__(self, client: PolymarketUSPublicClient) -> None:
+        self.client = client
+        self._books: dict[str, dict] = {}
+        self._failures: dict[str, Exception] = {}
+        self._rate_limit: PolymarketUSRateLimit | None = None
+
+    def get(self, slug: str) -> dict:
+        if slug in self._books:
+            return self._books[slug]
+        if slug in self._failures:
+            raise self._failures[slug]
+        if self._rate_limit is not None:
+            raise self._rate_limit
+        try:
+            book = self.client.book(slug)
+        except Exception as exc:
+            self._failures[slug] = exc
+            if isinstance(exc, PolymarketUSRateLimit):
+                self._rate_limit = exc
+            raise
+        self._books[slug] = book
+        return book
+
+
 def _upcoming_slate(games, now):
     """Return authoritative NFL dates in the rolling horizon, preserving started games."""
     today = now.astimezone(NFL_TZ).date()
@@ -340,6 +367,7 @@ def _scan() -> dict:
     pmus_discovery_complete = False
     kalshi_discovery_complete = False
     pmus = PolymarketUSPublicClient()
+    pmus_books = _PMUSBookCache(pmus)
     try:
         try:
             pmus_rows, pmus_cov = _scope_pmus(pmus, scheduled_for_discovery)
@@ -403,7 +431,7 @@ def _scan() -> dict:
                     row["model_probability"] = probability_for_game(mapping.game, games)
                     try:
                         if venue == "PMUS":
-                            book = pmus.book(raw["slug"])
+                            book = pmus_books.get(raw["slug"])
                             market = attach_fees(normalize_pmus(raw, book, utcnow().isoformat()), utcnow())
                         else:
                             # Kalshi discovery rows are normalized with their public book
