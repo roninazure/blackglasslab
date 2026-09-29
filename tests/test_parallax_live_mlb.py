@@ -1,11 +1,14 @@
+from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+import parallax.__main__ as parallax_main
 from parallax import sources
 from parallax.demo import demo_inputs
 from parallax.inbox import InboxStore
-from parallax.models import Action, Evidence, Venue
 from parallax.mlb import MLBStatsAPI
+from parallax.models import Action, Evidence, Venue
 from parallax.normalization import rules_digest
 from parallax.pmus_acquisition import PMUSAcquisition
 from parallax.service import PlayService
@@ -196,13 +199,228 @@ def test_duplicate_pmus_market_gets_one_book_request(monkeypatch, tmp_path):
     assert calls == [row["slug"]]
 
 
+def test_empty_authoritative_slate_skips_all_venue_traffic(monkeypatch, tmp_path):
+    calls = Counter()
+
+    class EmptySchedule:
+        def scheduled_games_for_date(self, _target_date):
+            return []
+
+    class NoPMUS:
+        def __init__(self):
+            calls["pmus_client"] += 1
+
+    class NoKalshi:
+        def __init__(self):
+            calls["kalshi_client"] += 1
+
+    class NoEvidence:
+        def __init__(self):
+            calls["evidence_provider"] += 1
+
+    monkeypatch.setattr(sources, "MLBStatsAPI", EmptySchedule)
+    monkeypatch.setattr(sources, "PolymarketUSPublicClient", NoPMUS)
+    monkeypatch.setattr(sources, "KalshiPublicClient", NoKalshi)
+    monkeypatch.setattr(sources, "MLBEvidenceProvider", NoEvidence)
+
+    markets, collection = sources.collect_markets(
+        pmus_acquisition=offline_acquisition(tmp_path)
+    )
+
+    assert markets == []
+    assert calls == Counter()
+    assert collection["errors"] == []
+    assert collection["_slate_schedule_state"] == "COMPLETE"
+    assert collection["_slate_discovery_complete"] is True
+    assert collection["pmus_acquisition"]["discovery_requests"] == 0
+    assert collection["pmus_acquisition"]["book_requests"] == 0
+    assert collection["metrics"]["KALSHI.discovery_requests"] == 0
+    report = parallax_main.mlb_slate_report(
+        SimpleNamespace(collection=collection, _plays=list)
+    )
+    assert report["schedule_state"] == "COMPLETE"
+    assert report["expected_games"] == 0
+    assert report["market_data_complete"] is True
+
+
+def test_unavailable_authoritative_slate_fails_closed_without_venue_traffic(
+    monkeypatch, tmp_path
+):
+    calls = Counter()
+
+    class UnavailableSchedule:
+        def scheduled_games_for_date(self, _target_date):
+            raise OSError("offline authoritative schedule failure")
+
+    class NoPMUS:
+        def __init__(self):
+            calls["pmus_client"] += 1
+
+    class NoKalshi:
+        def __init__(self):
+            calls["kalshi_client"] += 1
+
+    monkeypatch.setattr(sources, "MLBStatsAPI", UnavailableSchedule)
+    monkeypatch.setattr(sources, "PolymarketUSPublicClient", NoPMUS)
+    monkeypatch.setattr(sources, "KalshiPublicClient", NoKalshi)
+
+    markets, collection = sources.collect_markets(
+        pmus_acquisition=offline_acquisition(tmp_path)
+    )
+
+    assert markets == []
+    assert calls == Counter()
+    assert collection["_slate_schedule_state"] == "DATA_UNAVAILABLE"
+    assert collection["_slate_discovery_complete"] is False
+    assert collection["pmus_acquisition"]["discovery_requests"] == 0
+    assert collection["pmus_acquisition"]["book_requests"] == 0
+    assert collection["metrics"]["KALSHI.discovery_requests"] == 0
+    assert collection["errors"] == [
+        {
+            "venue": "OFFICIAL_MLB",
+            "stage": "schedule",
+            "error_type": "OSError",
+        }
+    ]
+    report = parallax_main.mlb_slate_report(
+        SimpleNamespace(collection=collection, _plays=list)
+    )
+    assert report["schedule_state"] == "DATA_UNAVAILABLE"
+    assert report["expected_games"] is None
+    assert report["market_data_complete"] is False
+
+
+def test_kalshi_filters_non_slate_markets_before_event_series_and_book(
+    monkeypatch, tmp_path
+):
+    calls = Counter()
+    valid_event = "KXMLBGAME-26SEP29BOSNYY"
+    unrelated_event = "KXMLBGAME-26SEP28BOSNYY"
+
+    class OneGameSchedule:
+        def scheduled_games_for_date(self, _target_date):
+            return [
+                {
+                    "game_id": "123",
+                    "date": "2026-09-29",
+                    "start_time": "2026-09-29T23:05:00+00:00",
+                    "away_team": "Boston Red Sox",
+                    "home_team": "New York Yankees",
+                    "away_team_code": "BOS",
+                    "home_team_code": "NYY",
+                    "schedule_status": "SCHEDULED",
+                }
+            ]
+
+    class FakePMUS:
+        def markets_page(
+            self, *, limit, offset, slugs=None, retry_transport_errors=True
+        ):
+            calls["pmus_discovery"] += 1
+            return []
+
+        def book(self, _slug):
+            calls["pmus_book"] += 1
+            raise AssertionError("empty PMUS result cannot reach a book")
+
+        def close(self):
+            pass
+
+    def kalshi_row(ticker, event_ticker, scheduled_for):
+        return {
+            "ticker": ticker,
+            "event_ticker": event_ticker,
+            "title": "New York Yankees win",
+            "status": "active",
+            "market_type": "binary",
+            "yes_sub_title": "New York Yankees",
+            "no_sub_title": "New York Yankees",
+            "rules_primary": (
+                "If New York Yankees wins the Boston Red Sox vs New York "
+                "Yankees professional baseball game originally scheduled for "
+                f"{scheduled_for} at 7:05 PM EDT, the market resolves to Yes."
+            ),
+            "rules_secondary": "The winner is the official full-game winner.",
+            "price_level_structure": "linear_cent",
+        }
+
+    valid = kalshi_row(f"{valid_event}-NYY", valid_event, "Sep 29, 2026")
+    unrelated = kalshi_row(f"{unrelated_event}-NYY", unrelated_event, "Sep 28, 2026")
+
+    class FakeKalshi:
+        def mlb_markets_page(self, limit=100, cursor=""):
+            calls["kalshi_discovery"] += 1
+            return {"markets": [valid, unrelated]}
+
+        def event(self, ticker):
+            calls[f"event:{ticker}"] += 1
+            return {"event_ticker": ticker, "series_ticker": "KXMLBGAME"}
+
+        def series(self, ticker):
+            calls[f"series:{ticker}"] += 1
+            return {
+                "ticker": ticker,
+                "fee_type": "quadratic",
+                "fee_multiplier": 1,
+            }
+
+        def book(self, ticker):
+            calls[f"book:{ticker}"] += 1
+            return {
+                "orderbook_fp": {
+                    "yes_dollars": [["0.45", "10"]],
+                    "no_dollars": [["0.50", "10"]],
+                }
+            }
+
+    class FakeProvider:
+        def assess(self, market):
+            calls[f"evidence:{market.venue_market_id}"] += 1
+            return Evidence(
+                Venue.KALSHI,
+                market.venue_market_id,
+                0.55,
+                "test",
+                "mlb-v2",
+                "2026-09-29T12:00:00+00:00",
+                "2026-09-29T13:00:00+00:00",
+                rules_digest(market),
+                "official-mlb-statsapi:123",
+                "test",
+            )
+
+    monkeypatch.setattr(sources, "MLBStatsAPI", OneGameSchedule)
+    monkeypatch.setattr(sources, "PolymarketUSPublicClient", FakePMUS)
+    monkeypatch.setattr(sources, "KalshiPublicClient", FakeKalshi)
+    monkeypatch.setattr(sources, "MLBEvidenceProvider", FakeProvider)
+
+    markets, collection = sources.collect_markets(
+        pmus_acquisition=offline_acquisition(tmp_path)
+    )
+
+    assert [market.venue_market_id for market in markets] == [valid["ticker"]]
+    assert calls["kalshi_discovery"] == 1
+    assert calls[f"event:{valid_event}"] == 1
+    assert calls["series:KXMLBGAME"] == 1
+    assert calls[f"book:{valid['ticker']}"] == 1
+    assert calls[f"evidence:{valid['ticker']}"] == 1
+    assert calls[f"event:{unrelated_event}"] == 0
+    assert calls[f"book:{unrelated['ticker']}"] == 0
+    assert calls[f"evidence:{unrelated['ticker']}"] == 0
+    assert not any(
+        error["stage"] == "mapping_or_evidence" for error in collection["errors"]
+    )
+    assert collection["metrics"]["KALSHI.markets_in_authoritative_slate"] == 1
+    assert collection["metrics"]["KALSHI.markets_filtered_out"] == 1
+    assert collection["_slate_discovery_complete"] is True
+
+
 class SpyEvidenceEngine:
     def __init__(self):
         self.calls = 0
 
     def assess(self, market):
         self.calls += 1
-        return None
 
 
 def service_with_spy(tmp_path):
@@ -344,9 +562,6 @@ def test_live_mlb_capture_is_once_per_side_per_service_invocation(tmp_path, monk
 
 
 def test_mlb_slate_report_accounts_for_every_scheduled_game():
-    from types import SimpleNamespace
-    import parallax.__main__ as parallax_main
-
     schedule = [
         {
             "game_id": f"game-{index}",

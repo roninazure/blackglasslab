@@ -6,20 +6,21 @@ import threading
 import time
 from collections import Counter
 from dataclasses import replace
+from datetime import UTC, date, datetime
 from urllib.parse import quote, urlencode
-from zoneinfo import ZoneInfo
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from maker_spread_economics.polymarket_us import PolymarketUSPublicClient
 
-from .fair_value import assess_value
-from .fees import attach_fees
 from .discovery import MAX_ACTIVE_MARKETS_PER_VENUE, paginate_collection
 from .discovery import classify_market as classify_inventory_market
 from .discovery import normalize_market as normalize_inventory_market
-from .mlb import MLBEvidenceProvider, MLBStatsAPI
+from .fair_value import assess_value
+from .fees import attach_fees
+from .mlb import MLBEvidenceProvider, MLBStatsAPI, _team_key
 from .models import NormalizedMarket, utcnow
-from .normalization import normalize_kalshi, normalize_pmus
+from .normalization import _mlb_metadata, normalize_kalshi, normalize_pmus
 from .pmus_acquisition import PMUSAcquisition
 
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
@@ -130,6 +131,52 @@ def _pmus_mlb_slugs(scheduled: list[dict]) -> list[str]:
         base = f"mlb-{away}-{home}-{date}"
         slugs.extend((base, f"aec-{base}"))
     return list(dict.fromkeys(slugs))
+
+
+def _kalshi_mlb_event_tickers(scheduled: list[dict]) -> set[str]:
+    """Construct exact Kalshi game-event identities from the official slate."""
+    tickers: set[str] = set()
+    for game in scheduled:
+        away = str(game.get("away_team_code") or "").strip().upper()
+        home = str(game.get("home_team_code") or "").strip().upper()
+        raw_date = str(game.get("date") or "").strip()
+        if not away or not home or not raw_date:
+            raise ValueError("official MLB schedule omitted venue event identity")
+        game_date = date.fromisoformat(raw_date)
+        tickers.add(f"KXMLBGAME-{game_date.strftime('%y%b%d').upper()}{away}{home}")
+    return tickers
+
+
+def _kalshi_mlb_row_in_slate(
+    row: dict,
+    scheduled: list[dict],
+    eligible_event_tickers: set[str],
+) -> bool:
+    """Match explicit Kalshi game metadata to the authoritative local slate."""
+    mlb = _mlb_metadata(row)
+    if isinstance(mlb, dict):
+        try:
+            start = datetime.fromisoformat(str(mlb["start_time"]))
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=UTC)
+            local_date = start.astimezone(MLB_TZ).date().isoformat()
+            teams = {_team_key(mlb["away_team"]), _team_key(mlb["home_team"])}
+        except (KeyError, TypeError, ValueError):
+            pass
+        else:
+            return any(
+                local_date == str(game.get("date") or "").strip()
+                and teams
+                == {
+                    _team_key(game.get("away_team")),
+                    _team_key(game.get("home_team")),
+                }
+                for game in scheduled
+            )
+
+    # Exact event identity is a safe fallback for venue rows whose rules omit
+    # parseable team/time metadata. Evidence must still map the row to gamePk.
+    return str(row.get("event_ticker") or "").strip().upper() in eligible_event_tickers
 
 
 def _scope_pmus_mlb(
@@ -339,9 +386,42 @@ def collect_markets(
     slate_schedule_state = "COMPLETE"
     try:
         slate_schedule = MLBStatsAPI().scheduled_games_for_date(target_date)
-    except Exception as exc:  # Official schedule failure must stay explicit.
+    except Exception as exc:  # noqa: BLE001 - schedule failure stays explicit
         slate_schedule_state = "DATA_UNAVAILABLE"
         failure("OFFICIAL_MLB", "schedule", exc)
+
+    def collection_report() -> dict:
+        return {
+            "metrics": dict(metrics),
+            "errors": errors,
+            "scope": "schedule-targeted current MLB moneyline discovery across PMUS and Kalshi KXMLBGAME",
+            "pmus_acquisition": acquisition.diagnostics(),
+            "_slate_schedule": slate_schedule,
+            "_slate_schedule_state": slate_schedule_state,
+            "_slate_discovery_complete": (
+                pmus_discovery_complete
+                and kalshi_discovery_complete
+                and not any(error["stage"] == "mapping_or_evidence" for error in errors)
+            ),
+            "_market_game_ids": market_game_ids,
+            "_slate_data_unavailable_game_ids": sorted(data_unavailable_game_ids),
+            # Request-local transport for the normal service scorer.  This is
+            # consumed immediately by PlayService and is never persisted.
+            "_evidence": collected_evidence,
+        }
+
+    # The official schedule is the discovery authority for both venues.  A
+    # successful empty slate is complete; an unavailable slate remains an
+    # explicit failure.  Neither case permits a venue market request.
+    if slate_schedule_state != "COMPLETE" or not slate_schedule:
+        schedule_is_complete = slate_schedule_state == "COMPLETE"
+        pmus_discovery_complete = schedule_is_complete
+        kalshi_discovery_complete = schedule_is_complete
+        metrics["POLYMARKET.discovery_requests"] = 0
+        metrics["POLYMARKET.markets_discovered"] = 0
+        metrics["KALSHI.discovery_requests"] = 0
+        metrics["KALSHI.markets_discovered"] = 0
+        return [], collection_report()
 
     pmus = None
     try:
@@ -405,6 +485,7 @@ def collect_markets(
     kalshi = KalshiPublicClient()
     events, series = {}, {}
     try:
+        eligible_event_tickers = _kalshi_mlb_event_tickers(slate_schedule)
         rows, kalshi_coverage = paginate_collection(
             kalshi.mlb_markets_page,
             key="markets",
@@ -416,8 +497,18 @@ def collect_markets(
         discovery_at = utcnow().isoformat()
         metrics["KALSHI.markets_discovered"] = len(rows)
         rows = _dedupe_rows(rows, "ticker")
+        scoped_rows = [
+            row
+            for row in rows
+            if _kalshi_mlb_row_in_slate(row, slate_schedule, eligible_event_tickers)
+        ]
+        metrics["KALSHI.markets_in_authoritative_slate"] = len(scoped_rows)
+        metrics["KALSHI.markets_filtered_out"] = len(rows) - len(scoped_rows)
         provider = MLBEvidenceProvider()
-        for row in rows:
+        scheduled_game_ids = {
+            str(game.get("game_id") or "").strip() for game in slate_schedule
+        }
+        for row in scoped_rows:
             book, trades = {}, None
             event, fee_series = None, None
             mapped_game_id = None
@@ -438,9 +529,20 @@ def collect_markets(
                 candidate = normalize_kalshi(row, {}, discovery_at, None, event)
                 proof = provider.assess(candidate)
                 if proof is None:
-                    failure("KALSHI", "mapping_or_evidence", ValueError("no exact MLB match or evidence"))
+                    failure(
+                        "KALSHI",
+                        "mapping_or_evidence",
+                        ValueError("no exact MLB match or evidence"),
+                    )
                     continue
                 mapped_game_id = _mlb_game_id(proof.review_reference)
+                if mapped_game_id not in scheduled_game_ids:
+                    failure(
+                        "KALSHI",
+                        "mapping_or_evidence",
+                        ValueError("MLB evidence mapped outside authoritative slate"),
+                    )
+                    continue
                 book = kalshi.book(row["ticker"])
                 observed_at = utcnow().isoformat()
                 market = normalize_kalshi(row, book, observed_at, trades, event)
@@ -449,7 +551,9 @@ def collect_markets(
                 markets.append(market)
                 collected_evidence[(market.venue, market.venue_market_id)] = proof
                 if mapped_game_id:
-                    market_game_ids[f"{market.venue.value}:{market.venue_market_id}"] = mapped_game_id
+                    market_game_ids[
+                        f"{market.venue.value}:{market.venue_market_id}"
+                    ] = mapped_game_id
                 metrics["KALSHI.markets_observed"] += 1
                 metrics["KALSHI.evidence_produced"] += 1
             except (ValueError, TypeError, KeyError) as exc:
@@ -473,21 +577,4 @@ def collect_markets(
         )
         for m in markets
     ]
-    return markets, {
-        "metrics": dict(metrics),
-        "errors": errors,
-        "scope": "schedule-targeted current MLB moneyline discovery across PMUS and Kalshi KXMLBGAME",
-        "pmus_acquisition": acquisition.diagnostics(),
-        "_slate_schedule": slate_schedule,
-        "_slate_schedule_state": slate_schedule_state,
-        "_slate_discovery_complete": (
-            pmus_discovery_complete
-            and kalshi_discovery_complete
-            and not any(error["stage"] == "mapping_or_evidence" for error in errors)
-        ),
-        "_market_game_ids": market_game_ids,
-        "_slate_data_unavailable_game_ids": sorted(data_unavailable_game_ids),
-        # Request-local transport for the normal service scorer.  This is
-        # consumed immediately by PlayService and is never persisted.
-        "_evidence": collected_evidence,
-    }
+    return markets, collection_report()
