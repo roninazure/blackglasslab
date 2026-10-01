@@ -1,5 +1,7 @@
-from dataclasses import replace
+import json
 import sqlite3
+import sys
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -252,6 +254,48 @@ def test_mlb_buy_alert_failure_does_not_fail_scan(monkeypatch):
         "deduplicated": 0,
         "failed": 1,
     }
+
+
+def test_general_scan_cli_dispatches_only_scored_kalshi_buy(
+    monkeypatch, tmp_path, capsys
+):
+    import parallax.__main__ as parallax_main
+
+    transport = FakeTransport()
+    alert_dispatcher = dispatcher(tmp_path, transport)
+    scored = [play(Action.BUY), play(Action.WATCH), play(Action.PASS)]
+    service = SimpleNamespace(
+        markets=[market()],
+        collection={},
+        alert_dispatcher=alert_dispatcher,
+        _plays=lambda: scored,
+        health=lambda: {"state": "ok"},
+        plays=lambda _plan: {"items": [], "total": 0},
+        signals=lambda _plan: {"items": [], "total": 0},
+    )
+    monkeypatch.setattr(parallax_main, "make_service", lambda *_args, **_kwargs: service)
+    monkeypatch.setattr(
+        parallax_main,
+        "reconcile_scan_buy_lifecycle",
+        lambda *_args, **_kwargs: {"withdrawn": 0, "expired": 0, "failed": 0},
+    )
+    monkeypatch.setattr(
+        parallax_main,
+        "mlb_slate_report",
+        lambda _service: {"market_data_complete": True},
+    )
+    monkeypatch.setattr(sys, "argv", ["parallax", "scan"])
+
+    parallax_main.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["buy_alerts"] == {
+        "sent": 1,
+        "deduplicated": 0,
+        "failed": 0,
+    }
+    assert len(transport.calls) == 1
+    assert transport.calls[0][1]["title"] == "PARALLAX BUY"
 
 
 def test_delivered_buy_is_withdrawn_once_when_rescored_watch(tmp_path):
@@ -550,6 +594,47 @@ def test_mlb_scan_collapses_equivalent_kalshi_buys_to_one_best_price(monkeypatch
     assert selected_play.executable_price == 0.25
     assert kwargs["economic_key"] == "MLB:823165:sanfranciscogiants"
     assert kwargs["selected_side"] == "San Francisco Giants"
+
+
+def test_general_scan_cross_venue_buy_dedupes_and_material_change_realerts(tmp_path):
+    import parallax.__main__ as parallax_main
+
+    kalshi_market = _mlb_market("Los Angeles Dodgers", "KAL-LAD-NO")
+    pmus_market = replace(
+        _mlb_market("San Francisco Giants", "PMUS-SF-YES"),
+        venue=Venue.POLYMARKET,
+    )
+    kalshi_buy = _mlb_play(
+        "KAL-LAD-NO", Side.NO, "Los Angeles D", 0.25, 16.5
+    )
+    pmus_buy = _mlb_play(
+        "PMUS-SF-YES", Side.YES, "San Francisco Giants", 0.26, 15.5
+    )
+    pmus_buy.venue = Venue.POLYMARKET
+    transport = FakeTransport()
+    alert_dispatcher = dispatcher(tmp_path, transport)
+    service = SimpleNamespace(
+        markets=[kalshi_market, pmus_market],
+        collection={
+            "_market_game_ids": {
+                "KALSHI:KAL-LAD-NO": "823165",
+                "POLYMARKET:PMUS-SF-YES": "823165",
+            }
+        },
+        alert_dispatcher=alert_dispatcher,
+        _plays=lambda: [kalshi_buy, pmus_buy],
+    )
+
+    first = parallax_main.dispatch_scan_buy_alerts(service, sport="MLB")
+    duplicate = parallax_main.dispatch_scan_buy_alerts(service, sport="MLB")
+    kalshi_buy.executable_price = 0.24
+    changed = parallax_main.dispatch_scan_buy_alerts(service, sport="MLB")
+
+    assert first == {"sent": 1, "deduplicated": 0, "failed": 0}
+    assert duplicate == {"sent": 0, "deduplicated": 1, "failed": 0}
+    assert changed == {"sent": 1, "deduplicated": 0, "failed": 0}
+    assert len(transport.calls) == 2
+    assert all("Venue: KALSHI" in payload["message"] for _, payload in transport.calls)
 
 
 def test_economic_buy_identity_dedupes_contract_switch_and_keeps_one_active_state(tmp_path):
