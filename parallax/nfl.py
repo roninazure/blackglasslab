@@ -243,7 +243,15 @@ def _apply_calibration(raw: float, intercept: float, slope: float) -> float:
     return 1 / (1 + math.exp(-max(-30, min(30, intercept + slope * logit))))
 
 
-def is_supported_market(market: NormalizedMarket) -> bool:
+NFL_DERIVATIVE_PATTERN = re.compile(
+    r"\b(?:spreads?|totals?|first\s+half|quarters?|touchdowns?|props?|futures?|"
+    r"super\s+bowl|playoff\s+berths?|season\s+wins?)\b|\bover\s*/\s*under\b",
+    re.IGNORECASE,
+)
+
+
+def market_support_reason(market: NormalizedMarket) -> str:
+    """Return a stable, redacted pre-mapping eligibility diagnostic."""
     raw = market.original_metadata.get("market", {})
     sides = raw.get("marketSides") or []
     nfl_sides = isinstance(sides, list) and len(sides) == 2 and all(
@@ -257,11 +265,22 @@ def is_supported_market(market: NormalizedMarket) -> bool:
         str(value or "").upper().startswith("KXNFLGAME")
         for value in (raw.get("ticker"), raw.get("event_ticker"), market.event)
     )
-    banned = ("spread", "total", "over/under", "first half", "quarter", "touchdown", "prop", "future", "super bowl", "playoff berth", "season win")
     winner_semantics = kalshi_nfl_family or any(
         x in text for x in ("moneyline", "game winner", "wins", "winner")
     )
-    return market.venue in {Venue.POLYMARKET, Venue.KALSHI} and ("nfl" in text or nfl_sides or kalshi_nfl_family) and winner_semantics and not any(x in text for x in banned)
+    if market.venue not in {Venue.POLYMARKET, Venue.KALSHI}:
+        return "REJECTED_VENUE"
+    if not ("nfl" in text or nfl_sides or kalshi_nfl_family):
+        return "REJECTED_NOT_NFL"
+    if not winner_semantics:
+        return "REJECTED_MISSING_WINNER_SEMANTICS"
+    if NFL_DERIVATIVE_PATTERN.search(text):
+        return "REJECTED_DERIVATIVE"
+    return "SUPPORTED"
+
+
+def is_supported_market(market: NormalizedMarket) -> bool:
+    return market_support_reason(market) == "SUPPORTED"
 
 
 def nfl_calibration_safe(edge: float | None) -> bool:

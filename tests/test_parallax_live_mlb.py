@@ -9,7 +9,7 @@ from parallax.demo import demo_inputs
 from parallax.inbox import InboxStore
 from parallax.mlb import MLBStatsAPI
 from parallax.models import Action, Evidence, Venue
-from parallax.normalization import rules_digest
+from parallax.normalization import normalize_kalshi, rules_digest
 from parallax.pmus_acquisition import PMUSAcquisition
 from parallax.service import PlayService
 from parallax.track_record import TrackRecord
@@ -105,6 +105,91 @@ def test_mlb_official_schedule_preserves_doubleheaders_as_separate_games():
 
     assert [row["game_id"] for row in slate] == ["1001", "1002"]
     assert all(row["date"] == "2026-09-24" for row in slate)
+
+
+def test_mlb_official_schedule_preserves_supported_postseason_games():
+    def game(game_id, game_type):
+        return {
+            "gamePk": game_id,
+            "gameType": game_type,
+            "gameDate": "2026-10-02T23:05:00Z",
+            "status": {"detailedState": "Scheduled"},
+            "teams": {
+                "away": {"team": {"name": "Boston Red Sox"}},
+                "home": {"team": {"name": "New York Yankees"}},
+            },
+        }
+
+    payload = {
+        "dates": [
+            {
+                "games": [
+                    game(2001, "F"),
+                    game(2002, "D"),
+                    game(2003, "L"),
+                    game(2004, "W"),
+                    game(2005, "S"),
+                ]
+            }
+        ]
+    }
+
+    slate = MLBStatsAPI(transport=lambda _path: payload).scheduled_games_for_date(
+        "2026-10-02"
+    )
+
+    assert [(row["game_id"], row["game_type"]) for row in slate] == [
+        ("2001", "F"),
+        ("2002", "D"),
+        ("2003", "L"),
+        ("2004", "W"),
+    ]
+
+
+def test_mlb_game_for_market_accepts_supported_postseason_game_type(monkeypatch):
+    calls = []
+    target = {
+        "gamePk": 2002,
+        "gameType": "D",
+        "gameDate": "2026-10-02T23:05:00Z",
+        "status": {"abstractGameState": "Preview", "detailedState": "Scheduled"},
+        "teams": {
+            "away": {"team": {"id": 111, "name": "Boston Red Sox"}},
+            "home": {"team": {"id": 147, "name": "New York Yankees"}},
+        },
+    }
+
+    def transport(path):
+        calls.append(path)
+        if path.startswith("/standings?"):
+            return {"records": []}
+        return {"dates": [{"games": [target]}]}
+
+    raw = {
+        "ticker": "KXMLBGAME-26OCT02BOSNYY-NYY",
+        "event_ticker": "KXMLBGAME-26OCT02BOSNYY",
+        "title": "New York Yankees win",
+        "yes_sub_title": "New York Yankees",
+        "no_sub_title": "New York Yankees",
+        "status": "active",
+        "market_type": "binary",
+        "rules_primary": (
+            "If New York Yankees wins the Boston Red Sox vs New York Yankees "
+            "professional baseball game originally scheduled for Oct 2, 2026 "
+            "at 7:05 PM EDT, then the market resolves to Yes."
+        ),
+    }
+    market = normalize_kalshi(raw, {}, "2026-10-01T12:00:00+00:00")
+    monkeypatch.setattr(
+        "parallax.mlb.utcnow", lambda: datetime(2026, 10, 1, 12, tzinfo=UTC)
+    )
+
+    mapped = MLBStatsAPI(transport=transport).game_for_market(market)
+
+    assert mapped is not None
+    assert mapped.game_id == "2002"
+    assert mapped.game_type == "D"
+    assert not any("startDate=" in path for path in calls)
 
 
 def test_current_nested_pmus_metadata_is_mlb_moneyline():
@@ -413,6 +498,126 @@ def test_kalshi_filters_non_slate_markets_before_event_series_and_book(
     assert collection["metrics"]["KALSHI.markets_in_authoritative_slate"] == 1
     assert collection["metrics"]["KALSHI.markets_filtered_out"] == 1
     assert collection["_slate_discovery_complete"] is True
+
+
+def test_postseason_slate_collects_only_schedule_matched_kalshi_moneylines(
+    monkeypatch, tmp_path
+):
+    calls = Counter()
+    event_ticker = "KXMLBGAME-26OCT02BOSNYY"
+
+    class PostseasonSchedule:
+        def scheduled_games_for_date(self, _target_date):
+            return [
+                {
+                    "game_id": "2002",
+                    "game_type": "D",
+                    "date": "2026-10-02",
+                    "start_time": "2026-10-02T23:05:00+00:00",
+                    "away_team": "Boston Red Sox",
+                    "home_team": "New York Yankees",
+                    "away_team_code": "BOS",
+                    "home_team_code": "NYY",
+                    "schedule_status": "SCHEDULED",
+                }
+            ]
+
+    class EmptyPMUS:
+        def markets_page(self, **_kwargs):
+            calls["pmus_discovery"] += 1
+            return []
+
+        def close(self):
+            pass
+
+    def row(ticker, event, scheduled_for):
+        return {
+            "ticker": ticker,
+            "event_ticker": event,
+            "title": "New York Yankees win",
+            "yes_sub_title": "New York Yankees",
+            "no_sub_title": "New York Yankees",
+            "status": "active",
+            "market_type": "binary",
+            "rules_primary": (
+                "If New York Yankees wins the Boston Red Sox vs New York Yankees "
+                f"professional baseball game originally scheduled for {scheduled_for} "
+                "at 7:05 PM EDT, then the market resolves to Yes."
+            ),
+            "rules_secondary": "The winner is the official full-game winner.",
+            "price_level_structure": "linear_cent",
+        }
+
+    matched = row(f"{event_ticker}-NYY", event_ticker, "Oct 2, 2026")
+    unrelated = row(
+        "KXMLBGAME-26OCT03BOSNYY-NYY",
+        "KXMLBGAME-26OCT03BOSNYY",
+        "Oct 3, 2026",
+    )
+
+    class FakeKalshi:
+        def mlb_markets_page(self, limit=100, cursor=""):
+            calls["kalshi_discovery"] += 1
+            return {"markets": [matched, unrelated]}
+
+        def event(self, ticker):
+            calls[f"event:{ticker}"] += 1
+            return {"event_ticker": ticker, "series_ticker": "KXMLBGAME"}
+
+        def series(self, ticker):
+            calls[f"series:{ticker}"] += 1
+            return {"ticker": ticker, "fee_type": "quadratic", "fee_multiplier": 1}
+
+        def book(self, ticker):
+            calls[f"book:{ticker}"] += 1
+            return {
+                "orderbook_fp": {
+                    "yes_dollars": [["0.45", "100"]],
+                    "no_dollars": [["0.50", "100"]],
+                }
+            }
+
+    class PostseasonEvidence:
+        def assess(self, market):
+            calls[f"evidence:{market.venue_market_id}"] += 1
+            return Evidence(
+                Venue.KALSHI,
+                market.venue_market_id,
+                0.55,
+                "test",
+                "mlb-v2",
+                "2026-10-02T12:00:00+00:00",
+                "2026-10-02T13:00:00+00:00",
+                rules_digest(market),
+                "official-mlb-statsapi:2002",
+                "postseason test",
+                validation_reference="unvalidated:mlb-v2:official-postseason",
+                source_independence="AUTHORITATIVE_PRIMARY",
+                validation_status="UNVALIDATED",
+            )
+
+    monkeypatch.setattr(sources, "MLBStatsAPI", PostseasonSchedule)
+    monkeypatch.setattr(sources, "PolymarketUSPublicClient", EmptyPMUS)
+    monkeypatch.setattr(sources, "KalshiPublicClient", FakeKalshi)
+    monkeypatch.setattr(sources, "MLBEvidenceProvider", PostseasonEvidence)
+    monkeypatch.setattr(
+        sources,
+        "utcnow",
+        lambda: datetime(2026, 10, 2, 12, tzinfo=UTC),
+    )
+
+    markets, collection = sources.collect_markets(
+        pmus_acquisition=offline_acquisition(tmp_path)
+    )
+
+    assert [market.venue_market_id for market in markets] == [matched["ticker"]]
+    assert calls["kalshi_discovery"] == 1
+    assert calls[f"book:{matched['ticker']}"] == 1
+    assert calls[f"book:{unrelated['ticker']}"] == 0
+    assert calls[f"evidence:{matched['ticker']}"] == 1
+    assert calls[f"evidence:{unrelated['ticker']}"] == 0
+    assert collection["metrics"]["KALSHI.markets_in_authoritative_slate"] == 1
+    assert collection["metrics"]["KALSHI.markets_filtered_out"] == 1
 
 
 class SpyEvidenceEngine:

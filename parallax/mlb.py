@@ -24,6 +24,21 @@ MODEL_VERSION = "mlb-v2"
 SOURCE_ID = "official-mlb-statsapi"
 VALIDITY_SECONDS = 15 * 60
 
+# MLB Stats API game types that represent official games eligible for the
+# authoritative live slate.  Spring training, exhibitions, and the All-Star
+# Game remain out of scope.  The model's calibration population is deliberately
+# narrower; postseason targets are observable but fail closed below.
+SUPPORTED_MLB_GAME_TYPES = frozenset({"R", "F", "D", "L", "W"})
+CALIBRATED_MLB_GAME_TYPES = frozenset({"R"})
+
+
+def is_supported_mlb_game_type(value: object) -> bool:
+    return str(value or "R").strip().upper() in SUPPORTED_MLB_GAME_TYPES
+
+
+def is_calibrated_mlb_game_type(value: object) -> bool:
+    return str(value or "R").strip().upper() in CALIBRATED_MLB_GAME_TYPES
+
 MLB_VENUE_TEAM_CODES = {
     "arizonadiamondbacks": "ARI",
     "atlantabraves": "ATL",
@@ -141,6 +156,7 @@ class MLBGameFact:
     away_bullpen_era: float | None = None
     home_won: bool | None = None
     v2_probability: float | None = None
+    game_type: str = "R"
 
 
 V2_MODEL_VERSION = MODEL_VERSION
@@ -237,8 +253,9 @@ class MLBStatsAPI:
         scheduled: list[dict[str, Any]] = []
         for day in payload.get("dates", []):
             for row in day.get("games", []):
-                if row.get("gameType", "R") != "R":
+                if not is_supported_mlb_game_type(row.get("gameType")):
                     continue
+                game_type = str(row.get("gameType") or "R").strip().upper()
                 game_id = str(row.get("gamePk") or "").strip()
                 start = _parse_time(row.get("gameDate"))
                 teams = row.get("teams", {})
@@ -267,6 +284,7 @@ class MLBStatsAPI:
                 scheduled.append(
                     {
                         "game_id": game_id,
+                        "game_type": game_type,
                         "date": target_date,
                         "start_time": start.isoformat(),
                         "away_team": away,
@@ -306,7 +324,10 @@ class MLBStatsAPI:
             for row in day.get("games", []):
                 teams = row.get("teams", {})
                 names = {_team_key(teams.get("home", {}).get("team", {}).get("name")), _team_key(teams.get("away", {}).get("team", {}).get("name"))}
-                if names == {_team_key(home), _team_key(away)} and row.get("gameType", "R") == "R":
+                if (
+                    names == {_team_key(home), _team_key(away)}
+                    and is_supported_mlb_game_type(row.get("gameType"))
+                ):
                     matches.append(row)
         if len(matches) != 1:
             return None
@@ -344,26 +365,35 @@ class MLBStatsAPI:
                 float(facts["home_win_rate"]), float(facts["away_win_rate"]),
                 float(facts["home_run_diff_per_game"]), float(facts["away_run_diff_per_game"]),
                 facts.get("home_pitcher_era"), facts.get("away_pitcher_era"),
-                facts.get("home_bullpen_era"), facts.get("away_bullpen_era"), v2_probability=v2,
+                facts.get("home_bullpen_era"), facts.get("away_bullpen_era"),
+                v2_probability=v2,
+                game_type=str(row.get("gameType") or "R").strip().upper(),
             )
         except (KeyError, TypeError, ValueError):
             return None
 
     def _v2_for_target(self, target: dict[str, Any]) -> float | None:
         """Replay the validated state using only completed games before target."""
-        if str(target.get("gamePk")) in self._target_probability_cache:
-            return self._target_probability_cache[str(target.get("gamePk"))]
+        game_id = str(target.get("gamePk"))
+        if game_id in self._target_probability_cache:
+            return self._target_probability_cache[game_id]
+        if not is_calibrated_mlb_game_type(target.get("gameType")):
+            self._target_probability_cache[game_id] = None
+            return None
         from .mlb import V2State, advance_v2_state, calibrated_v2_probability, v2_probability_from_state
         target_time = _parse_time(target.get("gameDate"))
         if target_time is None:
-            self._target_probability_cache[str(target.get("gamePk"))] = None
+            self._target_probability_cache[game_id] = None
             return None
         state = V2State()
         for season in range(2023, target_time.year + 1):
             payload = self.transport("/schedule?" + urlencode({"sportId": 1, "startDate": f"{season}-03-20", "endDate": f"{season}-11-01", "hydrate": "team"}))
             for day in payload.get("dates", []):
                 for game in day.get("games", []):
-                    if game.get("gameType") != "R" or game.get("status", {}).get("abstractGameState") != "Final":
+                    if (
+                        not is_calibrated_mlb_game_type(game.get("gameType"))
+                        or game.get("status", {}).get("abstractGameState") != "Final"
+                    ):
                         continue
                     game_time = _parse_time(game.get("gameDate"))
                     if game_time is None or game_time >= target_time:
@@ -420,6 +450,7 @@ class MLBEvidenceProvider:
             elif yes != home_key:
                 return None
             now = self.clock()
+            postseason_calibrated = is_calibrated_mlb_game_type(game.game_type)
             return Evidence(
                 venue=market.venue, market_id=market.venue_market_id,
                 fair_probability=probability, source=self.name, model_version=MODEL_VERSION,
@@ -428,9 +459,16 @@ class MLBEvidenceProvider:
                 rationale=(f"Pregame MLB model from home/away record, run differential, home field"
                            f" and available pitching facts for {game.away_team} at {game.home_team}."),
                 independent_sources=(f"{MLB_API}/schedule gamePk={game.game_id}",),
-                validation_reference="calibration:mlb-v2:2024-trained-2025-untouched-official-regular-season",
+                validation_reference=(
+                    "calibration:mlb-v2:2024-trained-2025-untouched-official-regular-season"
+                    if postseason_calibrated
+                    else "unvalidated:mlb-v2:official-postseason"
+                ),
                 play_type=PlayType.PARALLAX_VALUE, source_independence="AUTHORITATIVE_PRIMARY",
-                validation_status="CALIBRATED",
+                validation_status=(
+                    "CALIBRATED" if postseason_calibrated else "UNVALIDATED"
+                ),
+                forecast_metadata={"official_game_type": game.game_type},
             )
         except Exception:
             return None

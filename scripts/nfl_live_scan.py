@@ -35,7 +35,7 @@ from parallax.nfl import (
     VALIDATION_ECE,
     NFLEvidenceProvider,
     fetch_games,
-    is_supported_market,
+    market_support_reason,
     map_market_to_game,
     probability_for_game,
 )
@@ -415,8 +415,9 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                 except (KeyError, TypeError, ValueError):
                     statuses["MALFORMED"] += 1
                     continue
-                if not is_supported_market(market):
-                    rejection_reasons["NON_GAME_WINNER_OR_DERIVATIVE"] += 1
+                support_reason = market_support_reason(market)
+                if support_reason != "SUPPORTED":
+                    rejection_reasons[support_reason] += 1
                     continue
                 mapping = map_market_to_game(market, games)
                 statuses[mapping.status] += 1

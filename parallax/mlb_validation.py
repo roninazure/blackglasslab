@@ -4,7 +4,7 @@ import json, math
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlencode
-from .mlb import MLB_API, MLBGameFact, V2State, advance_v2_state, game_probability_v1, v2_probability_from_state
+from .mlb import MLB_API, MLBGameFact, V2State, advance_v2_state, game_probability_v1, is_calibrated_mlb_game_type, v2_probability_from_state
 
 def _season_schedule(season: int, transport: Callable[[str], dict[str, Any]]) -> list[dict[str, Any]]:
     payload = transport("/schedule?" + urlencode({"sportId": 1, "startDate": f"{season}-03-20", "endDate": f"{season}-11-01", "hydrate": "team"}))
@@ -48,7 +48,7 @@ def build_cache(seasons: tuple[int,...], transport: Callable[[str], dict[str,Any
     rows=[]
     for season in seasons:
         for g in _season_schedule(season,transport):
-            if g.get("status",{}).get("abstractGameState") != "Final" or g.get("gameType") != "R": continue
+            if g.get("status",{}).get("abstractGameState") != "Final" or not is_calibrated_mlb_game_type(g.get("gameType")): continue
             t=g.get("teams",{}); h=t.get("home",{}); a=t.get("away",{}); ht=h.get("team",{}); at=a.get("team",{})
             if not ht.get("id") or not at.get("id") or "isWinner" not in h: continue
             rows.append({"game_id":str(g["gamePk"]),"season":season,"start_time":g["gameDate"],"home_team":ht.get("name"),"away_team":at.get("name"),"home_id":str(ht["id"]),"away_id":str(at["id"]),"home_runs":int(h.get("score",0)),"away_runs":int(a.get("score",0)),"home_won":bool(h["isWinner"])})

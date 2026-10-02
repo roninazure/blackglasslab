@@ -19,6 +19,7 @@ from parallax.nfl import (
     NFLEvidenceProvider,
     NFLGame,
     is_supported_market,
+    market_support_reason,
     map_market_to_game,
     nfl_calibration_safe,
     parse_games,
@@ -535,6 +536,180 @@ def test_current_kalshi_nfl_game_family_is_supported():
     assert is_supported_market(market)
 
 
+def test_kalshi_nfl_disclaimer_property_does_not_trigger_prop_rejection():
+    raw = {
+        "ticker": "KXNFLGAME-26SEP13ARILAC-LAC",
+        "event_ticker": "KXNFLGAME-26SEP13ARILAC",
+        "title": "Los Angeles C wins",
+        "yes_sub_title": "LAC",
+        "no_sub_title": "LAC",
+        "status": "open",
+        "market_type": "binary",
+        "expected_expiration_time": "2026-09-14T02:25:00Z",
+        "rules_primary": (
+            "If Los Angeles C wins the Arizona vs Los Angeles C professional "
+            "football game, then the market resolves to Yes."
+        ),
+        "rules_secondary": (
+            "All team names, logos, and other marks are property of their "
+            "respective owners."
+        ),
+        "away_team": "ARI",
+        "home_team": "LAC",
+        "scheduled_start": "2026-09-13T20:25:00+00:00",
+    }
+    market = normalize_kalshi(raw, {}, "2026-09-10T00:00:00+00:00")
+    game = NFLGame(
+        "g", 2026, "REG", raw["scheduled_start"], "LAC", "ARI", None, None
+    )
+
+    assert market_support_reason(market) == "SUPPORTED"
+    assert map_market_to_game(
+        market, [game], now=datetime(2026, 9, 10, tzinfo=UTC)
+    ).status == "MAPPED_GAME_WINNER"
+
+
+def test_nfl_scan_reports_redacted_rejections_and_scores_property_disclaimer_market(
+    monkeypatch, tmp_path
+):
+    now = datetime(2026, 9, 10, 12, tzinfo=UTC)
+    game = NFLGame(
+        "g", 2026, "REG", "2026-09-13T20:25:00+00:00", "LAC", "ARI", None, None
+    )
+    event_ticker = "KXNFLGAME-26SEP13ARILAC"
+
+    def raw_market(ticker, title, rules):
+        return {
+            "ticker": ticker,
+            "event_ticker": event_ticker,
+            "title": title,
+            "yes_sub_title": "LAC",
+            "no_sub_title": "LAC",
+            "status": "open",
+            "market_type": "binary",
+            "expected_expiration_time": "2026-09-14T02:25:00Z",
+            "price_level_structure": "linear_cent",
+            "rules_primary": rules,
+            "away_team": "ARI",
+            "home_team": "LAC",
+            "scheduled_start": game.kickoff,
+        }
+
+    supported = raw_market(
+        f"{event_ticker}-LAC",
+        "Los Angeles C wins",
+        (
+            "If Los Angeles C wins the Arizona vs Los Angeles C professional "
+            "football game, then the market resolves to Yes. All team names and "
+            "logos are property of their respective owners."
+        ),
+    )
+    derivative = raw_market(
+        f"{event_ticker}-LACSPREAD",
+        "Los Angeles C point spread",
+        "This contract resolves against the point spread.",
+    )
+    event = {
+        "ticker": event_ticker,
+        "title": "ARI vs LAC NFL game",
+        "sport": "NFL",
+        "away_team": "ARI",
+        "home_team": "LAC",
+        "scheduled_start": game.kickoff,
+    }
+    series = {"ticker": "KXNFLGAME", "sport": "NFL"}
+    rows = [
+        {**supported, "_discovery_event": event, "_discovery_series": series},
+        {**derivative, "_discovery_event": event, "_discovery_series": series},
+    ]
+
+    class FakePMUS:
+        def close(self):
+            pass
+
+    class FakeKalshi:
+        def __init__(self):
+            self.book_calls = []
+
+        def book(self, ticker):
+            self.book_calls.append(ticker)
+            return {
+                "orderbook_fp": {
+                    "yes_dollars": [["0.45", "100"]],
+                    "no_dollars": [["0.50", "100"]],
+                }
+            }
+
+    kalshi = FakeKalshi()
+    captured = []
+    retail_examples = [SimpleNamespace(available=False, total_cost=None)] * 4
+
+    def capture(_store, market, side, _evidence, _decision_at):
+        captured.append((market.venue_market_id, side))
+        return SimpleNamespace(
+            id=f"play-{side.value}",
+            venue=Venue.KALSHI,
+            market_id=market.venue_market_id,
+            side=side,
+            model_probability=0.5,
+            executable_price=0.5,
+            edge_points=0.0,
+            fees_estimate=0.0,
+            expected_value=0.0,
+            executable_size=1.0,
+            verdict=SimpleNamespace(failed_gates=()),
+            suggested_action=Action.WATCH,
+            retail_examples=retail_examples,
+        )
+
+    monkeypatch.setattr(nfl_live_scan, "fetch_games", lambda: [game])
+    monkeypatch.setattr(nfl_live_scan, "utcnow", lambda: now)
+    monkeypatch.setattr("parallax.nfl.utcnow", lambda: now)
+    monkeypatch.setattr(nfl_live_scan, "TrackRecord", lambda _path: object())
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "default_inbox_store",
+        lambda: SimpleNamespace(path=tmp_path / "inbox.sqlite"),
+    )
+    monkeypatch.setattr(nfl_live_scan, "AlertDeliveryStore", lambda _path: object())
+    monkeypatch.setattr(nfl_live_scan, "AlertDispatcher", lambda _store: object())
+    monkeypatch.setattr(nfl_live_scan, "PolymarketUSPublicClient", FakePMUS)
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "_scope_pmus",
+        lambda *_args: ([], {"state": "COMPLETE", "failed_scopes": []}),
+    )
+    monkeypatch.setattr(nfl_live_scan, "KalshiPublicClient", lambda: kalshi)
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "_scope_kalshi",
+        lambda *_args: (rows, {"state": "COMPLETE", "failed_scopes": []}),
+    )
+    monkeypatch.setattr(nfl_live_scan, "attach_fees", lambda market, *_args, **_kwargs: market)
+    monkeypatch.setattr(nfl_live_scan, "probability_for_game", lambda *_args: 0.5)
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "NFLEvidenceProvider",
+        lambda _loader: SimpleNamespace(
+            assess=lambda _market: SimpleNamespace(fair_probability=0.5)
+        ),
+    )
+    monkeypatch.setattr(nfl_live_scan, "_capture_evaluated", capture)
+    monkeypatch.setattr(nfl_live_scan, "_dispatch_buy_alert", lambda *_args: None)
+    monkeypatch.setattr(
+        nfl_live_scan, "reconcile_active_buy_alerts", lambda *_args, **_kwargs: {}
+    )
+    acquisition = SimpleNamespace(diagnostics=lambda: {})
+
+    result = nfl_live_scan._scan(pmus_acquisition=acquisition)
+
+    assert kalshi.book_calls == [supported["ticker"]]
+    assert captured == [(supported["ticker"], Side.YES), (supported["ticker"], Side.NO)]
+    assert result["summary"]["rejection_counts"] == {"REJECTED_DERIVATIVE": 1}
+    assert result["summary"]["status_counts"]["MAPPED_GAME_WINNER"] == 1
+    assert result["summary"]["status_counts"]["SCORED_WATCH"] == 2
+
+
 def test_kalshi_nfl_family_supplies_winner_semantics_but_rejects_derivatives():
     raw = {
         "ticker": "KXNFLGAME-26SEP13ARILAC-LAC",
@@ -575,6 +750,13 @@ def test_kalshi_nfl_family_supplies_winner_semantics_but_rejects_derivatives():
             title="Los Angeles C point spread",
             description="NFL spread",
             resolution_rules="Resolves against the point spread.",
+        )
+    )
+    assert not is_supported_market(
+        replace(
+            market,
+            title="NFL player props",
+            description="Touchdowns and other player props",
         )
     )
 
@@ -879,7 +1061,9 @@ def _run_pmus_scan(
     )
     monkeypatch.setattr(nfl_live_scan, "normalize_pmus", lambda *_args, **_kwargs: market)
     monkeypatch.setattr(nfl_live_scan, "attach_fees", lambda value, *_args, **_kwargs: value)
-    monkeypatch.setattr(nfl_live_scan, "is_supported_market", lambda _market: True)
+    monkeypatch.setattr(
+        nfl_live_scan, "market_support_reason", lambda _market: "SUPPORTED"
+    )
     monkeypatch.setattr(
         nfl_live_scan,
         "map_market_to_game",

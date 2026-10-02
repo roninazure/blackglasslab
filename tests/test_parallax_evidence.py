@@ -89,6 +89,19 @@ def test_validated_mlb_v2_can_reach_existing_buy_path():
     assert play.suggested_action == Action.BUY
 
 
+def test_unvalidated_postseason_evidence_cannot_produce_buy():
+    market = mlb_market()
+    postseason = replace(game(), game_type="D")
+    evidence = MLBEvidenceProvider(
+        FakeMLBSource(postseason), clock=utcnow
+    ).assess(market)
+
+    assert evidence is not None
+    assert evidence.validation_status == "UNVALIDATED"
+    assert evidence.forecast_metadata["official_game_type"] == "D"
+    assert qualify(market, "YES", evidence).suggested_action != Action.BUY
+
+
 def test_away_team_yes_is_oriented_to_away_probability():
     market = replace(mlb_market(), outcomes={"YES": "Boston Red Sox", "NO": "New York Yankees"})
     evidence = MLBEvidenceProvider(FakeMLBSource(game()), clock=utcnow).assess(market)
