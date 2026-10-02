@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from maker_spread_economics.polymarket_us import PolymarketUSPublicClient
-from parallax.cfb import VALIDATION_ECE, CFBEvidenceProvider, fetch_games, is_supported_market, map_market_to_game, probability_for_game
+from parallax.cfb import VALIDATION_ECE, CFBEvidenceProvider, active_cfb_season, fetch_games, is_supported_market, map_market_to_game, probability_for_game
 from parallax.discovery import MAX_ACTIVE_MARKETS_PER_VENUE, paginate, paginate_collection
 from parallax.economics import retail_example
 from parallax.engine import qualify
@@ -69,8 +69,7 @@ def _scope_kalshi(client: KalshiPublicClient) -> tuple[list[dict], dict]:
 
 
 def _scan() -> dict:
-    current_year = datetime.now(UTC).year
-    seasons = tuple(range(2010, current_year + 1))
+    seasons = (active_cfb_season(datetime.now(UTC)),)
     games = fetch_games(seasons)
     result = {"read_only": True, "orders": 0, "alerts": 0, "published": 0, "prospective_captured": 0, "cfbd_calls": len(seasons), "validation_ece": VALIDATION_ECE, "venues": {}, "rows": [], "mapping_failure_reasons": Counter()}
     prospective_store = TrackRecord(PROSPECTIVE_DB)

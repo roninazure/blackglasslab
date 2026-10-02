@@ -4,6 +4,7 @@ from datetime import timedelta
 from parallax.demo import demo_inputs
 from parallax.engine import qualify
 from parallax.evidence import EvidenceEngine
+import parallax.evidence as evidence_module
 from parallax.mlb import MLBGameFact, MLBEvidenceProvider, evaluate_walk_forward
 from parallax.mlb_validation import evaluate_cache, write_cache
 from parallax.models import Action, Venue, utcnow
@@ -66,6 +67,17 @@ def test_provider_failure_is_fail_closed():
     market = mlb_market()
     provider = MLBEvidenceProvider(FakeMLBSource(error=True))
     assert EvidenceEngine((provider,)).assess(market) is None
+
+
+def test_default_cfb_evidence_loader_fetches_exactly_one_active_season(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(evidence_module, "active_cfb_season", lambda now: 2026)
+    monkeypatch.setattr(evidence_module, "fetch_games", lambda seasons: fetched.append(seasons) or [])
+
+    cfb_provider = EvidenceEngine().providers[2]
+    cfb_provider.games_loader()
+
+    assert fetched == [(2026,)]
 
 
 def test_authoritative_facts_without_calibration_do_not_reach_high_confidence():

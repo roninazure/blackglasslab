@@ -29,6 +29,7 @@ ELO_K = 20.0
 ELO_SCALE = 400.0
 VALIDATION_ECE = 0.063732
 VALIDITY_SECONDS = 15 * 60
+CFB_SEASON_START_MONTH = 7
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,11 @@ class CFBGame:
     home_score: int | None
     away_score: int | None
     completed: bool
+
+
+def active_cfb_season(at: datetime) -> int:
+    """Return the season labeled by its fall calendar year."""
+    return at.year if at.month >= CFB_SEASON_START_MONTH else at.year - 1
 
 
 def _int(value: Any) -> int | None:

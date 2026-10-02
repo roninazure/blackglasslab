@@ -4,8 +4,9 @@ from datetime import UTC, datetime, timedelta
 import importlib.util
 from pathlib import Path
 
+import parallax.cfb as cfb_module
 from parallax.cfb import (
-    CFBGame, CFBEvidenceProvider, VALIDATION_ECE, is_supported_market,
+    CFBGame, CFBEvidenceProvider, VALIDATION_ECE, active_cfb_season, is_supported_market,
     map_market_to_game, probability_for_game,
 )
 from parallax.demo import demo_inputs
@@ -20,6 +21,13 @@ cfb_live_scan = importlib.util.module_from_spec(cfb_live_scan_spec)
 assert cfb_live_scan_spec.loader is not None
 cfb_live_scan_spec.loader.exec_module(cfb_live_scan)
 
+cfb_v1_validation_spec = importlib.util.spec_from_file_location(
+    "cfb_v1_validation", Path(__file__).parents[1] / "scripts" / "cfb_v1_validation.py"
+)
+cfb_v1_validation = importlib.util.module_from_spec(cfb_v1_validation_spec)
+assert cfb_v1_validation_spec.loader is not None
+cfb_v1_validation_spec.loader.exec_module(cfb_v1_validation)
+
 
 def game(*, home="Alabama", away="Georgia", date="2026-09-19", fcs=False, neutral=False, home_points=None, away_points=None):
     return CFBGame("target", 2026, "regular", f"{date}T18:00:00+00:00", home, away, "1", "2", "fbs", "fcs" if fcs else "fbs", neutral, home_points, away_points, home_points is not None)
@@ -30,6 +38,14 @@ def market(*, home="Alabama", away="Georgia", date="2026-09-19", title="CFB mone
     base = markets[0]
     raw = {"homeTeam": home, "awayTeam": away, "gameStartTime": f"{date}T18:00:00Z", "marketType": "moneyline", "sport": "CFB", "ticker": "KXCFB-TEST", "rules_primary": f"The {home} wins the {away} vs {home} college football game."}
     return replace(base, venue=Venue.KALSHI, venue_market_id="KXCFB-TEST", slug="KXCFB-TEST", title=title, description="college football game winner", resolution_rules=raw["rules_primary"], original_metadata={"market": raw}, resolution_time="2026-09-19T22:00:00+00:00", status="OPEN", yes_bid=.45, yes_ask=.50, no_bid=.45, no_ask=.50, best_bid_size=100, best_ask_size=100, executable_depth={"YES": ((.50, 100),), "NO": ((.50, 100),)}, data_timestamp="2026-09-13T15:00:00+00:00", book_timestamp="2026-09-13T15:00:00+00:00")
+
+
+def test_active_cfb_season_uses_fall_calendar_year():
+    assert active_cfb_season(datetime(2026, 10, 1, tzinfo=UTC)) == 2026
+
+
+def test_active_cfb_season_keeps_january_postseason_in_preceding_year():
+    assert active_cfb_season(datetime(2027, 1, 15, tzinfo=UTC)) == 2026
 
 
 def test_exact_mapping_and_neutral_site():
@@ -68,7 +84,13 @@ def test_cfb_safety_is_strictly_greater_and_evidence_is_required():
     assert no_evidence.suggested_action != Action.BUY
 
 
-def test_cfb_evidence_and_fee_economics_bind():
+def test_cfb_evidence_and_fee_economics_bind(monkeypatch):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 13, tzinfo=tz)
+
+    monkeypatch.setattr(cfb_module, "datetime", FixedDatetime)
     m = market()
     evidence = CFBEvidenceProvider(lambda: [game()]).assess(m)
     assert evidence and evidence.source == "CollegeFootballData" and evidence.validation_status == "CALIBRATED"
@@ -146,3 +168,41 @@ def test_cfb_evaluated_play_reaches_prospective_capture(monkeypatch):
 
     result = cfb_live_scan._capture_evaluated(Store(), object(), Side.YES, object(), "now")
     assert result is sentinel and len(captured) == 1
+
+
+def test_cfb_live_scan_fetches_exactly_one_active_season(monkeypatch):
+    from types import SimpleNamespace
+
+    fetched = []
+
+    class Client:
+        def markets_page(self, **kwargs):
+            raise AssertionError("mock paginator must not call the provider client")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cfb_live_scan, "active_cfb_season", lambda now: 2026)
+    monkeypatch.setattr(cfb_live_scan, "fetch_games", lambda seasons: fetched.append(seasons) or [])
+    monkeypatch.setattr(cfb_live_scan, "TrackRecord", lambda path: object())
+    monkeypatch.setattr(cfb_live_scan, "PolymarketUSPublicClient", Client)
+    monkeypatch.setattr(cfb_live_scan, "KalshiPublicClient", Client)
+    monkeypatch.setattr(cfb_live_scan, "paginate", lambda *args, **kwargs: ([], SimpleNamespace(pages=0)))
+    monkeypatch.setattr(cfb_live_scan, "_scope_kalshi", lambda client: ([], {"state": "COMPLETE"}))
+
+    result = cfb_live_scan._scan()
+
+    assert fetched == [(2026,)]
+    assert result["cfbd_calls"] == 1
+
+
+def test_cfb_v1_validation_keeps_historical_season_range(monkeypatch, capsys):
+    fetched = []
+    monkeypatch.setattr(cfb_v1_validation, "fetch_games", lambda seasons: fetched.append(seasons) or [])
+    monkeypatch.setattr(cfb_v1_validation, "validate", lambda games: {"games": len(games)})
+    monkeypatch.setattr("sys.argv", ["cfb_v1_validation.py"])
+
+    cfb_v1_validation.main()
+
+    assert fetched == [tuple(range(2010, 2026))]
+    assert '"games": 0' in capsys.readouterr().out
