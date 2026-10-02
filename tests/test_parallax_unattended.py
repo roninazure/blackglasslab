@@ -18,6 +18,22 @@ from parallax_unattended import (
 )
 
 
+def completed_cfb_stdout() -> str:
+    return json.dumps(
+        {
+            "read_only": True,
+            "orders": 0,
+            "alerts": 0,
+            "published": 0,
+            "venues": {
+                "PMUS": {"coverage": {"state": "COMPLETE"}, "discovered": 0},
+                "KALSHI": {"coverage": {"state": "COMPLETE"}, "discovered": 0},
+            },
+            "rows": [],
+        }
+    )
+
+
 def test_second_singleton_fails_closed(tmp_path):
     first = SingletonLock(tmp_path / "runner.lock")
     second = SingletonLock(tmp_path / "runner.lock")
@@ -242,23 +258,49 @@ def test_exporter_exception_preserves_successful_scan_and_later_lanes(
     assert health["recent_errors"] == []
 
 
-def test_incomplete_market_data_does_not_advance_sports_success(tmp_path, monkeypatch):
+@pytest.mark.parametrize("incomplete_lane", ["nfl", "mlb"])
+def test_incomplete_market_data_exports_degraded_feed_without_advancing_success(
+    tmp_path, incomplete_lane
+):
     old_success = "2026-09-23T00:00:00+00:00"
-    exports = []
 
     def runner(command, **_kwargs):
         if command[1].endswith("nfl_live_scan.py"):
-            output = '{"slate": {"market_data_complete": false}}'
+            lane = "nfl"
+            rows = {
+                "summary": {
+                    "rows": [
+                        {
+                            "venue": "KALSHI",
+                            "market_id": "unsafe-buy",
+                            "side": "YES",
+                            "verdict": "BUY",
+                        }
+                    ]
+                }
+            }
         elif command[1] == "-m":
-            output = '{"slate": {"market_data_complete": true}}'
+            lane = "mlb"
+            rows = {
+                "plays": {
+                    "items": [
+                        {
+                            "venue": "KALSHI",
+                            "market_id": "unsafe-buy",
+                            "side": "YES",
+                            "suggested_action": "BUY",
+                        }
+                    ]
+                }
+            }
         else:
-            output = "{}"
-        return subprocess.CompletedProcess(command, 0, output, "")
+            return subprocess.CompletedProcess(command, 0, "{}", "")
+        output = {
+            **rows,
+            "slate": {"market_data_complete": lane != incomplete_lane},
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(output), "")
 
-    monkeypatch.setattr(
-        "parallax_unattended.export_completed_scan",
-        lambda lane, *_args: exports.append(lane),
-    )
     scheduler = UnattendedScheduler(
         root=tmp_path / "release",
         state_dir=tmp_path / "state",
@@ -266,12 +308,84 @@ def test_incomplete_market_data_does_not_advance_sports_success(tmp_path, monkey
         monotonic=lambda: 0.0,
         clock=lambda: "2026-09-24T00:00:00+00:00",
     )
-    scheduler.last_success["nfl"] = old_success
+    scheduler.last_success[incomplete_lane] = old_success
 
     health = scheduler.run_cycle()
 
-    assert health["last_successful_nfl_scan"] == old_success
-    assert health["last_successful_mlb_scan"] == "2026-09-24T00:00:00+00:00"
+    assert health[f"last_successful_{incomplete_lane}_scan"] == old_success
     assert health["state"] == "DEGRADED"
-    assert exports == ["mlb"]
     assert any("market_data_complete is false" in error for error in health["recent_errors"])
+    public = json.loads(
+        (tmp_path / "state" / "public_feed" / f"{incomplete_lane}.json").read_text()
+    )
+    assert public["generated_at"]
+    assert public["market_data_complete"] is False
+    assert public["health_state"] == "DEGRADED"
+    assert public["summary"]["buy"] == 0
+    assert public["plays"] == []
+
+
+def test_enabled_cfb_exports_existing_scanner_contract_without_provider_calls(tmp_path):
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text("PARALLAX_CFB_ENABLED=1\n", encoding="utf-8")
+    runner_calls = []
+
+    def runner(command, **_kwargs):
+        runner_calls.append(command)
+        if command[1].endswith("cfb_live_scan.py"):
+            output = completed_cfb_stdout()
+        elif command[1].endswith("nfl_live_scan.py") or command[1] == "-m":
+            output = json.dumps({"slate": {"market_data_complete": True}})
+        else:
+            output = "{}"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    scheduler = UnattendedScheduler(
+        root=tmp_path / "release",
+        state_dir=tmp_path / "state",
+        runtime_env=runtime_env,
+        runner=runner,
+        monotonic=lambda: 0.0,
+        clock=lambda: "2026-09-24T00:00:00+00:00",
+    )
+
+    health = scheduler.run_cycle()
+
+    assert len(runner_calls) == 4
+    assert health["last_successful_cfb_scan"] == "2026-09-24T00:00:00+00:00"
+    assert health["state"] == "RUNNING"
+    assert json.loads((tmp_path / "state/public_feed/cfb.json").read_text())["lane"] == "CFB"
+
+
+def test_malformed_cfb_output_preserves_feed_and_fails_lane(tmp_path):
+    runtime_env = tmp_path / "runtime.env"
+    runtime_env.write_text("PARALLAX_CFB_ENABLED=1\n", encoding="utf-8")
+    cfb_feed = tmp_path / "state/public_feed/cfb.json"
+    cfb_feed.parent.mkdir(parents=True)
+    cfb_feed.write_text('{"generation": "previous"}\n', encoding="utf-8")
+
+    def runner(command, **_kwargs):
+        if command[1].endswith("cfb_live_scan.py"):
+            output = json.dumps({"read_only": True, "rows": []})
+        elif command[1].endswith("nfl_live_scan.py") or command[1] == "-m":
+            output = json.dumps({"slate": {"market_data_complete": True}})
+        else:
+            output = "{}"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    scheduler = UnattendedScheduler(
+        root=tmp_path / "release",
+        state_dir=tmp_path / "state",
+        runtime_env=runtime_env,
+        runner=runner,
+        monotonic=lambda: 0.0,
+        clock=lambda: "2026-09-24T00:00:00+00:00",
+    )
+    scheduler.last_success["cfb"] = "2026-09-23T00:00:00+00:00"
+
+    health = scheduler.run_cycle()
+
+    assert health["state"] == "DEGRADED"
+    assert health["last_successful_cfb_scan"] == "2026-09-23T00:00:00+00:00"
+    assert json.loads(cfb_feed.read_text()) == {"generation": "previous"}
+    assert any("failed public-feed validation" in error for error in health["recent_errors"])

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import hashlib
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from parallax.public_feed import export_completed_scan, sanitize_completed_scan
 
@@ -81,7 +83,77 @@ def completed_mlb_stdout() -> str:
                 "as_of": "2026-09-24T12:05:00Z",
                 "items": plays,
             },
+            "slate": {"market_data_complete": True},
             "environment": {"TOKEN": "environment-secret"},
+        }
+    )
+
+
+def completed_cfb_stdout() -> str:
+    return json.dumps(
+        {
+            "read_only": True,
+            "orders": 0,
+            "alerts": 0,
+            "published": 0,
+            "prospective_captured": 3,
+            "cfbd_calls": 17,
+            "validation_ece": 0.08,
+            "venues": {
+                "PMUS": {
+                    "coverage": {"state": "COMPLETE", "pages": 1},
+                    "discovered": 4,
+                    "WATCH": 1,
+                    "PASS": 0,
+                    "BUY": 1,
+                    "status_counts": {"WATCH": 1, "BUY": 1},
+                },
+                "KALSHI": {
+                    "coverage": {"state": "PARTIAL", "failed_scopes": 1},
+                    "endpoint_status": "UNAVAILABLE",
+                    "discovered": 2,
+                    "WATCH": 0,
+                    "PASS": 1,
+                    "BUY": 0,
+                    "status_counts": {"PASS": 1},
+                },
+            },
+            "rows": [
+                {
+                    "venue": "PMUS",
+                    "market_id": "cfb-buy",
+                    "matchup": "Georgia at Alabama",
+                    "kickoff_utc": "2026-09-26T19:30:00Z",
+                    "side": "YES",
+                    "cfb_v1_probability": 0.72,
+                    "executable_price": 0.49,
+                    "raw_edge": 23.0,
+                    "verdict": "BUY",
+                },
+                {
+                    "venue": "PMUS",
+                    "market_id": "cfb-watch",
+                    "matchup": "Georgia at Alabama",
+                    "kickoff_utc": "2026-09-26T19:30:00Z",
+                    "side": "NO",
+                    "cfb_v1_probability": 0.28,
+                    "executable_price": 0.31,
+                    "raw_edge": -3.0,
+                    "verdict": "WATCH",
+                },
+                {
+                    "venue": "KALSHI",
+                    "market_id": "cfb-pass",
+                    "matchup": "Texas at Auburn",
+                    "kickoff_utc": "2026-09-27T00:00:00Z",
+                    "side": "YES",
+                    "cfb_v1_probability": 0.44,
+                    "executable_price": 0.55,
+                    "raw_edge": -11.0,
+                    "verdict": "PASS",
+                },
+            ],
+            "mapping_failure_reasons": {"DATE_MISMATCH": 1},
         }
     )
 
@@ -93,6 +165,9 @@ def test_sanitizer_counts_actions_and_maps_only_public_fields():
     assert result["lane"] == "MLB"
     assert result["runtime_state"] == "LIVE"
     assert result["health_state"] == "HEALTHY"
+    assert result["data_quality_state"] == "COMPLETE"
+    assert result["market_data_complete"] is True
+    assert result["buy_publication_eligible"] is True
     assert result["read_only"] is True
     assert result["summary"] == {"plays": 3, "buy": 1, "watch": 1, "pass": 1}
     assert [play["action"] for play in result["plays"]] == ["BUY", "WATCH", "PASS"]
@@ -215,6 +290,45 @@ def test_nfl_existing_verdict_rows_are_exported_without_guessing_fields():
     assert "selected_team" not in result["plays"][0]
 
 
+def test_complete_nfl_scan_retains_existing_buy_publication():
+    stdout = json.dumps(
+        {
+            "slate": {"market_data_complete": True},
+            "summary": {
+                "rows": [
+                    {
+                        "venue": "KALSHI",
+                        "market_id": "KXNFLGAME-COMPLETE",
+                        "side": "YES",
+                        "verdict": "BUY",
+                        "executable_price": 0.41,
+                        "nfl_v1_probability": 0.63,
+                        "raw_edge": 22.0,
+                    }
+                ]
+            },
+        }
+    )
+
+    result = sanitize_completed_scan("nfl", stdout, generated_at=NOW)
+
+    assert result["buy_publication_eligible"] is True
+    assert result["summary"] == {"plays": 1, "buy": 1, "watch": 0, "pass": 0}
+    assert result["plays"][0]["action"] == "BUY"
+
+
+def test_any_explicit_incomplete_signal_overrides_conflicting_complete_signal():
+    payload = json.loads(completed_mlb_stdout())
+    payload["market_data_complete"] = True
+    payload["slate"]["market_data_complete"] = False
+
+    result = sanitize_completed_scan("mlb", json.dumps(payload), generated_at=NOW)
+
+    assert result["market_data_complete"] is False
+    assert result["buy_publication_eligible"] is False
+    assert result["summary"]["buy"] == 0
+
+
 def test_public_feed_preserves_only_sanitized_dynamic_slate_fields():
     stdout = json.dumps(
         {
@@ -276,3 +390,98 @@ def test_public_feed_preserves_only_sanitized_dynamic_slate_fields():
     assert "private_debug" not in serialized
     assert "raw_provider_payload" not in serialized
     assert "secret" not in serialized
+
+
+@pytest.mark.parametrize("lane", ["nfl", "mlb"])
+def test_incomplete_scan_is_current_and_degraded_without_public_buy(lane):
+    buy = {
+        "venue": "KALSHI",
+        "market_id": f"{lane}-buy",
+        "side": "YES",
+        "verdict" if lane == "nfl" else "suggested_action": "BUY",
+    }
+    watch = {
+        "venue": "KALSHI",
+        "market_id": f"{lane}-watch",
+        "side": "NO",
+        "verdict" if lane == "nfl" else "suggested_action": "WATCH",
+    }
+    payload = {
+        "health": {"mode": "live", "state": "healthy"},
+        "slate": {
+            "market_data_complete": False,
+            "status_counts": {"BUY": 1, "WATCH": 1},
+            "dates": [
+                {
+                    "date": "2026-09-24",
+                    "market_data_complete": False,
+                    "status_counts": {"BUY": 1, "WATCH": 1},
+                    "games": [{"game_id": "g1", "status": "BUY"}],
+                }
+            ],
+        },
+    }
+    if lane == "nfl":
+        payload["summary"] = {"rows": [buy, watch]}
+    else:
+        payload["plays"] = {"mode": "live", "as_of": ISSUED, "items": [buy, watch]}
+
+    result = sanitize_completed_scan(lane, json.dumps(payload), generated_at=NOW)
+
+    assert result["generated_at"] == NOW.isoformat()
+    assert result["market_data_complete"] is False
+    assert result["data_quality_state"] == "DEGRADED"
+    assert result["health_state"] == "DEGRADED"
+    assert result["buy_publication_eligible"] is False
+    assert result["summary"] == {"plays": 1, "buy": 0, "watch": 1, "pass": 0}
+    assert [play["action"] for play in result["plays"]] == ["WATCH"]
+    assert "BUY" not in result["slate"]["status_counts"]
+    assert result["slate"]["dates"][0]["games"][0]["status"] == (
+        "WITHHELD_INCOMPLETE_DATA"
+    )
+
+
+def test_cfb_real_scanner_contract_exports_without_fabricating_completeness_or_buy():
+    payload = json.loads(completed_cfb_stdout())
+    payload["market_data_complete"] = True
+    result = sanitize_completed_scan("cfb", json.dumps(payload), generated_at=NOW)
+
+    assert result["lane"] == "CFB"
+    assert result["generated_at"] == NOW.isoformat()
+    assert result["source_as_of"] is None
+    assert result["data_quality_state"] == "UNVERIFIED"
+    assert result["buy_publication_eligible"] is False
+    assert "market_data_complete" not in result
+    assert result["summary"] == {"plays": 2, "buy": 0, "watch": 1, "pass": 1}
+    assert [play["action"] for play in result["plays"]] == ["WATCH", "PASS"]
+    assert result["plays"][0]["model_probability"] == 0.28
+    assert result["plays"][0]["resolution_time"] == "2026-09-26T19:30:00+00:00"
+    assert result["venues"]["PMUS"]["coverage_state"] == "COMPLETE"
+    assert result["venues"]["KALSHI"]["endpoint_status"] == "UNAVAILABLE"
+    assert "BUY" not in result["venues"]["PMUS"]
+    assert "BUY" not in result["venues"]["PMUS"]["status_counts"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda payload: payload.pop("rows"),
+        lambda payload: payload.__setitem__("read_only", False),
+        lambda payload: payload.__setitem__("orders", 1),
+        lambda payload: payload["rows"][0].pop("side"),
+        lambda payload: payload["rows"][0].__setitem__("verdict", "UNKNOWN"),
+    ],
+)
+def test_malformed_or_untrustworthy_cfb_output_fails_closed(mutation):
+    payload = json.loads(completed_cfb_stdout())
+    mutation(payload)
+
+    with pytest.raises(ValueError):
+        sanitize_completed_scan("cfb", json.dumps(payload), generated_at=NOW)
+
+
+def test_cfb_export_is_local_postprocessing_only(tmp_path):
+    destination = export_completed_scan("cfb", completed_cfb_stdout(), tmp_path)
+
+    assert destination == tmp_path / "public_feed" / "cfb.json"
+    assert json.loads(destination.read_text())["lane"] == "CFB"

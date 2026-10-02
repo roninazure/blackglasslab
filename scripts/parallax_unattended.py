@@ -213,24 +213,27 @@ class UnattendedScheduler:
                 if completed.returncode != 0:
                     detail = (completed.stderr or completed.stdout or "no output").strip().replace("\n", " ")
                     raise RuntimeError(f"exit {completed.returncode}: {detail[:400]}")
-                if lane in {"nfl", "mlb"} and _reported_market_data_incomplete(
-                    completed.stdout
-                ):
-                    print(f"[{lane}] {completed.stdout.strip()}", flush=True)
-                    raise RuntimeError("market_data_complete is false")
-                self.last_success[lane] = self.clock()
-                successful += 1
                 if completed.stdout:
                     print(f"[{lane}] {completed.stdout.strip()}", flush=True)
-                if lane in {"nfl", "mlb"}:
+                if lane in SPORTS_LANES:
                     try:
                         export_completed_scan(lane, completed.stdout, self.state_dir)
-                    except Exception as exc:  # Export must not change scan success.
+                    except Exception as exc:
                         print(
                             f"[WARN] {lane} public feed export failed: {type(exc).__name__}",
                             file=sys.stderr,
                             flush=True,
                         )
+                        if lane == "cfb":
+                            raise RuntimeError(
+                                "CFB scan output failed public-feed validation"
+                            ) from exc
+                if lane in {"nfl", "mlb"} and _reported_market_data_incomplete(
+                    completed.stdout
+                ):
+                    raise RuntimeError("market_data_complete is false")
+                self.last_success[lane] = self.clock()
+                successful += 1
             except Exception as exc:  # Each lane must not prevent later lanes.
                 message = f"{lane}: {type(exc).__name__}: {exc}"
                 errors.append(message)

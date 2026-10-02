@@ -16,6 +16,7 @@ SCHEMA_VERSION = "parallax.public.v1"
 FREE_VISIBILITY_DELAY = timedelta(minutes=15)
 STALE_AFTER = timedelta(minutes=90)
 PUBLIC_ACTIONS = {"BUY", "WATCH", "PASS"}
+PUBLIC_LANES = {"nfl", "cfb", "mlb"}
 PUBLIC_PLAY_FIELDS = (
     "sport",
     "venue",
@@ -151,6 +152,8 @@ def _source_rows(payload: Mapping[str, Any], lane: str) -> list[Mapping[str, Any
     if lane == "mlb":
         plays = payload.get("plays")
         rows = plays.get("items") if isinstance(plays, Mapping) else None
+    elif lane == "cfb":
+        rows = payload.get("rows")
     else:
         summary = payload.get("summary")
         rows = summary.get("rows") if isinstance(summary, Mapping) else None
@@ -198,6 +201,8 @@ def _runtime_state(
 
 
 def _health_state(payload: Mapping[str, Any]) -> str:
+    if _market_data_complete(payload) is False:
+        return "DEGRADED"
     health = payload.get("health")
     value = None
     if isinstance(health, Mapping):
@@ -212,7 +217,101 @@ def _health_state(payload: Mapping[str, Any]) -> str:
     return "UNKNOWN"
 
 
-def _public_slate(value: object) -> dict[str, Any] | None:
+def _market_data_complete(payload: Mapping[str, Any]) -> bool | None:
+    values = [payload.get("market_data_complete")]
+    slate = payload.get("slate")
+    if isinstance(slate, Mapping):
+        values.append(slate.get("market_data_complete"))
+    reported = [value for value in values if isinstance(value, bool)]
+    if False in reported:
+        return False
+    return True if True in reported else None
+
+
+def _validate_cfb_payload(payload: Mapping[str, Any]) -> None:
+    """Require the current CFB scanner's fail-closed, read-only output contract."""
+    if payload.get("read_only") is not True:
+        raise ValueError("CFB scan output must attest read_only=true")
+    for field in ("orders", "alerts", "published"):
+        value = payload.get(field)
+        if isinstance(value, bool) or value != 0:
+            raise ValueError(f"CFB scan output must attest {field}=0")
+    venues = payload.get("venues")
+    if not isinstance(venues, Mapping) or not all(
+        isinstance(name, str) and isinstance(value, Mapping)
+        for name, value in venues.items()
+    ):
+        raise ValueError("CFB scan output must contain venue diagnostics")
+    rows = payload.get("rows")
+    if not isinstance(rows, list) or not all(isinstance(row, Mapping) for row in rows):
+        raise ValueError("CFB scan output must contain a row list")
+    for row in rows:
+        if not all(_text(row.get(field)) for field in ("venue", "market_id", "side")):
+            raise ValueError("CFB public rows require venue, market_id, and side")
+        if _action(row) is None:
+            raise ValueError("CFB public rows require a recognized verdict")
+
+
+def _public_count_map(value: object, *, allow_buy: bool) -> dict[str, int] | None:
+    if not isinstance(value, Mapping):
+        return None
+    return {
+        str(key): int(count)
+        for key, count in value.items()
+        if isinstance(count, int)
+        and not isinstance(count, bool)
+        and (allow_buy or str(key).upper() != "BUY")
+    }
+
+
+def _public_venues(
+    value: object, *, allow_buy: bool
+) -> dict[str, dict[str, Any]] | None:
+    if not isinstance(value, Mapping):
+        return None
+    result: dict[str, dict[str, Any]] = {}
+    numeric_fields = (
+        "discovered",
+        "eligible",
+        "mapped",
+        "evidence",
+        "model_probability",
+        "executable_book",
+        "fee",
+        "edge",
+        "economics",
+        "fully_scored_sides",
+        "WATCH",
+        "PASS",
+    )
+    for venue, diagnostic in value.items():
+        if not isinstance(venue, str) or not isinstance(diagnostic, Mapping):
+            continue
+        public: dict[str, Any] = {}
+        endpoint_status = _text(diagnostic.get("endpoint_status"))
+        if endpoint_status:
+            public["endpoint_status"] = endpoint_status
+        coverage = diagnostic.get("coverage")
+        if isinstance(coverage, Mapping):
+            coverage_state = _text(coverage.get("state"))
+            if coverage_state:
+                public["coverage_state"] = coverage_state
+        for field in numeric_fields:
+            number = _number(diagnostic.get(field))
+            if number is not None:
+                public[field] = number
+        if allow_buy:
+            number = _number(diagnostic.get("BUY"))
+            if number is not None:
+                public["BUY"] = number
+        counts = _public_count_map(diagnostic.get("status_counts"), allow_buy=allow_buy)
+        if counts is not None:
+            public["status_counts"] = counts
+        result[venue.upper()] = public
+    return result
+
+
+def _public_slate(value: object, *, allow_buy: bool) -> dict[str, Any] | None:
     if not isinstance(value, Mapping):
         return None
     public: dict[str, Any] = {}
@@ -227,12 +326,9 @@ def _public_slate(value: object) -> dict[str, Any] | None:
         if isinstance(item, (str, int, bool)) or item is None:
             public[key] = item
     status_counts = value.get("status_counts")
-    if isinstance(status_counts, Mapping):
-        public["status_counts"] = {
-            str(key): int(count)
-            for key, count in status_counts.items()
-            if isinstance(count, int) and not isinstance(count, bool)
-        }
+    counts = _public_count_map(status_counts, allow_buy=allow_buy)
+    if counts is not None:
+        public["status_counts"] = counts
     dates_out = []
     dates = value.get("dates")
     if isinstance(dates, list):
@@ -251,33 +347,34 @@ def _public_slate(value: object) -> dict[str, Any] | None:
                 if isinstance(date_row.get(key), (str, int, bool))
             }
             counts = date_row.get("status_counts")
-            if isinstance(counts, Mapping):
-                date_public["status_counts"] = {
-                    str(key): int(count)
-                    for key, count in counts.items()
-                    if isinstance(count, int) and not isinstance(count, bool)
-                }
+            public_counts = _public_count_map(counts, allow_buy=allow_buy)
+            if public_counts is not None:
+                date_public["status_counts"] = public_counts
             games_out = []
             games = date_row.get("games")
             if isinstance(games, list):
                 for game in games:
                     if not isinstance(game, Mapping):
                         continue
-                    games_out.append(
-                        {
-                            key: game.get(key)
-                            for key in (
-                                "game_id",
-                                "date",
-                                "start_time",
-                                "away_team",
-                                "home_team",
-                                "schedule_status",
-                                "status",
-                            )
-                            if isinstance(game.get(key), str)
-                        }
-                    )
+                    game_public = {
+                        key: game.get(key)
+                        for key in (
+                            "game_id",
+                            "date",
+                            "start_time",
+                            "away_team",
+                            "home_team",
+                            "schedule_status",
+                            "status",
+                        )
+                        if isinstance(game.get(key), str)
+                    }
+                    if (
+                        not allow_buy
+                        and game_public.get("status", "").upper() == "BUY"
+                    ):
+                        game_public["status"] = "WITHHELD_INCOMPLETE_DATA"
+                    games_out.append(game_public)
             date_public["games"] = games_out
             dates_out.append(date_public)
     public["dates"] = dates_out
@@ -322,7 +419,13 @@ def _public_play(row: Mapping[str, Any], lane: str) -> dict[str, Any] | None:
     numeric = {
         "price": _number(_first(row, "executable_price", "current_price")),
         "model_probability": _number(
-            _first(row, "model_probability", "parallax_fair_value", "nfl_v1_probability")
+            _first(
+                row,
+                "model_probability",
+                "parallax_fair_value",
+                "nfl_v1_probability",
+                "cfb_v1_probability",
+            )
         ),
         "edge_pp": _number(_first(row, "edge_points", "raw_edge")),
     }
@@ -334,7 +437,9 @@ def _public_play(row: Mapping[str, Any], lane: str) -> dict[str, Any] | None:
         "issued_at": _timestamp(_first(row, "issued_at", "created_at")),
         "updated_at": _timestamp(row.get("updated_at")),
         "expires_at": _timestamp(row.get("expires_at")),
-        "resolution_time": _timestamp(_first(row, "resolution_time", "game_start")),
+        "resolution_time": _timestamp(
+            _first(row, "resolution_time", "game_start", "kickoff_utc")
+        ),
     }
     for key, value in timestamps.items():
         if value is not None:
@@ -374,14 +479,25 @@ def sanitize_completed_scan(
 ) -> dict[str, Any]:
     """Build the public schema from a completed scan's captured JSON stdout."""
     normalized_lane = lane.casefold()
-    if normalized_lane not in {"nfl", "mlb"}:
-        raise ValueError("Public feed supports only NFL and MLB lanes")
+    if normalized_lane not in PUBLIC_LANES:
+        raise ValueError("Public feed supports only NFL, CFB, and MLB lanes")
     decoded = json.loads(completed_stdout)
     if not isinstance(decoded, Mapping):
         raise ValueError("Completed scan output must be a JSON object")
+    if normalized_lane == "cfb":
+        _validate_cfb_payload(decoded)
     now = (generated_at or datetime.now(UTC)).astimezone(UTC)
     rows = _source_rows(decoded, normalized_lane)
-    plays = [play for row in rows if (play := _public_play(row, normalized_lane))]
+    market_data_complete = (
+        None if normalized_lane == "cfb" else _market_data_complete(decoded)
+    )
+    allow_buy = normalized_lane in {"nfl", "mlb"} and market_data_complete is True
+    plays = [
+        play
+        for row in rows
+        if (play := _public_play(row, normalized_lane))
+        and (allow_buy or play["action"] != "BUY")
+    ]
     source_as_of = _source_as_of(decoded, rows)
     counts = {action: sum(play["action"] == action for play in plays) for action in PUBLIC_ACTIONS}
     result = {
@@ -391,6 +507,14 @@ def sanitize_completed_scan(
         "lane": normalized_lane.upper(),
         "runtime_state": _runtime_state(decoded, source_as_of, now),
         "health_state": _health_state(decoded),
+        "data_quality_state": (
+            "COMPLETE"
+            if market_data_complete is True
+            else "DEGRADED"
+            if market_data_complete is False
+            else "UNVERIFIED"
+        ),
+        "buy_publication_eligible": allow_buy,
         "read_only": True,
         "summary": {
             "plays": len(plays),
@@ -400,9 +524,14 @@ def sanitize_completed_scan(
         },
         "plays": plays,
     }
-    slate = _public_slate(decoded.get("slate"))
+    if market_data_complete is not None:
+        result["market_data_complete"] = market_data_complete
+    slate = _public_slate(decoded.get("slate"), allow_buy=allow_buy)
     if slate is not None:
         result["slate"] = slate
+    venues = _public_venues(decoded.get("venues"), allow_buy=allow_buy)
+    if venues is not None:
+        result["venues"] = venues
     return result
 
 
