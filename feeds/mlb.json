@@ -1,31 +1,13 @@
 {
-  "generated_at": "2026-10-03T19:10:10.769226+00:00",
+  "generated_at": "2026-10-03T20:00:15.984915+00:00",
   "lane": "MLB",
-  "plays": [
-    {
-      "away_team": "Atlanta Braves",
-      "date": "2026-10-03",
-      "economic_key": "MLB:849828:atlantabraves",
-      "edge_pp": 13.5,
-      "game_id": "849828",
-      "home_team": "Los Angeles Dodgers",
-      "lifecycle_updated_at": "2026-10-03T19:05:40.519603+00:00",
-      "market_id": "KXMLBGAME-26OCT031600ATLLAD-ATL",
-      "model_probability": 0.46499999999999997,
-      "opponent": "Los Angeles Dodgers",
-      "price": 0.33,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Atlanta Braves",
-      "start_time": "2026-10-03T20:00:00+00:00",
-      "venue": "KALSHI"
-    }
-  ],
+  "plays": [],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
   "source_feed_generated_at": "2026-10-03T19:05:40.609967+00:00",
   "source_schedule_state": "COMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 1
+    "buy": 0
   }
 }
