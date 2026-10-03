@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import signal
 import sys
@@ -30,7 +31,7 @@ from parallax.economics import retail_example
 from parallax.engine import qualify
 from parallax.fees import attach_fees
 from parallax.inbox import default_inbox_store
-from parallax.models import Action, Side, utcnow
+from parallax.models import Action, Side, timestamp, utcnow
 from parallax.nfl import (
     VALIDATION_ECE,
     NFLEvidenceProvider,
@@ -214,6 +215,87 @@ def _buy_candidate_rank(candidate) -> tuple:
     )
 
 
+def _buy_candidate_publication_eligible(
+    candidate,
+    *,
+    scheduled_game_ids: set[str],
+    blocked_game_ids: set[str],
+    now: datetime,
+) -> bool:
+    """Fail closed unless this economic BUY is independently safe to publish."""
+    play, market, mapping, _detected_at, economic_key, selected_team = candidate
+    game = getattr(mapping, "game", None)
+    if (
+        play.suggested_action != Action.BUY
+        or getattr(mapping, "status", None) != "MAPPED_GAME_WINNER"
+        or game is None
+        or game.game_id not in scheduled_game_ids
+        or game.game_id in blocked_game_ids
+        or getattr(play, "demo", None) is not False
+        or getattr(play, "data_freshness", None) != "FRESH"
+        or getattr(play, "status", None) != "CURRENT"
+        or tuple(getattr(getattr(play, "verdict", None), "failed_gates", ("missing",)))
+        or getattr(play, "evidence", None) is None
+    ):
+        return False
+    if _nfl_economic_position(play, mapping) != (economic_key, selected_team):
+        return False
+    if (
+        getattr(market, "venue_market_id", None) != play.market_id
+        or getattr(market, "venue", None) != play.venue
+        or getattr(market, "status", None) != "OPEN"
+    ):
+        return False
+    numeric_checks = (
+        (getattr(play, "executable_price", None), 0, 1, True),
+        (getattr(play, "model_probability", None), 0, 1, True),
+        (getattr(play, "fees_estimate", None), 0, math.inf, False),
+        (getattr(play, "edge_points", None), VALIDATION_ECE * 100, math.inf, True),
+        (getattr(play, "executable_size", None), 0, math.inf, True),
+        (getattr(play, "expected_value", None), 0, math.inf, True),
+        (getattr(play, "expected_return", None), 0.05, math.inf, False),
+    )
+    for value, lower, upper, strict_lower in numeric_checks:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not (lower < value if strict_lower else lower <= value)
+            or not value < upper
+        ):
+            return False
+    updated_at = timestamp(getattr(play, "updated_at", None))
+    expires_at = timestamp(getattr(play, "expires_at", None))
+    kickoff = timestamp(getattr(game, "kickoff", None))
+    return bool(
+        updated_at
+        and expires_at
+        and kickoff
+        and updated_at <= now < expires_at
+        and now < kickoff
+    )
+
+
+def _publication_candidates(
+    candidates,
+    *,
+    scheduled_game_ids: set[str],
+    blocked_game_ids: set[str],
+    now: datetime,
+):
+    """Choose one eligible contract for each independently safe economic BUY."""
+    grouped = {}
+    for candidate in candidates:
+        if _buy_candidate_publication_eligible(
+            candidate,
+            scheduled_game_ids=scheduled_game_ids,
+            blocked_game_ids=blocked_game_ids,
+            now=now,
+        ):
+            grouped.setdefault(candidate[4], []).append(candidate)
+    return [min(equivalents, key=_buy_candidate_rank) for equivalents in grouped.values()]
+
+
 def _dispatch_buy_alert(
     dispatcher,
     play,
@@ -245,20 +327,11 @@ def _dispatch_buy_alert(
     )
 
 
-def _dispatch_complete_buy_alerts(dispatcher, candidates, slate) -> dict[str, int]:
-    """Dispatch one canonical BUY per position only from a complete NFL scan."""
+def _dispatch_eligible_buy_alerts(dispatcher, candidates) -> dict[str, int]:
+    """Dispatch one already-validated canonical BUY per economic position."""
     summary = {"sent": 0, "deduplicated": 0, "failed": 0, "withheld": 0}
-    if slate.get("market_data_complete") is not True:
-        summary["withheld"] = len(candidates)
-        return summary
-
-    grouped = {}
     for candidate in candidates:
-        grouped.setdefault(candidate[4], []).append(candidate)
-    for equivalents in grouped.values():
-        play, market, mapping, detected_at, economic_key, selected_team = min(
-            equivalents, key=_buy_candidate_rank
-        )
+        play, market, mapping, detected_at, economic_key, selected_team = candidate
         try:
             result = _dispatch_buy_alert(
                 dispatcher,
@@ -484,6 +557,7 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
         rows_out = []
         scored_plays = []
         buy_candidates = []
+        scored_rows_by_play_id = {}
         economic_keys_by_play_id = {}
         data_unavailable_game_ids: set[str] = set()
         mapping_failure_game_ids: set[str] = set()
@@ -577,13 +651,15 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                                             selected_team,
                                         )
                                     )
-                                scored = {"venue": venue, "market": market.title, "market_id": market.venue_market_id, "game_id": mapping.game.game_id, "side": side.value, "game_start": mapping.game.kickoff, "nfl_v1_probability": play.model_probability, "executable_price": play.executable_price, "raw_edge": play.edge_points, "safety_margin": (play.edge_points / 100 - VALIDATION_ECE) if play.edge_points is not None else None, "fee": play.fees_estimate, "net_ev_25": play.expected_value, "net_ev_50": None, "net_ev_100": None, "liquidity": play.executable_size, "failed_gates": list(play.verdict.failed_gates), "verdict": play.suggested_action.value}
+                                scored = {"venue": venue, "market": market.title, "market_id": market.venue_market_id, "game_id": mapping.game.game_id, "side": side.value, "game_start": mapping.game.kickoff, "updated_at": getattr(play, "updated_at", None), "expires_at": getattr(play, "expires_at", None), "data_freshness": getattr(play, "data_freshness", None), "status": getattr(play, "status", None), "nfl_v1_probability": play.model_probability, "executable_price": play.executable_price, "raw_edge": play.edge_points, "safety_margin": (play.edge_points / 100 - VALIDATION_ECE) if play.edge_points is not None else None, "fee": play.fees_estimate, "net_ev_25": play.expected_value, "expected_return": getattr(play, "expected_return", None), "net_ev_50": None, "net_ev_100": None, "liquidity": play.executable_size, "failed_gates": list(play.verdict.failed_gates), "verdict": play.suggested_action.value, "mapping_status": mapping.status, "acquisition_status": "ACQUIRED", "publication_eligible": False}
                                 scored["economic_key"] = economic_key
+                                scored["economic_team"] = economic_key.rsplit(":", 1)[-1]
                                 scored["selected_team"] = selected_team
                                 for index, key in ((2, "net_ev_50"), (3, "net_ev_100")):
                                     example = play.retail_examples[index]
                                     scored[key] = (play.model_probability * example.estimated_payout_if_correct - example.total_cost) if play.model_probability is not None and example.available and example.total_cost is not None else None
                                 rows_out.append(scored)
+                                scored_rows_by_play_id[play.id] = scored
                     except Exception as exc:
                         statuses["BOOK_OR_SCORING_ERROR"] += 1
                         data_unavailable_game_ids.add(mapping.game.game_id)
@@ -599,14 +675,33 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
         data_unavailable_game_ids=data_unavailable_game_ids,
         mapping_failure_game_ids=mapping_failure_game_ids,
     )
-    alert_summary = _dispatch_complete_buy_alerts(
-        alert_dispatcher, buy_candidates, result["slate"]
+    publication_at = utcnow()
+    blocked_game_ids = data_unavailable_game_ids | mapping_failure_game_ids
+    publication_candidates = _publication_candidates(
+        buy_candidates,
+        scheduled_game_ids={game["game_id"] for game in scheduled_for_discovery},
+        blocked_game_ids=blocked_game_ids,
+        now=publication_at,
+    )
+    for play, _market, _mapping, _detected_at, _key, _team in publication_candidates:
+        scored_rows_by_play_id[play.id]["publication_eligible"] = True
+    alert_summary = _dispatch_eligible_buy_alerts(
+        alert_dispatcher, publication_candidates
+    )
+    alert_summary["withheld"] = sum(
+        not _buy_candidate_publication_eligible(
+            candidate,
+            scheduled_game_ids={game["game_id"] for game in scheduled_for_discovery},
+            blocked_game_ids=blocked_game_ids,
+            now=publication_at,
+        )
+        for candidate in buy_candidates
     )
     result["alerts"] = alert_summary["sent"]
     statuses["ALERT_DEDUPLICATED"] += alert_summary["deduplicated"]
     statuses["ALERT_ERROR"] += alert_summary["failed"]
-    statuses["BUY_ALERT_WITHHELD_INCOMPLETE"] += alert_summary["withheld"]
-    lifecycle_at = utcnow()
+    statuses["BUY_ALERT_WITHHELD_INELIGIBLE"] += alert_summary["withheld"]
+    lifecycle_at = publication_at
     result["buy_lifecycle"] = reconcile_active_buy_alerts(
         alert_dispatcher,
         scored_plays,

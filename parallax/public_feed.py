@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
+
+from .nfl import NFL_TEAM_NAMES
 
 
 SCHEMA_VERSION = "parallax.public.v1"
@@ -42,6 +46,7 @@ PUBLIC_PLAY_FIELDS = (
     "failed_gates",
     "contract_url",
     "retail_examples",
+    "publication_eligible",
 )
 RETAIL_FIELDS = (
     "stake",
@@ -311,7 +316,12 @@ def _public_venues(
     return result
 
 
-def _public_slate(value: object, *, allow_buy: bool) -> dict[str, Any] | None:
+def _public_slate(
+    value: object,
+    *,
+    allow_buy: bool,
+    eligible_nfl_game_ids: set[str] | None = None,
+) -> dict[str, Any] | None:
     if not isinstance(value, Mapping):
         return None
     public: dict[str, Any] = {}
@@ -370,15 +380,168 @@ def _public_slate(value: object, *, allow_buy: bool) -> dict[str, Any] | None:
                         if isinstance(game.get(key), str)
                     }
                     if (
-                        not allow_buy
+                        (
+                            not allow_buy
+                            or (
+                                eligible_nfl_game_ids is not None
+                                and game_public.get("game_id")
+                                not in eligible_nfl_game_ids
+                            )
+                        )
                         and game_public.get("status", "").upper() == "BUY"
                     ):
                         game_public["status"] = "WITHHELD_INCOMPLETE_DATA"
                     games_out.append(game_public)
             date_public["games"] = games_out
+            if eligible_nfl_game_ids is not None:
+                date_public["status_counts"] = dict(
+                    Counter(game.get("status") for game in games_out)
+                )
             dates_out.append(date_public)
     public["dates"] = dates_out
+    if eligible_nfl_game_ids is not None:
+        public["status_counts"] = dict(
+            Counter(
+                game.get("status")
+                for date_row in dates_out
+                for game in date_row.get("games", [])
+            )
+        )
     return public
+
+
+def _nfl_buy_source_eligible(row: Mapping[str, Any], now: datetime) -> bool:
+    """Cross-check an NFL scanner's per-position publication attestation."""
+    if (
+        row.get("publication_eligible") is not True
+        or _action(row) != "BUY"
+        or row.get("mapping_status") != "MAPPED_GAME_WINNER"
+        or row.get("acquisition_status") != "ACQUIRED"
+        or row.get("data_freshness") != "FRESH"
+        or row.get("status") != "CURRENT"
+        or row.get("failed_gates") not in ([], ())
+    ):
+        return False
+    required_text = {
+        key: _text(row.get(key))
+        for key in (
+            "venue",
+            "market_id",
+            "side",
+            "game_id",
+            "economic_key",
+            "economic_team",
+            "selected_team",
+        )
+    }
+    if not all(required_text.values()):
+        return False
+    team = required_text["economic_team"].upper()
+    if (
+        required_text["venue"].upper() not in {"PMUS", "KALSHI"}
+        or required_text["side"].upper() not in {"YES", "NO"}
+        or team not in NFL_TEAM_NAMES
+        or required_text["selected_team"] != NFL_TEAM_NAMES[team]
+        or required_text["economic_key"]
+        != f"NFL:{required_text['game_id']}:{team}"
+    ):
+        return False
+    numeric = {
+        "price": _number(row.get("executable_price")),
+        "probability": _number(row.get("nfl_v1_probability")),
+        "fee": _number(row.get("fee")),
+        "edge": _number(row.get("raw_edge")),
+        "safety_margin": _number(row.get("safety_margin")),
+        "liquidity": _number(row.get("liquidity")),
+        "net_ev": _number(row.get("net_ev_25")),
+        "expected_return": _number(row.get("expected_return")),
+    }
+    if not all(value is not None and math.isfinite(value) for value in numeric.values()):
+        return False
+    if not (
+        0 < numeric["price"] < 1
+        and 0 < numeric["probability"] < 1
+        and numeric["fee"] >= 0
+        and numeric["edge"] > 0
+        and numeric["safety_margin"] > 0
+        and numeric["liquidity"] > 0
+        and numeric["net_ev"] > 0
+        and numeric["expected_return"] >= 0.05
+    ):
+        return False
+    updated_at = _parse_timestamp(row.get("updated_at"))
+    expires_at = _parse_timestamp(row.get("expires_at"))
+    game_start = _parse_timestamp(row.get("game_start"))
+    return bool(
+        updated_at
+        and expires_at
+        and game_start
+        and updated_at <= now < expires_at
+        and now < game_start
+    )
+
+
+def _nfl_buy_rank(row: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        float(row["executable_price"]),
+        -float(row["raw_edge"]),
+        -float(row["liquidity"]),
+        str(row["venue"]),
+        str(row["market_id"]),
+        str(row["side"]),
+    )
+
+
+def _nfl_slate_games(value: object) -> dict[str, Mapping[str, Any]]:
+    """Return unambiguous authoritative game rows from the scanner slate."""
+    if not isinstance(value, Mapping) or not isinstance(value.get("dates"), list):
+        return {}
+    games_by_id: dict[str, Mapping[str, Any]] = {}
+    ambiguous: set[str] = set()
+    for date_row in value["dates"]:
+        games = date_row.get("games") if isinstance(date_row, Mapping) else None
+        if not isinstance(games, list):
+            continue
+        for game in games:
+            if not isinstance(game, Mapping):
+                continue
+            game_id = _text(game.get("game_id"))
+            if not game_id:
+                continue
+            if game_id in games_by_id:
+                ambiguous.add(game_id)
+            else:
+                games_by_id[game_id] = game
+    for game_id in ambiguous:
+        games_by_id.pop(game_id, None)
+    return games_by_id
+
+
+def _eligible_nfl_buy_indexes(
+    rows: list[Mapping[str, Any]], now: datetime, slate: object
+) -> set[int]:
+    slate_games = _nfl_slate_games(slate)
+    grouped: dict[str, list[tuple[int, Mapping[str, Any]]]] = {}
+    for index, row in enumerate(rows):
+        game = slate_games.get(str(row.get("game_id") or ""))
+        participants = (
+            {
+                str(game.get("away_team") or "").upper(),
+                str(game.get("home_team") or "").upper(),
+            }
+            if game is not None
+            else set()
+        ) - {""}
+        if (
+            _nfl_buy_source_eligible(row, now)
+            and _text(game.get("status") if game is not None else None) == "BUY"
+            and str(row["economic_team"]).upper() in participants
+        ):
+            grouped.setdefault(str(row["economic_key"]), []).append((index, row))
+    return {
+        min(equivalents, key=lambda item: _nfl_buy_rank(item[1]))[0]
+        for equivalents in grouped.values()
+    }
 
 
 def _public_play(row: Mapping[str, Any], lane: str) -> dict[str, Any] | None:
@@ -465,6 +628,8 @@ def _public_play(row: Mapping[str, Any], lane: str) -> dict[str, Any] | None:
     examples = _retail_examples(row.get("retail_examples"))
     if examples is not None:
         public["retail_examples"] = examples
+    if lane == "nfl" and action == "BUY" and row.get("publication_eligible") is True:
+        public["publication_eligible"] = True
 
     # Defense in depth: the returned keys are fixed even if this function changes.
     allowed = {"signal_id", *PUBLIC_PLAY_FIELDS}
@@ -491,12 +656,27 @@ def sanitize_completed_scan(
     market_data_complete = (
         None if normalized_lane == "cfb" else _market_data_complete(decoded)
     )
-    allow_buy = normalized_lane in {"nfl", "mlb"} and market_data_complete is True
+    nfl_buy_indexes = (
+        _eligible_nfl_buy_indexes(rows, now, decoded.get("slate"))
+        if normalized_lane == "nfl"
+        else set()
+    )
+    allow_buy = (
+        market_data_complete is True
+        if normalized_lane == "mlb"
+        else bool(nfl_buy_indexes)
+        if normalized_lane == "nfl"
+        else False
+    )
     plays = [
         play
-        for row in rows
+        for index, row in enumerate(rows)
         if (play := _public_play(row, normalized_lane))
-        and (allow_buy or play["action"] != "BUY")
+        and (
+            play["action"] != "BUY"
+            or (normalized_lane == "mlb" and allow_buy)
+            or (normalized_lane == "nfl" and index in nfl_buy_indexes)
+        )
     ]
     source_as_of = _source_as_of(decoded, rows)
     counts = {action: sum(play["action"] == action for play in plays) for action in PUBLIC_ACTIONS}
@@ -526,10 +706,22 @@ def sanitize_completed_scan(
     }
     if market_data_complete is not None:
         result["market_data_complete"] = market_data_complete
-    slate = _public_slate(decoded.get("slate"), allow_buy=allow_buy)
+    eligible_nfl_game_ids = (
+        {str(rows[index]["game_id"]) for index in nfl_buy_indexes}
+        if normalized_lane == "nfl"
+        else None
+    )
+    slate = _public_slate(
+        decoded.get("slate"),
+        allow_buy=allow_buy,
+        eligible_nfl_game_ids=eligible_nfl_game_ids,
+    )
     if slate is not None:
         result["slate"] = slate
-    venues = _public_venues(decoded.get("venues"), allow_buy=allow_buy)
+    venues = _public_venues(
+        decoded.get("venues"),
+        allow_buy=normalized_lane == "mlb" and allow_buy,
+    )
     if venues is not None:
         result["venues"] = venues
     return result

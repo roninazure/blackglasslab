@@ -158,6 +158,76 @@ def completed_cfb_stdout() -> str:
     )
 
 
+def eligible_nfl_buy(
+    *,
+    game_id="2026_03_ARI_NYG",
+    market_id="KXNFLGAME-ARI-NYG-ARI",
+    venue="KALSHI",
+    economic_team="ARI",
+    selected_team="Arizona Cardinals",
+    price=0.41,
+):
+    return {
+        "venue": venue,
+        "market_id": market_id,
+        "market": "ARI at NYG",
+        "game_id": game_id,
+        "side": "YES",
+        "side_description": selected_team,
+        "verdict": "BUY",
+        "executable_price": price,
+        "nfl_v1_probability": 0.63,
+        "raw_edge": 22.0,
+        "safety_margin": 0.144535,
+        "fee": 0.01,
+        "net_ev_25": 3.25,
+        "expected_return": 0.13,
+        "liquidity": 100.0,
+        "failed_gates": [],
+        "mapping_status": "MAPPED_GAME_WINNER",
+        "acquisition_status": "ACQUIRED",
+        "economic_key": f"NFL:{game_id}:{economic_team}",
+        "economic_team": economic_team,
+        "selected_team": selected_team,
+        "created_at": "2026-09-24T12:29:20+00:00",
+        "updated_at": "2026-09-24T12:29:30+00:00",
+        "expires_at": "2026-09-24T12:30:30+00:00",
+        "data_freshness": "FRESH",
+        "status": "CURRENT",
+        "game_start": "2026-09-27T17:00:00+00:00",
+        "publication_eligible": True,
+    }
+
+
+def nfl_slate_for(
+    game_id="2026_03_ARI_NYG",
+    status="BUY",
+    *,
+    away_team="ARI",
+    home_team="NYG",
+    complete=True,
+):
+    return {
+        "market_data_complete": complete,
+        "expected_games": 1,
+        "accounted_games": 1,
+        "all_games_accounted": True,
+        "dates": [
+            {
+                "date": "2026-09-27",
+                "games": [
+                    {
+                        "game_id": game_id,
+                        "away_team": away_team,
+                        "home_team": home_team,
+                        "status": status,
+                    }
+                ],
+            }
+        ],
+    }
+
+
 def test_sanitizer_counts_actions_and_maps_only_public_fields():
     result = sanitize_completed_scan("mlb", completed_mlb_stdout(), generated_at=NOW)
 
@@ -293,18 +363,10 @@ def test_nfl_existing_verdict_rows_are_exported_without_guessing_fields():
 def test_complete_nfl_scan_retains_existing_buy_publication():
     stdout = json.dumps(
         {
-            "slate": {"market_data_complete": True},
+            "slate": nfl_slate_for(),
             "summary": {
                 "rows": [
-                    {
-                        "venue": "KALSHI",
-                        "market_id": "KXNFLGAME-COMPLETE",
-                        "side": "YES",
-                        "verdict": "BUY",
-                        "executable_price": 0.41,
-                        "nfl_v1_probability": 0.63,
-                        "raw_edge": 22.0,
-                    }
+                    eligible_nfl_buy(market_id="KXNFLGAME-COMPLETE")
                 ]
             },
         }
@@ -315,6 +377,120 @@ def test_complete_nfl_scan_retains_existing_buy_publication():
     assert result["buy_publication_eligible"] is True
     assert result["summary"] == {"plays": 1, "buy": 1, "watch": 0, "pass": 0}
     assert result["plays"][0]["action"] == "BUY"
+    assert result["plays"][0]["publication_eligible"] is True
+
+
+@pytest.mark.parametrize(
+    ("failed_game_id", "failure_status"),
+    [
+        ("2026_03_GB_TB", "MAPPING_FAILURE"),
+        ("2026_03_JAX_CIN", "DATA_UNAVAILABLE"),
+    ],
+)
+def test_unrelated_nfl_game_failure_does_not_suppress_eligible_buy(
+    failed_game_id, failure_status
+):
+    payload = {
+        "slate": {
+            "market_data_complete": False,
+            "expected_games": 2,
+            "accounted_games": 2,
+            "all_games_accounted": True,
+            "dates": [
+                {
+                    "date": "2026-09-27",
+                    "games": [
+                        {
+                            "game_id": "2026_03_ARI_NYG",
+                            "away_team": "ARI",
+                            "home_team": "NYG",
+                            "status": "BUY",
+                        },
+                        {"game_id": failed_game_id, "status": failure_status},
+                    ],
+                }
+            ],
+        },
+        "summary": {"rows": [eligible_nfl_buy()]},
+    }
+
+    result = sanitize_completed_scan("nfl", json.dumps(payload), generated_at=NOW)
+
+    assert result["data_quality_state"] == "DEGRADED"
+    assert result["market_data_complete"] is False
+    assert result["buy_publication_eligible"] is True
+    assert result["summary"]["buy"] == 1
+    assert [game["status"] for game in result["slate"]["dates"][0]["games"]] == [
+        "BUY",
+        failure_status,
+    ]
+
+
+def test_economic_duplicate_nfl_contracts_publish_once():
+    expensive = eligible_nfl_buy(market_id="contract-expensive", price=0.42)
+    canonical = eligible_nfl_buy(market_id="contract-canonical", price=0.39)
+    payload = {
+        "slate": nfl_slate_for(complete=False),
+        "summary": {"rows": [expensive, canonical]},
+    }
+
+    result = sanitize_completed_scan("nfl", json.dumps(payload), generated_at=NOW)
+
+    assert result["summary"]["buy"] == 1
+    assert result["plays"][0]["market_id"] == "contract-canonical"
+
+
+@pytest.mark.parametrize("own_status", ["MAPPING_FAILURE", "DATA_UNAVAILABLE"])
+def test_nfl_publisher_blocks_buy_when_own_game_has_localized_failure(own_status):
+    payload = {
+        "slate": nfl_slate_for(status=own_status, complete=False),
+        "summary": {"rows": [eligible_nfl_buy()]},
+    }
+
+    result = sanitize_completed_scan("nfl", json.dumps(payload), generated_at=NOW)
+
+    assert result["buy_publication_eligible"] is False
+    assert result["summary"]["buy"] == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("publication_eligible", False),
+        ("acquisition_status", "PARTIAL"),
+        ("mapping_status", "MAPPING_FAILURE"),
+        ("data_freshness", "STALE_OR_UNKNOWN"),
+        ("safety_margin", 0.0),
+        ("expected_return", 0.049),
+        ("economic_team", "NYG"),
+        ("selected_team", "New York Giants"),
+    ],
+)
+def test_nfl_publisher_rechecks_individual_buy_attestation(field, value):
+    buy = eligible_nfl_buy()
+    buy[field] = value
+    payload = {
+        "slate": nfl_slate_for(),
+        "summary": {"rows": [buy]},
+    }
+
+    result = sanitize_completed_scan("nfl", json.dumps(payload), generated_at=NOW)
+
+    assert result["buy_publication_eligible"] is False
+    assert result["summary"]["buy"] == 0
+
+
+def test_nfl_publisher_blocks_internally_consistent_team_outside_matchup():
+    buy = eligible_nfl_buy(
+        economic_team="KC",
+        selected_team="Kansas City Chiefs",
+    )
+    payload = {"slate": nfl_slate_for(), "summary": {"rows": [buy]}}
+
+    result = sanitize_completed_scan("nfl", json.dumps(payload), generated_at=NOW)
+
+    assert result["buy_publication_eligible"] is False
+    assert result["summary"]["buy"] == 0
 
 
 def test_any_explicit_incomplete_signal_overrides_conflicting_complete_signal():
@@ -373,7 +549,15 @@ def test_public_feed_preserves_only_sanitized_dynamic_slate_fields():
                     }
                 ],
             },
-            "summary": {"rows": []},
+            "summary": {
+                "rows": [
+                    eligible_nfl_buy(
+                        game_id="g1",
+                        economic_team="KC",
+                        selected_team="Kansas City Chiefs",
+                    )
+                ]
+            },
         }
     )
 

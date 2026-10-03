@@ -1119,25 +1119,39 @@ def _run_pmus_scan(
         def close(self):
             self.closed += 1
 
-    market = SimpleNamespace(venue_market_id="825205", title="CIN at PIT")
+    market = SimpleNamespace(
+        venue_market_id="825205",
+        title="CIN at PIT",
+        venue=Venue.POLYMARKET,
+        status="OPEN",
+    )
     retail_examples = [SimpleNamespace(available=False, total_cost=None)] * 4
 
     def captured(_store, _market, side, _evidence, _now):
         selected_action = action_by_side(side) if action_by_side else action
         return SimpleNamespace(
             id=f"play-{side.value}",
-            venue="PMUS",
+            venue=Venue.POLYMARKET,
             market_id="825205",
             side=side,
+            side_description="Cincinnati Bengals" if side == Side.YES else "Pittsburgh Steelers",
             model_probability=0.5,
             executable_price=0.5,
-            edge_points=0.0,
+            edge_points=10.0,
             fees_estimate=0.0,
-            expected_value=0.0,
+            expected_value=1.0,
+            expected_return=0.1,
             executable_size=1.0,
             verdict=SimpleNamespace(failed_gates=()),
             suggested_action=selected_action,
             retail_examples=retail_examples,
+            created_at=now.isoformat(),
+            updated_at=now.isoformat(),
+            expires_at=(now + timedelta(seconds=60)).isoformat(),
+            data_freshness="FRESH",
+            status="CURRENT",
+            demo=False,
+            evidence=object(),
         )
 
     monkeypatch.setattr(nfl_live_scan, "PolymarketUSPublicClient", FakePMUS)
@@ -1654,9 +1668,70 @@ def test_indianapolis_no_and_washington_yes_are_one_washington_position(
     ) == ("NFL:2026_04_IND_WAS:WAS", "Washington Commanders")
 
 
-def test_complete_dispatch_collapses_duplicate_contracts_and_preserves_independent_buy(
-    monkeypatch,
+def _publication_candidate(
+    now,
+    *,
+    market_id="contract-was",
+    game_id="2026_04_IND_WAS",
+    away_team="IND",
+    home_team="WAS",
+    contract_team="WAS",
+    economic_team="WAS",
+    selected_label="Washington Commanders",
+    side=Side.YES,
+    price=0.35,
+    action=Action.BUY,
+    freshness="FRESH",
+    market_status="OPEN",
 ):
+    game = SimpleNamespace(
+        game_id=game_id,
+        away_team=away_team,
+        home_team=home_team,
+        kickoff="2026-10-04T13:30:00+00:00",
+    )
+    mapping = SimpleNamespace(
+        status="MAPPED_GAME_WINNER",
+        game=game,
+        selected_team=contract_team,
+    )
+    play = SimpleNamespace(
+        market_id=market_id,
+        side=side,
+        venue=Venue.KALSHI,
+        executable_price=price,
+        model_probability=0.65,
+        edge_points=22.54868024,
+        fees_estimate=0.01,
+        executable_size=100,
+        expected_value=3.0,
+        expected_return=0.1,
+        suggested_action=action,
+        verdict=SimpleNamespace(failed_gates=()),
+        updated_at=now.isoformat(),
+        expires_at=(now + timedelta(seconds=60)).isoformat(),
+        data_freshness=freshness,
+        status="CURRENT" if freshness == "FRESH" else "STALE",
+        demo=False,
+        evidence=object(),
+    )
+    market = SimpleNamespace(
+        title=f"{contract_team} wins",
+        venue_market_id=market_id,
+        venue=Venue.KALSHI,
+        status=market_status,
+    )
+    return (
+        play,
+        market,
+        mapping,
+        now,
+        f"NFL:{game_id}:{economic_team}",
+        selected_label,
+    )
+
+
+def test_economic_duplicate_contracts_dispatch_once(monkeypatch):
     sent = []
 
     def dispatch(_dispatcher, play, _market, _mapping, _detected_at, **kwargs):
@@ -1665,44 +1740,35 @@ def test_complete_dispatch_collapses_duplicate_contracts_and_preserves_independe
 
     monkeypatch.setattr(nfl_live_scan, "_dispatch_buy_alert", dispatch)
     now = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
-    market = SimpleNamespace(title="IND at WAS")
-    mapping = SimpleNamespace(
-        game=SimpleNamespace(
-            game_id="2026_04_IND_WAS",
-            away_team="IND",
-            home_team="WAS",
-            kickoff="2026-10-04T13:30:00+00:00",
-        )
-    )
-
-    def candidate(market_id, side, price, key, team):
-        play = SimpleNamespace(
-            market_id=market_id,
-            side=side,
-            venue=Venue.KALSHI,
-            executable_price=price,
-            edge_points=22.54868024,
-            executable_size=100,
-            suggested_action=Action.BUY,
-        )
-        return play, market, mapping, now, key, team
-
     washington_key = "NFL:2026_04_IND_WAS:WAS"
     candidates = [
-        candidate("contract-ind", Side.NO, 0.36, washington_key, "WAS"),
-        candidate("contract-was", Side.YES, 0.35, washington_key, "WAS"),
-        candidate(
-            "contract-independent",
-            Side.YES,
-            0.30,
-            "NFL:another-game:KC",
-            "KC",
+        _publication_candidate(
+            now,
+            market_id="contract-ind",
+            contract_team="IND",
+            side=Side.NO,
+            price=0.36,
+        ),
+        _publication_candidate(now, market_id="contract-was", price=0.35),
+        _publication_candidate(
+            now,
+            market_id="contract-independent",
+            game_id="another-game",
+            away_team="KC",
+            home_team="LV",
+            contract_team="KC",
+            economic_team="KC",
+            selected_label="Kansas City Chiefs",
+            price=0.30,
         ),
     ]
-
-    result = nfl_live_scan._dispatch_complete_buy_alerts(
-        object(), candidates, {"market_data_complete": True}
+    eligible = nfl_live_scan._publication_candidates(
+        candidates,
+        scheduled_game_ids={"2026_04_IND_WAS", "another-game"},
+        blocked_game_ids=set(),
+        now=now,
     )
+    result = nfl_live_scan._dispatch_eligible_buy_alerts(object(), eligible)
 
     assert result == {"sent": 2, "deduplicated": 0, "failed": 0, "withheld": 0}
     assert [(market_id, side) for market_id, side, _kwargs in sent] == [
@@ -1711,38 +1777,94 @@ def test_complete_dispatch_collapses_duplicate_contracts_and_preserves_independe
     ]
     assert sent[0][2] == {
         "economic_key": washington_key,
-        "selected_side": "WAS",
+        "selected_side": "Washington Commanders",
     }
 
 
-def test_incomplete_scan_withholds_buy_alert_at_shared_publication_gate(monkeypatch):
-    monkeypatch.setattr(
-        nfl_live_scan,
-        "_dispatch_buy_alert",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("incomplete NFL scan must not dispatch BUY")
-        ),
+@pytest.mark.parametrize("unrelated_failure", ["GB_TB", "JAX_CIN"])
+def test_unrelated_game_failure_does_not_block_safe_buy(unrelated_failure):
+    now = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
+    candidate = _publication_candidate(now)
+
+    assert nfl_live_scan._publication_candidates(
+        [candidate],
+        scheduled_game_ids={"2026_04_IND_WAS", unrelated_failure},
+        blocked_game_ids={unrelated_failure},
+        now=now,
+    ) == [candidate]
+
+
+@pytest.mark.parametrize("failure", ["MAPPING_FAILURE", "DATA_UNAVAILABLE"])
+def test_buy_own_game_localized_failure_is_blocked(failure):
+    now = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
+    candidate = _publication_candidate(now)
+    blocked_by_status = {failure: {"2026_04_IND_WAS"}}
+
+    assert nfl_live_scan._publication_candidates(
+        [candidate],
+        scheduled_game_ids={"2026_04_IND_WAS"},
+        blocked_game_ids=blocked_by_status[failure],
+        now=now,
+    ) == []
+
+
+def test_stale_buy_is_not_publication_eligible():
+    now = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
+    candidate = _publication_candidate(now, freshness="STALE_OR_UNKNOWN")
+
+    assert nfl_live_scan._publication_candidates(
+        [candidate],
+        scheduled_game_ids={"2026_04_IND_WAS"},
+        blocked_game_ids=set(),
+        now=now,
+    ) == []
+
+
+@pytest.mark.parametrize("action", [Action.WATCH, Action.PASS])
+def test_watch_and_pass_are_not_publication_eligible(action):
+    now = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
+    candidate = _publication_candidate(now, action=action)
+
+    assert nfl_live_scan._publication_candidates(
+        [candidate],
+        scheduled_game_ids={"2026_04_IND_WAS"},
+        blocked_game_ids=set(),
+        now=now,
+    ) == []
+
+
+def test_wrong_or_ambiguous_economic_side_is_blocked():
+    now = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
+    wrong_side = _publication_candidate(
+        now,
+        economic_team="IND",
+        selected_label="Indianapolis Colts",
     )
-    candidate = (
-        SimpleNamespace(
-            market_id="contract-was",
-            side=Side.YES,
-            venue=Venue.KALSHI,
-            executable_price=0.35,
-            edge_points=22.5,
-            executable_size=100,
-            suggested_action=Action.BUY,
-        ),
-        SimpleNamespace(title="Washington wins"),
-        SimpleNamespace(game=SimpleNamespace()),
-        datetime(2026, 10, 3, 11, 12, tzinfo=UTC),
-        "NFL:2026_04_IND_WAS:WAS",
-        "WAS",
+    ambiguous = list(_publication_candidate(now))
+    ambiguous[2] = SimpleNamespace(
+        status="MAPPED_GAME_WINNER",
+        game=ambiguous[2].game,
+        selected_team=None,
     )
 
-    assert nfl_live_scan._dispatch_complete_buy_alerts(
-        object(), [candidate], {"market_data_complete": False}
-    ) == {"sent": 0, "deduplicated": 0, "failed": 0, "withheld": 1}
+    assert nfl_live_scan._publication_candidates(
+        [wrong_side, tuple(ambiguous)],
+        scheduled_game_ids={"2026_04_IND_WAS"},
+        blocked_game_ids=set(),
+        now=now,
+    ) == []
+
+
+def test_incomplete_acquisition_for_buy_itself_is_blocked():
+    now = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
+    candidate = _publication_candidate(now, market_status="CLOSED")
+
+    assert nfl_live_scan._publication_candidates(
+        [candidate],
+        scheduled_game_ids={"2026_04_IND_WAS"},
+        blocked_game_ids=set(),
+        now=now,
+    ) == []
 
 
 def test_complete_scored_nfl_buy_survives_scan_to_publication_contract(
@@ -1762,7 +1884,7 @@ def test_complete_scored_nfl_buy_survives_scan_to_publication_contract(
     public = sanitize_completed_scan(
         "nfl",
         json.dumps(result),
-        generated_at=datetime(2026, 9, 27, 12, 1, tzinfo=UTC),
+        generated_at=datetime(2026, 9, 27, 12, 0, 30, tzinfo=UTC),
     )
 
     assert result["slate"]["market_data_complete"] is True
@@ -1771,7 +1893,9 @@ def test_complete_scored_nfl_buy_survives_scan_to_publication_contract(
     assert public["buy_publication_eligible"] is True
     assert public["summary"]["buy"] == 1
     published = next(play for play in public["plays"] if play["action"] == "BUY")
-    alerted_play, _market, _mapping, _detected_at, alert_identity = dispatched[0]
+    alerted_play, alerted_market, _mapping, _detected_at, alert_identity = dispatched[0]
+    assert alerted_play.venue is Venue.POLYMARKET
+    assert alerted_market.venue is Venue.POLYMARKET
     assert (
         published["venue"],
         published["market_id"],
@@ -1793,7 +1917,7 @@ def test_complete_scored_nfl_buy_survives_scan_to_publication_contract(
     }
 
 
-def test_degraded_scored_nfl_buy_is_withheld_from_alert_and_publication(
+def test_degraded_scan_with_individually_safe_buy_still_publishes(
     monkeypatch, tmp_path
 ):
     from parallax.public_feed import sanitize_completed_scan
@@ -1811,19 +1935,23 @@ def test_degraded_scored_nfl_buy_is_withheld_from_alert_and_publication(
     public = sanitize_completed_scan(
         "nfl",
         json.dumps(result),
-        generated_at=datetime(2026, 9, 27, 12, 1, tzinfo=UTC),
+        generated_at=datetime(2026, 9, 27, 12, 0, 30, tzinfo=UTC),
     )
 
     assert any(
         row.get("verdict") == "BUY" for row in result["summary"]["rows"]
     )
     assert result["slate"]["market_data_complete"] is False
-    assert result["alerts"] == 0
-    assert dispatched == []
-    assert result["summary"]["status_counts"]["BUY_ALERT_WITHHELD_INCOMPLETE"] == 1
+    assert result["alerts"] == 1
+    assert len(dispatched) == 1
+    assert result["summary"]["status_counts"]["BUY_ALERT_WITHHELD_INELIGIBLE"] == 0
     assert public["data_quality_state"] == "DEGRADED"
-    assert public["buy_publication_eligible"] is False
-    assert public["summary"]["buy"] == 0
+    assert public["market_data_complete"] is False
+    assert public["buy_publication_eligible"] is True
+    assert public["summary"]["buy"] == 1
+    assert next(play for play in public["plays"] if play["action"] == "BUY")[
+        "publication_eligible"
+    ] is True
 
 
 @pytest.mark.parametrize("action", [__import__("parallax.models", fromlist=["Action"]).Action.WATCH, __import__("parallax.models", fromlist=["Action"]).Action.PASS])
