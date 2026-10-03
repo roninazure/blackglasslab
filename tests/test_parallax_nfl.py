@@ -13,7 +13,8 @@ from maker_spread_economics.polymarket_us import (
     PolymarketUSPublicClient,
     PolymarketUSRateLimit,
 )
-from parallax.models import Action, Mechanics, NormalizedMarket, Side, Venue
+from parallax.fees import REVIEW_EXPIRES, REVIEWED_AT, attach_fees
+from parallax.models import Action, Mechanics, NormalizedMarket, Side, Venue, timestamp
 from parallax.nfl import (
     VALIDATION_ECE,
     NFLEvidenceProvider,
@@ -179,8 +180,104 @@ def test_kalshi_nfl_discovery_uses_one_series_request_and_schedule(monkeypatch):
         "KXNFLGAME-26SEP13ARILAC-LAC",
     ]
     assert all(row["home_team"] == "LAC" and row["away_team"] == "ARI" for row in rows)
+    assert all(
+        row["_discovery_event"]
+        == {
+            "ticker": "KXNFLGAME-26SEP13ARILAC",
+            "event_ticker": "KXNFLGAME-26SEP13ARILAC",
+            "series_ticker": "KXNFLGAME",
+            "title": "ARI vs LAC NFL game",
+            "sport": "NFL",
+            "away_team": "ARI",
+            "home_team": "LAC",
+            "scheduled_start": "2026-09-13T20:25:00+00:00",
+        }
+        for row in rows
+    )
+    assert all(
+        row["_discovery_series"]
+        == {
+            "ticker": "KXNFLGAME",
+            "sport": "NFL",
+            "fee_type": "quadratic",
+            "fee_multiplier": 1,
+        }
+        for row in rows
+    )
     assert coverage["state"] == "COMPLETE"
     assert coverage["request_count"] == 1
+
+
+def test_discovered_kalshi_nfl_fee_policy_is_verified_and_bounded(monkeypatch):
+    reviewed_at = timestamp(REVIEWED_AT)
+    expires_at = timestamp(REVIEW_EXPIRES)
+    assert reviewed_at is not None and expires_at is not None
+    now = reviewed_at + timedelta(minutes=1)
+    scheduled = [{
+        "game_id": "g",
+        "date": "2026-09-13",
+        "start_time": "2026-09-13T20:25:00+00:00",
+        "away_team": "ARI",
+        "home_team": "LAC",
+        "schedule_status": "SCHEDULED",
+    }]
+
+    class Client:
+        def nfl_markets_page(self, *, limit, cursor):
+            return {"markets": [{
+                "ticker": "KXNFLGAME-26SEP13ARILAC-LAC",
+                "event_ticker": "KXNFLGAME-26SEP13ARILAC",
+                "title": "Los Angeles C wins",
+                "yes_sub_title": "LAC",
+                "status": "open",
+                "rules_primary": "Contract resolves from the official league result.",
+            }], "cursor": ""}
+
+    monkeypatch.setattr(
+        nfl_live_scan, "_scoped_call", lambda function, **kwargs: function(**kwargs)
+    )
+    rows, _coverage = nfl_live_scan._scope_kalshi(Client(), scheduled)
+    row = rows[0]
+    market = normalize_kalshi(
+        row, {}, now.isoformat(), event=row["_discovery_event"]
+    )
+
+    verified = attach_fees(
+        market,
+        now,
+        event=row["_discovery_event"],
+        series=row["_discovery_series"],
+    )
+
+    assert verified.mechanics.fee_rate == 0.07
+    assert verified.mechanics.fee_status == "VERIFIED_UPPER_BOUND"
+    assert timestamp(verified.mechanics.fee_valid_until) == now + timedelta(seconds=60)
+    assert verified.original_metadata["fee_provenance"]["effective_multiplier"] == 1
+    assert verified.original_metadata["fee_provenance"]["verified_series"] == "KXNFLGAME"
+
+    event = row["_discovery_event"]
+    series = row["_discovery_series"]
+    assert attach_fees(
+        market, now, event={**event, "event_ticker": "WRONG"}, series=series
+    ).mechanics.fee_rate is None
+    assert attach_fees(
+        market, now, event=event, series={**series, "ticker": "WRONG"}
+    ).mechanics.fee_rate is None
+    assert attach_fees(
+        market,
+        now,
+        event={**event, "fee_type_override": "unsupported"},
+        series=series,
+    ).mechanics.fee_rate is None
+    assert attach_fees(
+        market, now + timedelta(seconds=60), event=event, series=series
+    ).mechanics.fee_rate is None
+    assert attach_fees(
+        replace(market, data_timestamp=expires_at.isoformat()),
+        expires_at,
+        event=event,
+        series=series,
+    ).mechanics.fee_rate is None
 
 
 def test_discovered_kalshi_game_contract_maps_from_schedule_enrichment(monkeypatch):

@@ -265,7 +265,12 @@ def _scoped_call(function, **kwargs):
 
 def _scope_kalshi(client: KalshiPublicClient, scheduled: list[dict]) -> tuple[list[dict], dict]:
     """Fetch the NFL series directly, then retain only schedule-backed events."""
-    series_row = {"ticker": KALSHI_NFL_SERIES_TICKER, "sport": "NFL"}
+    series_row = {
+        "ticker": KALSHI_NFL_SERIES_TICKER,
+        "sport": "NFL",
+        "fee_type": "quadratic",
+        "fee_multiplier": 1,
+    }
     request_count = 0
 
     def bounded_call(function, **kwargs):
@@ -317,6 +322,8 @@ def _scope_kalshi(client: KalshiPublicClient, scheduled: list[dict]) -> tuple[li
             continue
         event = {
             "ticker": event_ticker,
+            "event_ticker": event_ticker,
+            "series_ticker": KALSHI_NFL_SERIES_TICKER,
             "title": f"{game['away_team']} vs {game['home_team']} NFL game",
             "sport": "NFL",
             "away_team": game["away_team"],
