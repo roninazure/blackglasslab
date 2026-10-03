@@ -8,15 +8,19 @@ import math
 import os
 import tempfile
 from collections import Counter
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
+import fcntl
+
 from .nfl import NFL_TEAM_NAMES
 
 
 SCHEMA_VERSION = "parallax.public.v1"
+NFL_INCREMENTAL_SCHEMA_VERSION = "parallax.nfl.incremental.v1"
 FREE_VISIBILITY_DELAY = timedelta(minutes=15)
 STALE_AFTER = timedelta(minutes=90)
 PUBLIC_ACTIONS = {"BUY", "WATCH", "PASS"}
@@ -754,10 +758,190 @@ def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
         raise
 
 
+@contextmanager
+def _nfl_publication_lock(state_dir: Path):
+    """Serialize NFL reconciliation and per-game publication in one process tree."""
+    directory = Path(state_dir) / "public_feed"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = directory / ".nfl.lock"
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _nfl_incremental_state_path(state_dir: Path) -> Path:
+    return Path(state_dir) / "public_feed" / ".nfl_incremental.json"
+
+
+def _read_nfl_incremental_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "schema_version": NFL_INCREMENTAL_SCHEMA_VERSION,
+            "reconciled_at": None,
+            "baseline": None,
+            "updates": {},
+        }
+    try:
+        decoded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("NFL incremental state is unreadable") from exc
+    if (
+        not isinstance(decoded, dict)
+        or decoded.get("schema_version") != NFL_INCREMENTAL_SCHEMA_VERSION
+        or decoded.get("baseline") is not None
+        and not isinstance(decoded.get("baseline"), Mapping)
+        or not isinstance(decoded.get("updates"), Mapping)
+    ):
+        raise ValueError("NFL incremental state is malformed")
+    for game_id, update in decoded["updates"].items():
+        if (
+            not isinstance(game_id, str)
+            or not isinstance(update, Mapping)
+            or _parse_timestamp(update.get("finalized_at")) is None
+            or not isinstance(update.get("payload"), Mapping)
+        ):
+            raise ValueError("NFL incremental state contains a malformed update")
+    return decoded
+
+
+def _single_nfl_game(payload: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]]:
+    games = _nfl_slate_games(payload.get("slate"))
+    if len(games) != 1:
+        raise ValueError("Incremental NFL publication requires exactly one slate game")
+    game_id, game = next(iter(games.items()))
+    rows = _source_rows(payload, "nfl")
+    if any(str(row.get("game_id") or "") != game_id for row in rows):
+        raise ValueError("Incremental NFL rows must belong to the finalized game")
+    return game_id, game
+
+
+def _aggregate_nfl_incremental_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Overlay newer per-game snapshots on the last authoritative scan."""
+    baseline = state.get("baseline")
+    baseline = baseline if isinstance(baseline, Mapping) else {}
+    updates = state["updates"]
+    overridden = set(updates)
+    rows = [
+        row
+        for row in _source_rows(baseline, "nfl")
+        if str(row.get("game_id") or "") not in overridden
+    ]
+    games = {
+        game_id: dict(game)
+        for game_id, game in _nfl_slate_games(baseline.get("slate")).items()
+        if game_id not in overridden
+    }
+    for game_id, update in updates.items():
+        payload = update["payload"]
+        rows.extend(_source_rows(payload, "nfl"))
+        update_game_id, game = _single_nfl_game(payload)
+        if update_game_id != game_id:
+            raise ValueError("NFL incremental state game key does not match its payload")
+        games[game_id] = dict(game)
+
+    dates: dict[str, list[dict[str, Any]]] = {}
+    for game in games.values():
+        date = _text(game.get("date"))
+        if date is None:
+            start = _parse_timestamp(game.get("start_time"))
+            date = start.date().isoformat() if start is not None else "unknown"
+        dates.setdefault(date, []).append(game)
+    return {
+        "read_only": True,
+        "orders": 0,
+        "published": 0,
+        # An incremental view is intentionally honest about not being a new
+        # completed-slate reconciliation. Individual NFL BUYs remain eligible.
+        "slate": {
+            "market_data_complete": False,
+            "dates": [
+                {"date": date, "market_data_complete": False, "games": games_for_date}
+                for date, games_for_date in sorted(dates.items())
+            ],
+        },
+        "summary": {"rows": rows},
+    }
+
+
+def publish_incremental_nfl_game(
+    finalized_game: Mapping[str, Any],
+    state_dir: Path,
+    *,
+    generated_at: datetime | None = None,
+) -> Path:
+    """Atomically merge one finalized NFL game into the sanitized local feed."""
+    now = (generated_at or datetime.now(UTC)).astimezone(UTC)
+    if finalized_game.get("read_only") is not True:
+        raise ValueError("Incremental NFL publication must attest read_only=true")
+    finalized_at = _parse_timestamp(finalized_game.get("finalized_at"))
+    if finalized_at is None or finalized_at > now:
+        raise ValueError("Incremental NFL publication requires a valid finalization time")
+    game_id, _game = _single_nfl_game(finalized_game)
+    # Exercise the same full BUY attestation, economic deduplication, game-start,
+    # and freshness checks before this fragment can enter merge state.
+    sanitize_completed_scan("nfl", json.dumps(finalized_game), generated_at=now)
+
+    state_path = _nfl_incremental_state_path(state_dir)
+    destination = Path(state_dir) / "public_feed" / "nfl.json"
+    with _nfl_publication_lock(state_dir):
+        state = _read_nfl_incremental_state(state_path)
+        reconciled_at = _parse_timestamp(state.get("reconciled_at"))
+        current = state["updates"].get(game_id)
+        current_at = (
+            _parse_timestamp(current.get("finalized_at"))
+            if isinstance(current, Mapping)
+            else None
+        )
+        newest_at = max(
+            (value for value in (reconciled_at, current_at) if value is not None),
+            default=None,
+        )
+        if newest_at is not None and finalized_at <= newest_at:
+            return destination
+
+        state["updates"][game_id] = {
+            "finalized_at": finalized_at.isoformat(),
+            "payload": dict(finalized_game),
+        }
+        aggregate = _aggregate_nfl_incremental_state(state)
+        public = sanitize_completed_scan(
+            "nfl", json.dumps(aggregate), generated_at=now
+        )
+        _atomic_write(state_path, state)
+        _atomic_write(destination, public)
+    return destination
+
+
 def export_completed_scan(lane: str, completed_stdout: str, state_dir: Path) -> Path:
     """Sanitize one already-completed scan and atomically publish it locally."""
     normalized_lane = lane.casefold()
-    payload = sanitize_completed_scan(normalized_lane, completed_stdout)
     destination = Path(state_dir) / "public_feed" / f"{normalized_lane}.json"
-    _atomic_write(destination, payload)
+    if normalized_lane != "nfl":
+        payload = sanitize_completed_scan(normalized_lane, completed_stdout)
+        _atomic_write(destination, payload)
+        return destination
+
+    try:
+        decoded = json.loads(completed_stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Completed scan output must be valid JSON") from exc
+    if not isinstance(decoded, Mapping):
+        raise ValueError("Completed scan output must be a JSON object")
+    now = datetime.now(UTC)
+    payload = sanitize_completed_scan("nfl", completed_stdout, generated_at=now)
+    state = {
+        "schema_version": NFL_INCREMENTAL_SCHEMA_VERSION,
+        "reconciled_at": now.isoformat(),
+        "baseline": decoded,
+        "updates": {},
+    }
+    with _nfl_publication_lock(state_dir):
+        # State goes first: interruption can delay a new feed, but cannot leave
+        # stale merge state capable of resurrecting a reconciled-away BUY.
+        _atomic_write(_nfl_incremental_state_path(state_dir), state)
+        _atomic_write(destination, payload)
     return destination

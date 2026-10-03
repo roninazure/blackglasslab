@@ -174,6 +174,9 @@ class UnattendedScheduler:
         env.update(load_runtime_env(self.runtime_env))
         previous = env.get("PYTHONPATH")
         env["PYTHONPATH"] = str(self.root) if not previous else f"{self.root}{os.pathsep}{previous}"
+        # The NFL child may publish already-finalized games into the same local
+        # sanitized feed while stdout remains captured for final reconciliation.
+        env["PARALLAX_PUBLIC_FEED_STATE_DIR"] = str(self.state_dir)
         return env
 
     def _health(self, state: str, heartbeat: str) -> dict[str, object]:

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import signal
+import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timedelta
@@ -215,11 +217,18 @@ def _buy_candidate_rank(candidate) -> tuple:
     )
 
 
+def _publication_venue(value: object) -> str:
+    """Return the scanner's stable venue label for publication isolation."""
+    venue = str(getattr(value, "value", value) or "").upper()
+    return "PMUS" if venue == "POLYMARKET" else venue
+
+
 def _buy_candidate_publication_eligible(
     candidate,
     *,
     scheduled_game_ids: set[str],
     blocked_game_ids: set[str],
+    blocked_game_venues: set[tuple[str, str]] = frozenset(),
     now: datetime,
 ) -> bool:
     """Fail closed unless this economic BUY is independently safe to publish."""
@@ -231,6 +240,7 @@ def _buy_candidate_publication_eligible(
         or game is None
         or game.game_id not in scheduled_game_ids
         or game.game_id in blocked_game_ids
+        or (game.game_id, _publication_venue(play.venue)) in blocked_game_venues
         or getattr(play, "demo", None) is not False
         or getattr(play, "data_freshness", None) != "FRESH"
         or getattr(play, "status", None) != "CURRENT"
@@ -281,6 +291,7 @@ def _publication_candidates(
     *,
     scheduled_game_ids: set[str],
     blocked_game_ids: set[str],
+    blocked_game_venues: set[tuple[str, str]] = frozenset(),
     now: datetime,
 ):
     """Choose one eligible contract for each independently safe economic BUY."""
@@ -290,6 +301,7 @@ def _publication_candidates(
             candidate,
             scheduled_game_ids=scheduled_game_ids,
             blocked_game_ids=blocked_game_ids,
+            blocked_game_venues=blocked_game_venues,
             now=now,
         ):
             grouped.setdefault(candidate[4], []).append(candidate)
@@ -540,7 +552,7 @@ def _scope_kalshi(client: KalshiPublicClient, scheduled: list[dict]) -> tuple[li
     }
 
 
-def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
+def _scan(*, pmus_acquisition: PMUSAcquisition | None = None, fast_publisher=None) -> dict:
     games = fetch_games()
     discovery_at = utcnow()
     scheduled_for_discovery = _upcoming_slate(games, discovery_at)
@@ -595,8 +607,12 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
         economic_keys_by_play_id = {}
         data_unavailable_game_ids: set[str] = set()
         mapping_failure_game_ids: set[str] = set()
+        publication_blocked_game_venues: set[tuple[str, str]] = set()
         alert_summary = {"sent": 0, "deduplicated": 0, "failed": 0, "withheld": 0}
         scheduled_game_ids = {game["game_id"] for game in scheduled_for_discovery}
+        scheduled_by_id = {
+            game["game_id"]: game for game in scheduled_for_discovery
+        }
         for batch_game_id, game_rows in _ordered_game_rows(
             pmus_rows, kalshi_rows, games, scheduled_for_discovery, discovery_at
         ):
@@ -631,6 +647,9 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                             if evidence is None:
                                 statuses["EVIDENCE_MISSING"] += 1
                                 data_unavailable_game_ids.add(mapping.game.game_id)
+                                publication_blocked_game_venues.add(
+                                    (mapping.game.game_id, venue)
+                                )
                                 rows_out.append(row)
                                 continue
                             acquired = acquisition.book(
@@ -642,6 +661,9 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                             if acquired.book is None or acquired.observed_at is None:
                                 statuses["BOOK_REQUEST_AVOIDED"] += 1
                                 data_unavailable_game_ids.add(mapping.game.game_id)
+                                publication_blocked_game_venues.add(
+                                    (mapping.game.game_id, venue)
+                                )
                                 row["scoring_error"] = "ACQUISITION_AVOIDED"
                                 row["scoring_error_reason"] = acquired.avoided_reason
                                 rows_out.append(row)
@@ -661,6 +683,9 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                         if evidence is None:
                             statuses["EVIDENCE_MISSING"] += 1
                             data_unavailable_game_ids.add(mapping.game.game_id)
+                            publication_blocked_game_venues.add(
+                                (mapping.game.game_id, venue)
+                            )
                         else:
                             statuses["EVIDENCE"] += 1
                             for side in Side:
@@ -701,21 +726,22 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                     except Exception as exc:
                         statuses["BOOK_OR_SCORING_ERROR"] += 1
                         data_unavailable_game_ids.add(mapping.game.game_id)
+                        publication_blocked_game_venues.add(
+                            (mapping.game.game_id, venue)
+                        )
                         row["scoring_error"], row["scoring_error_reason"] = _scoring_failure(exc)
                 rows_out.append(row)
-            if batch_game_id is not None and any(
-                candidate[2].game.game_id == batch_game_id
-                for candidate in buy_candidates
-            ):
+            if batch_game_id is not None:
                 game_candidates = [
                     candidate
                     for candidate in buy_candidates
                     if candidate[2].game.game_id == batch_game_id
                 ]
+                if not game_candidates and fast_publisher is None:
+                    continue
                 game_blocked_ids = (
                     {batch_game_id}
-                    if batch_game_id in data_unavailable_game_ids
-                    or batch_game_id in mapping_failure_game_ids
+                    if batch_game_id in mapping_failure_game_ids
                     else set()
                 )
                 finalized_at = utcnow()
@@ -723,6 +749,7 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                     game_candidates,
                     scheduled_game_ids=scheduled_game_ids,
                     blocked_game_ids=game_blocked_ids,
+                    blocked_game_venues=publication_blocked_game_venues,
                     now=finalized_at,
                 )
                 for play, _market, _mapping, _detected_at, _key, _team in publication_candidates:
@@ -738,10 +765,45 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                         candidate,
                         scheduled_game_ids=scheduled_game_ids,
                         blocked_game_ids=game_blocked_ids,
+                        blocked_game_venues=publication_blocked_game_venues,
                         now=finalized_at,
                     )
                     for candidate in game_candidates
                 )
+                if fast_publisher is not None:
+                    game = dict(scheduled_by_id[batch_game_id])
+                    game["status"] = (
+                        "BUY" if publication_candidates else "WITHHELD_INELIGIBLE"
+                    )
+                    finalized_game = {
+                        "read_only": True,
+                        "orders": 0,
+                        "published": 0,
+                        "finalized_at": finalized_at.isoformat(),
+                        "slate": {
+                            "market_data_complete": False,
+                            "dates": [
+                                {
+                                    "date": game["date"],
+                                    "market_data_complete": False,
+                                    "games": [game],
+                                }
+                            ],
+                        },
+                        "summary": {
+                            "rows": [
+                                scored_rows_by_play_id[candidate[0].id]
+                                for candidate in game_candidates
+                            ]
+                        },
+                    }
+                    try:
+                        fast_publisher(finalized_game)
+                        statuses["FAST_PUBLICATION_FINALIZED"] += 1
+                    except Exception:
+                        # Local publication is fail-closed and must not disturb
+                        # scoring, provider budgets, or completed reconciliation.
+                        statuses["FAST_PUBLICATION_ERROR"] += 1
     finally:
         pmus.close()
     result["pmus_acquisition"] = acquisition.diagnostics()
@@ -752,6 +814,18 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
         data_unavailable_game_ids=data_unavailable_game_ids,
         mapping_failure_game_ids=mapping_failure_game_ids,
     )
+    # An independently valid venue may produce the game's BUY status while a
+    # peer venue remains unavailable.  Keep that BUY status for per-position
+    # publication, but retain truthful slate/date degradation diagnostics.
+    incomplete_game_ids = data_unavailable_game_ids | mapping_failure_game_ids
+    if incomplete_game_ids:
+        result["slate"]["market_data_complete"] = False
+        for date_row in result["slate"]["dates"]:
+            if any(
+                game.get("game_id") in incomplete_game_ids
+                for game in date_row.get("games", [])
+            ):
+                date_row["market_data_complete"] = False
     publication_at = utcnow()
     result["alerts"] = alert_summary["sent"]
     statuses["ALERT_DEDUPLICATED"] += alert_summary["deduplicated"]
@@ -769,5 +843,41 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
     return result
 
 
+def _kick_nfl_publisher_for_current_buy(payload, destination: Path) -> bool:
+    """Kick the existing NFL publisher only when this game's BUY survived sanitization."""
+    public = json.loads(destination.read_text(encoding="utf-8"))
+    game_ids = {
+        str(row.get("game_id") or "")
+        for row in payload.get("summary", {}).get("rows", [])
+    }
+    has_current_buy = any(
+        play.get("action") == "BUY"
+        and play.get("publication_eligible") is True
+        and str(play.get("game_id") or "") in game_ids
+        for play in public.get("plays", [])
+    )
+    if not has_current_buy:
+        return False
+    subprocess.run(
+        [
+            "launchctl",
+            "kickstart",
+            "system/com.swarmaxis.parallax-nfl-publisher",
+        ],
+        check=True,
+        timeout=15,
+    )
+    return True
+
+
 if __name__ == "__main__":
-    print(json.dumps(_scan(), default=lambda value: value.value if hasattr(value, "value") else value, allow_nan=False))
+    state_dir = os.environ.get("PARALLAX_PUBLIC_FEED_STATE_DIR")
+    fast_publisher = None
+    if state_dir:
+        from parallax.public_feed import publish_incremental_nfl_game
+
+        def fast_publisher(payload):
+            destination = publish_incremental_nfl_game(payload, Path(state_dir))
+            _kick_nfl_publisher_for_current_buy(payload, destination)
+            return destination
+    print(json.dumps(_scan(fast_publisher=fast_publisher), default=lambda value: value.value if hasattr(value, "value") else value, allow_nan=False))

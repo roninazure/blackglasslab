@@ -7,7 +7,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from parallax.public_feed import export_completed_scan, sanitize_completed_scan
+from parallax.public_feed import (
+    export_completed_scan,
+    publish_incremental_nfl_game,
+    sanitize_completed_scan,
+)
 
 
 NOW = datetime(2026, 9, 24, 12, 30, tzinfo=UTC)
@@ -228,6 +232,31 @@ def nfl_slate_for(
     }
 
 
+def incremental_nfl_game(
+    buy,
+    *,
+    finalized_at="2026-09-24T12:29:40+00:00",
+    status="BUY",
+    away_team="ARI",
+    home_team="NYG",
+):
+    game_id = buy["game_id"]
+    return {
+        "read_only": True,
+        "orders": 0,
+        "published": 0,
+        "finalized_at": finalized_at,
+        "slate": nfl_slate_for(
+            game_id,
+            status,
+            away_team=away_team,
+            home_team=home_team,
+            complete=False,
+        ),
+        "summary": {"rows": [buy]},
+    }
+
+
 def test_sanitizer_counts_actions_and_maps_only_public_fields():
     result = sanitize_completed_scan("mlb", completed_mlb_stdout(), generated_at=NOW)
 
@@ -438,6 +467,150 @@ def test_economic_duplicate_nfl_contracts_publish_once():
 
     assert result["summary"]["buy"] == 1
     assert result["plays"][0]["market_id"] == "contract-canonical"
+
+
+def test_incremental_nfl_publication_withholds_buy_expired_at_write(tmp_path):
+    payload = incremental_nfl_game(eligible_nfl_buy())
+
+    destination = publish_incremental_nfl_game(
+        payload, tmp_path, generated_at=NOW + timedelta(minutes=1)
+    )
+
+    public = json.loads(destination.read_text())
+    assert public["summary"]["buy"] == 0
+    assert public["plays"] == []
+
+
+def test_incremental_nfl_publication_deduplicates_equivalent_venues(tmp_path):
+    expensive = eligible_nfl_buy(
+        market_id="pmus-expensive", venue="PMUS", price=0.43
+    )
+    canonical = eligible_nfl_buy(
+        market_id="kalshi-canonical", venue="KALSHI", price=0.39
+    )
+    payload = incremental_nfl_game(expensive)
+    payload["summary"]["rows"].append(canonical)
+
+    destination = publish_incremental_nfl_game(
+        payload, tmp_path, generated_at=NOW
+    )
+
+    public = json.loads(destination.read_text())
+    assert public["summary"]["buy"] == 1
+    assert public["plays"][0]["market_id"] == "kalshi-canonical"
+
+
+def test_incremental_game_merge_preserves_other_unexpired_buy(tmp_path):
+    game_a = eligible_nfl_buy()
+    game_b = eligible_nfl_buy(
+        game_id="2026_03_KC_BUF",
+        market_id="game-b",
+        economic_team="KC",
+        selected_team="Kansas City Chiefs",
+    )
+    publish_incremental_nfl_game(
+        incremental_nfl_game(game_a), tmp_path, generated_at=NOW
+    )
+    destination = publish_incremental_nfl_game(
+        incremental_nfl_game(
+            game_b,
+            finalized_at="2026-09-24T12:29:50+00:00",
+            away_team="KC",
+            home_team="BUF",
+        ),
+        tmp_path,
+        generated_at=NOW,
+    )
+
+    public = json.loads(destination.read_text())
+    assert public["summary"]["buy"] == 2
+    assert {play["market_id"] for play in public["plays"]} == {
+        game_a["market_id"],
+        game_b["market_id"],
+    }
+
+
+def test_incremental_write_removes_another_games_expired_buy(tmp_path):
+    game_a = eligible_nfl_buy()
+    game_b = eligible_nfl_buy(
+        game_id="2026_03_KC_BUF",
+        market_id="game-b-current",
+        economic_team="KC",
+        selected_team="Kansas City Chiefs",
+    )
+    game_b["updated_at"] = "2026-09-24T12:30:45+00:00"
+    game_b["expires_at"] = "2026-09-24T12:31:45+00:00"
+    publish_incremental_nfl_game(
+        incremental_nfl_game(game_a), tmp_path, generated_at=NOW
+    )
+
+    destination = publish_incremental_nfl_game(
+        incremental_nfl_game(
+            game_b,
+            finalized_at="2026-09-24T12:30:50+00:00",
+            away_team="KC",
+            home_team="BUF",
+        ),
+        tmp_path,
+        generated_at=NOW + timedelta(minutes=1),
+    )
+
+    public = json.loads(destination.read_text())
+    assert public["summary"]["buy"] == 1
+    assert [play["market_id"] for play in public["plays"]] == ["game-b-current"]
+
+
+def test_older_incremental_game_cannot_overwrite_newer_state(tmp_path):
+    newer = eligible_nfl_buy(market_id="newer")
+    older = eligible_nfl_buy(market_id="older")
+    destination = publish_incremental_nfl_game(
+        incremental_nfl_game(
+            newer, finalized_at="2026-09-24T12:29:50+00:00"
+        ),
+        tmp_path,
+        generated_at=NOW,
+    )
+    before = destination.read_text()
+
+    publish_incremental_nfl_game(
+        incremental_nfl_game(
+            older, finalized_at="2026-09-24T12:29:40+00:00"
+        ),
+        tmp_path,
+        generated_at=NOW,
+    )
+
+    assert destination.read_text() == before
+    assert json.loads(before)["plays"][0]["market_id"] == "newer"
+
+
+def test_completed_nfl_export_reconciles_and_removes_incremental_buy(tmp_path):
+    publish_incremental_nfl_game(
+        incremental_nfl_game(eligible_nfl_buy()), tmp_path, generated_at=NOW
+    )
+    completed = {
+        "read_only": True,
+        "slate": nfl_slate_for(status="PASS", complete=True),
+        "summary": {"rows": []},
+    }
+
+    destination = export_completed_scan("nfl", json.dumps(completed), tmp_path)
+
+    public = json.loads(destination.read_text())
+    assert public["market_data_complete"] is True
+    assert public["summary"]["buy"] == 0
+    assert public["plays"] == []
+
+
+def test_incremental_nfl_legacy_buy_without_attestation_is_withheld(tmp_path):
+    legacy = eligible_nfl_buy()
+    legacy.pop("publication_eligible")
+
+    destination = publish_incremental_nfl_game(
+        incremental_nfl_game(legacy), tmp_path, generated_at=NOW
+    )
+
+    assert json.loads(destination.read_text())["summary"]["buy"] == 0
 
 
 @pytest.mark.parametrize("own_status", ["MAPPING_FAILURE", "DATA_UNAVAILABLE"])
