@@ -3,8 +3,10 @@ from datetime import UTC, datetime, timedelta
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import parallax.cfb as cfb_module
+from parallax.alerts import AlertConfig, AlertDeliveryStore, AlertDispatcher, DeliveryResult
 from parallax.cfb import (
     CFBGame, CFBEvidenceProvider, VALIDATION_ECE, active_cfb_season, is_supported_market,
     map_market_to_game, probability_for_game,
@@ -190,10 +192,129 @@ def test_cfb_live_scan_fetches_exactly_one_active_season(monkeypatch):
     monkeypatch.setattr(cfb_live_scan, "paginate", lambda *args, **kwargs: ([], SimpleNamespace(pages=0)))
     monkeypatch.setattr(cfb_live_scan, "_scope_kalshi", lambda client: ([], {"state": "COMPLETE"}))
 
-    result = cfb_live_scan._scan()
+    result = cfb_live_scan._scan(alert_dispatcher=object())
 
     assert fetched == [(2026,)]
     assert result["cfbd_calls"] == 1
+
+
+class _AlertTransport:
+    def __init__(self):
+        self.calls = []
+
+    def post_json(self, url, payload):
+        self.calls.append((url, payload))
+        return DeliveryResult("SENT", http_status=200)
+
+
+def _cfb_alert_play(action=Action.BUY):
+    return SimpleNamespace(
+        suggested_action=action,
+        venue=Venue.KALSHI,
+        market_id="KXCFB-TEST",
+        side=Side.YES,
+        side_description="Alabama",
+        market_title="Georgia at Alabama",
+        market_url="https://kalshi.com/markets/KXCFB-TEST",
+        executable_price=0.40,
+        model_probability=0.55,
+        edge_points=15.0,
+        executable_size=100.0,
+        confidence_band="HIGH",
+        resolution_time="2026-10-10T18:00:00+00:00",
+    )
+
+
+def _alert_dispatcher(tmp_path, transport):
+    return AlertDispatcher(
+        AlertDeliveryStore(tmp_path / "alerts.sqlite"),
+        AlertConfig(
+            mode="ntfy",
+            ntfy_topic="cfb-test",
+            ntfy_server="https://ntfy.example.test",
+        ),
+        transport,
+    )
+
+
+def _alert_mapping():
+    return SimpleNamespace(
+        game=SimpleNamespace(
+            away_team="Georgia",
+            home_team="Alabama",
+            kickoff="2026-10-10T18:00:00+00:00",
+        )
+    )
+
+
+def test_qualifying_cfb_buy_alerts_once_and_duplicate_dedupes(tmp_path):
+    transport = _AlertTransport()
+    dispatcher = _alert_dispatcher(tmp_path, transport)
+    mapping = _alert_mapping()
+    detected_at = datetime(2026, 10, 3, 18, tzinfo=UTC)
+    kwargs = {
+        "publication_eligible": True,
+        "economic_key": "CFB:game-1:alabama",
+        "selected_team": "Alabama",
+    }
+
+    first = cfb_live_scan._dispatch_eligible_buy_alert(
+        dispatcher, _cfb_alert_play(), market(), mapping, detected_at, **kwargs
+    )
+    duplicate = cfb_live_scan._dispatch_eligible_buy_alert(
+        dispatcher, _cfb_alert_play(), market(), mapping, detected_at, **kwargs
+    )
+
+    assert first["status"] == "SENT" and first["deduplicated"] is False
+    assert duplicate["status"] == "SENT" and duplicate["deduplicated"] is True
+    assert len(transport.calls) == 1
+    assert "Sport: CFB" in transport.calls[0][1]["message"]
+
+
+def test_cfb_watch_pass_and_uncertified_buy_are_silent(tmp_path):
+    transport = _AlertTransport()
+    dispatcher = _alert_dispatcher(tmp_path, transport)
+    mapping = _alert_mapping()
+    detected_at = datetime(2026, 10, 3, 18, tzinfo=UTC)
+    for action, eligible in (
+        (Action.WATCH, False),
+        (Action.PASS, False),
+        (Action.BUY, False),
+    ):
+        assert cfb_live_scan._dispatch_eligible_buy_alert(
+            dispatcher,
+            _cfb_alert_play(action),
+            market(),
+            mapping,
+            detected_at,
+            publication_eligible=eligible,
+            economic_key="CFB:game-1:alabama",
+            selected_team="Alabama",
+        ) is None
+
+    assert transport.calls == []
+
+
+def test_cfb_alert_exception_is_contained(monkeypatch):
+    monkeypatch.setattr(
+        cfb_live_scan,
+        "dispatch_scored_buy",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ntfy down")),
+    )
+
+    result = cfb_live_scan._dispatch_eligible_buy_alert(
+        object(),
+        _cfb_alert_play(),
+        market(),
+        _alert_mapping(),
+        datetime(2026, 10, 3, 18, tzinfo=UTC),
+        publication_eligible=True,
+        economic_key="CFB:game-1:alabama",
+        selected_team="Alabama",
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["error_code"] == "ALERT_DISPATCH_EXCEPTION"
 
 
 def test_cfb_v1_validation_keeps_historical_season_range(monkeypatch, capsys):

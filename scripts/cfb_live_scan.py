@@ -11,11 +11,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from maker_spread_economics.polymarket_us import PolymarketUSPublicClient
+from parallax.alerts import AlertDeliveryStore, AlertDispatcher, dispatch_scored_buy
 from parallax.cfb import MODEL_VERSION, VALIDATION_ECE, VALIDATION_REFERENCE, CFBEvidenceProvider, _canonical_team, active_cfb_season, fetch_games, is_supported_market, map_market_to_game, probability_for_game
 from parallax.discovery import MAX_ACTIVE_MARKETS_PER_VENUE, paginate, paginate_collection
 from parallax.economics import retail_example
 from parallax.engine import qualify
 from parallax.fees import attach_fees
+from parallax.inbox import default_inbox_store
 from parallax.models import Action, Side, Venue, utcnow
 from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.sources import KalshiPublicClient
@@ -23,6 +25,41 @@ from parallax.track_record import TrackRecord
 
 CFB_MARKET_DISCOVERY_LIMIT = 1_000
 PROSPECTIVE_DB = Path("data/parallax-commercial/prospective.sqlite")
+
+
+def _dispatch_eligible_buy_alert(
+    dispatcher,
+    play,
+    market,
+    mapping,
+    detected_at,
+    *,
+    publication_eligible: bool,
+    economic_key: str | None,
+    selected_team: str | None,
+):
+    """Dispatch only a certified CFB BUY; alert failures cannot stop scanning."""
+    if not publication_eligible or play.suggested_action != Action.BUY:
+        return None
+    try:
+        return dispatch_scored_buy(
+            dispatcher,
+            play,
+            market,
+            sport="CFB",
+            matchup=f"{mapping.game.away_team} at {mapping.game.home_team}",
+            detected_at=detected_at.isoformat(),
+            game_start=mapping.game.kickoff,
+            economic_key=economic_key,
+            selected_side=selected_team,
+        )
+    except Exception:
+        return {
+            "status": "FAILED",
+            "deduplicated": False,
+            "http_status": None,
+            "error_code": "ALERT_DISPATCH_EXCEPTION",
+        }
 
 
 def _selected_team(mapping, side: Side) -> str | None:
@@ -83,11 +120,18 @@ def _scope_kalshi(client: KalshiPublicClient) -> tuple[list[dict], dict]:
     return rows, {"state": "BOUNDED" if len(rows) >= MAX_ACTIVE_MARKETS_PER_VENUE else ("PARTIAL" if failures else "COMPLETE"), "series_pages": coverage.pages, "cfb_series": len(cfb_series), "failed_scopes": Counter(failures)}
 
 
-def _scan() -> dict:
+def _scan(*, alert_dispatcher=None) -> dict:
     seasons = (active_cfb_season(datetime.now(UTC)),)
     games = fetch_games(seasons)
     result = {"read_only": True, "orders": 0, "alerts": 0, "published": 0, "prospective_captured": 0, "cfbd_calls": len(seasons), "validation_ece": VALIDATION_ECE, "venues": {}, "rows": [], "mapping_failure_reasons": Counter()}
     prospective_store = TrackRecord(PROSPECTIVE_DB)
+    if alert_dispatcher is None:
+        try:
+            alert_dispatcher = AlertDispatcher(
+                AlertDeliveryStore(default_inbox_store().path)
+            )
+        except Exception:
+            alert_dispatcher = None
     pmus_client = PolymarketUSPublicClient()
     try:
         raw_pmus, coverage = paginate(pmus_client.markets_page, page_size=100, max_pages=10, max_rows=CFB_MARKET_DISCOVERY_LIMIT)
@@ -177,6 +221,23 @@ def _scan() -> dict:
                     scored.append(row)
                     statuses[venue_name]["FULLY_SCORED_SIDES"] += 1
                     statuses[venue_name][play.suggested_action.value] += 1
+                    alert = _dispatch_eligible_buy_alert(
+                        alert_dispatcher,
+                        play,
+                        market,
+                        mapping,
+                        decision_at,
+                        publication_eligible=publication_eligible,
+                        economic_key=row["economic_key"],
+                        selected_team=selected_team,
+                    )
+                    if alert is not None:
+                        if alert["deduplicated"]:
+                            statuses[venue_name]["ALERT_DEDUPLICATED"] += 1
+                        elif alert["status"] == "SENT":
+                            result["alerts"] += 1
+                        elif alert["status"] in {"FAILED", "UNKNOWN", "PENDING"}:
+                            statuses[venue_name]["ALERT_ERROR"] += 1
             except Exception as exc:
                 statuses[venue_name][f"SCORING_{type(exc).__name__}"] += 1
     for venue, data in result["venues"].items():
