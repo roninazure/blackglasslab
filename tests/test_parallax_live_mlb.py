@@ -7,7 +7,7 @@ import parallax.__main__ as parallax_main
 from parallax import sources
 from parallax.demo import demo_inputs
 from parallax.inbox import InboxStore
-from parallax.mlb import MLBStatsAPI
+from parallax.mlb import DIVISION_SERIES_VALIDATION_REFERENCE, MLBStatsAPI
 from parallax.models import Action, Evidence, Venue
 from parallax.normalization import normalize_kalshi, rules_digest
 from parallax.pmus_acquisition import PMUSAcquisition
@@ -815,3 +815,121 @@ def test_mlb_slate_report_accounts_for_every_scheduled_game():
         "DATA_UNAVAILABLE",
         "NO_MARKET",
     ]
+
+
+def test_division_series_buy_receives_per_play_publication_attestation():
+    market = SimpleNamespace(
+        venue=Venue.KALSHI,
+        venue_market_id="KXMLBGAME-TEST-ATL",
+        status="OPEN",
+        outcomes={"YES": "Atlanta Braves", "NO": "Atlanta Braves"},
+        mechanics=SimpleNamespace(fee_status="VERIFIED_SCHEDULE"),
+        original_metadata={
+            "market": {
+                "mlb": {
+                    "home_team": "Los Angeles Dodgers",
+                    "away_team": "Atlanta Braves",
+                }
+            }
+        },
+    )
+    row = {
+        "venue": "KALSHI",
+        "market_id": market.venue_market_id,
+        "side": "YES",
+        "suggested_action": "BUY",
+        "data_freshness": "FRESH",
+        "status": "CURRENT",
+        "verdict": {"failed_gates": []},
+        "evidence": {
+            "source": "official-mlb-statsapi",
+            "model_version": "mlb-division-series-conservative-v1",
+            "validation_status": "CALIBRATED",
+            "validation_reference": DIVISION_SERIES_VALIDATION_REFERENCE,
+            "forecast_metadata": {"official_game_type": "D"},
+        },
+    }
+    service = SimpleNamespace(
+        markets=[market],
+        collection={
+            "_market_game_ids": {f"KALSHI:{market.venue_market_id}": "849828"},
+            "_slate_data_unavailable_game_ids": ["unrelated-game"],
+        },
+    )
+    slate = {
+        "market_data_complete": False,
+        "dates": [
+            {
+                "games": [
+                    {
+                        "game_id": "849828",
+                        "away_team": "Atlanta Braves",
+                        "home_team": "Los Angeles Dodgers",
+                        "start_time": "2026-10-03T20:00:00+00:00",
+                        "status": "BUY",
+                    }
+                ]
+            }
+        ],
+    }
+
+    certified = parallax_main.certify_mlb_publication_rows(service, [row], slate)
+
+    assert certified[0]["publication_eligible"] is True
+    assert certified[0]["economic_key"] == "MLB:849828:atlantabraves"
+
+
+def test_ambiguous_postseason_market_is_not_publication_attested():
+    market = SimpleNamespace(
+        venue=Venue.KALSHI,
+        venue_market_id="ambiguous",
+        status="OPEN",
+        outcomes={"YES": "Unknown Club", "NO": "Unknown Club"},
+        mechanics=SimpleNamespace(fee_status="VERIFIED_SCHEDULE"),
+        original_metadata={
+            "market": {
+                "mlb": {
+                    "home_team": "Los Angeles Dodgers",
+                    "away_team": "Atlanta Braves",
+                }
+            }
+        },
+    )
+    row = {
+        "venue": "KALSHI",
+        "market_id": "ambiguous",
+        "side": "YES",
+        "suggested_action": "BUY",
+        "data_freshness": "FRESH",
+        "status": "CURRENT",
+        "verdict": {"failed_gates": []},
+        "evidence": {
+            "source": "official-mlb-statsapi",
+            "model_version": "mlb-division-series-conservative-v1",
+            "validation_status": "CALIBRATED",
+            "validation_reference": DIVISION_SERIES_VALIDATION_REFERENCE,
+            "forecast_metadata": {"official_game_type": "D"},
+        },
+    }
+    service = SimpleNamespace(
+        markets=[market],
+        collection={"_market_game_ids": {"KALSHI:ambiguous": "849828"}},
+    )
+    slate = {
+        "dates": [
+            {
+                "games": [
+                    {
+                        "game_id": "849828",
+                        "away_team": "Atlanta Braves",
+                        "home_team": "Los Angeles Dodgers",
+                        "status": "BUY",
+                    }
+                ]
+            }
+        ]
+    }
+
+    certified = parallax_main.certify_mlb_publication_rows(service, [row], slate)
+
+    assert certified[0]["publication_eligible"] is False

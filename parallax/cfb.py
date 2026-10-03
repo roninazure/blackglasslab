@@ -28,6 +28,7 @@ HOME_FIELD_POINTS = 65.0
 ELO_K = 20.0
 ELO_SCALE = 400.0
 VALIDATION_ECE = 0.063732
+VALIDATION_REFERENCE = "CFB V1 validated 2025 holdout"
 VALIDITY_SECONDS = 15 * 60
 CFB_SEASON_START_MONTH = 7
 
@@ -387,4 +388,4 @@ class CFBEvidenceProvider:
         observed = datetime.now(UTC)
         p_home = probability_for_game(mapping.game, games)
         p = p_home if _canonical_team(mapping.selected_team) == _canonical_team(mapping.game.home_team) else 1 - p_home
-        return Evidence(venue=market.venue, market_id=market.venue_market_id, fair_probability=p, source="CollegeFootballData", model_version=MODEL_VERSION, observed_at=observed.isoformat(), valid_until=(observed + timedelta(seconds=VALIDITY_SECONDS)).isoformat(), rules_digest=rules_digest(market), review_reference=json.dumps({"provider": "CFB V1", "holdout": [2025], "sample_size": 808, "validation_ece": VALIDATION_ECE}, sort_keys=True), rationale=f"Chronological rolling Elo using completed FBS-vs-FBS CFBD games before kickoff; no market price input. Frozen holdout ECE={VALIDATION_ECE:.6f}.", independent_sources=(SOURCE_URL,), validation_reference="CFB V1 validated 2025 holdout", source_independence="AUTHORITATIVE_PRIMARY", validation_status="CALIBRATED", play_type=PlayType.PARALLAX_EDGE)
+        return Evidence(venue=market.venue, market_id=market.venue_market_id, fair_probability=p, source="CollegeFootballData", model_version=MODEL_VERSION, observed_at=observed.isoformat(), valid_until=(observed + timedelta(seconds=VALIDITY_SECONDS)).isoformat(), rules_digest=rules_digest(market), review_reference=json.dumps({"provider": "CFB V1", "holdout": [2025], "sample_size": 808, "validation_ece": VALIDATION_ECE}, sort_keys=True), rationale=f"Chronological rolling Elo using completed FBS-vs-FBS CFBD games before kickoff; no market price input. Frozen holdout ECE={VALIDATION_ECE:.6f}.", independent_sources=(SOURCE_URL,), validation_reference=VALIDATION_REFERENCE, source_independence="AUTHORITATIVE_PRIMARY", validation_status="CALIBRATED", play_type=PlayType.PARALLAX_EDGE)

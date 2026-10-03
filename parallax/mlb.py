@@ -21,15 +21,24 @@ from .normalization import rules_digest
 
 MLB_API = "https://statsapi.mlb.com/api/v1"
 MODEL_VERSION = "mlb-v2"
+DIVISION_SERIES_MODEL_VERSION = "mlb-division-series-conservative-v1"
 SOURCE_ID = "official-mlb-statsapi"
 VALIDITY_SECONDS = 15 * 60
 
 # MLB Stats API game types that represent official games eligible for the
 # authoritative live slate.  Spring training, exhibitions, and the All-Star
-# Game remain out of scope.  The model's calibration population is deliberately
-# narrower; postseason targets are observable but fail closed below.
+# Game remain out of scope.  The regular-season V2 calibration population is
+# deliberately narrower; Division Series targets use the separately frozen,
+# conservative evidence class below and all other postseason rounds fail closed.
 SUPPORTED_MLB_GAME_TYPES = frozenset({"R", "F", "D", "L", "W"})
 CALIBRATED_MLB_GAME_TYPES = frozenset({"R"})
+DIVISION_SERIES_VALIDATION_ECE = 0.13032235939643347
+REGULAR_SEASON_VALIDATION_REFERENCE = (
+    "calibration:mlb-v2:2024-trained-2025-untouched-official-regular-season"
+)
+DIVISION_SERIES_VALIDATION_REFERENCE = (
+    "validation:mlb-division-series-conservative-v1:2024-features-2025-holdout-n18"
+)
 
 
 def is_supported_mlb_game_type(value: object) -> bool:
@@ -38,6 +47,30 @@ def is_supported_mlb_game_type(value: object) -> bool:
 
 def is_calibrated_mlb_game_type(value: object) -> bool:
     return str(value or "R").strip().upper() in CALIBRATED_MLB_GAME_TYPES
+
+
+def mlb_target_validation_reference(value: object) -> str | None:
+    """Return the frozen validation class for an official target game.
+
+    Model-state replay remains regular-season-only.  Only Division Series
+    targets extend the original regular-season target population; other
+    postseason rounds continue to fail closed.
+    """
+    game_type = str(value or "R").strip().upper()
+    if game_type == "R":
+        return REGULAR_SEASON_VALIDATION_REFERENCE
+    if game_type == "D":
+        return DIVISION_SERIES_VALIDATION_REFERENCE
+    return None
+
+
+def mlb_target_model_version(value: object) -> str | None:
+    game_type = str(value or "R").strip().upper()
+    if game_type == "R":
+        return MODEL_VERSION
+    if game_type == "D":
+        return DIVISION_SERIES_MODEL_VERSION
+    return None
 
 MLB_VENUE_TEAM_CODES = {
     "arizonadiamondbacks": "ARI",
@@ -450,24 +483,22 @@ class MLBEvidenceProvider:
             elif yes != home_key:
                 return None
             now = self.clock()
-            postseason_calibrated = is_calibrated_mlb_game_type(game.game_type)
+            validation_reference = mlb_target_validation_reference(game.game_type)
+            model_version = mlb_target_model_version(game.game_type) or MODEL_VERSION
             return Evidence(
                 venue=market.venue, market_id=market.venue_market_id,
-                fair_probability=probability, source=self.name, model_version=MODEL_VERSION,
+                fair_probability=probability, source=self.name, model_version=model_version,
                 observed_at=now.isoformat(), valid_until=(now + timedelta(seconds=VALIDITY_SECONDS)).isoformat(),
                 rules_digest=rules_digest(market), review_reference=f"{self.name}:{game.game_id}",
                 rationale=(f"Pregame MLB model from home/away record, run differential, home field"
                            f" and available pitching facts for {game.away_team} at {game.home_team}."),
                 independent_sources=(f"{MLB_API}/schedule gamePk={game.game_id}",),
                 validation_reference=(
-                    "calibration:mlb-v2:2024-trained-2025-untouched-official-regular-season"
-                    if postseason_calibrated
-                    else "unvalidated:mlb-v2:official-postseason"
+                    validation_reference
+                    or "unvalidated:mlb-v2:official-postseason"
                 ),
                 play_type=PlayType.PARALLAX_VALUE, source_independence="AUTHORITATIVE_PRIMARY",
-                validation_status=(
-                    "CALIBRATED" if postseason_calibrated else "UNVALIDATED"
-                ),
+                validation_status=("CALIBRATED" if validation_reference else "UNVALIDATED"),
                 forecast_metadata={"official_game_type": game.game_type},
             )
         except Exception:

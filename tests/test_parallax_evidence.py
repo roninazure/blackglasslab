@@ -7,7 +7,7 @@ from parallax.evidence import EvidenceEngine
 import parallax.evidence as evidence_module
 from parallax.mlb import MLBGameFact, MLBEvidenceProvider, evaluate_walk_forward
 from parallax.mlb_validation import evaluate_cache, write_cache
-from parallax.models import Action, Venue, utcnow
+from parallax.models import Action, Side, Venue, utcnow
 from parallax.normalization import normalize_kalshi, normalize_pmus
 
 
@@ -101,7 +101,7 @@ def test_validated_mlb_v2_can_reach_existing_buy_path():
     assert play.suggested_action == Action.BUY
 
 
-def test_unvalidated_postseason_evidence_cannot_produce_buy():
+def test_validated_division_series_evidence_can_reach_buy_path():
     market = mlb_market()
     postseason = replace(game(), game_type="D")
     evidence = MLBEvidenceProvider(
@@ -109,8 +109,46 @@ def test_unvalidated_postseason_evidence_cannot_produce_buy():
     ).assess(market)
 
     assert evidence is not None
-    assert evidence.validation_status == "UNVALIDATED"
+    assert evidence.validation_status == "CALIBRATED"
+    assert evidence.validation_reference.endswith("2025-holdout-n18")
+    assert evidence.model_version == "mlb-division-series-conservative-v1"
     assert evidence.forecast_metadata["official_game_type"] == "D"
+    assert qualify(market, "YES", evidence).suggested_action == Action.BUY
+
+
+def test_division_series_edge_must_exceed_frozen_validation_ece():
+    market = mlb_market()
+    evidence = MLBEvidenceProvider(
+        FakeMLBSource(replace(game(), game_type="D")), clock=utcnow
+    ).assess(market)
+    assert evidence is not None
+    price = evidence.fair_probability - 0.10
+    market = replace(
+        market,
+        yes_bid=price - 0.01,
+        yes_ask=price,
+        executable_depth={
+            **market.executable_depth,
+            Side.YES: ((price, 100.0),),
+        },
+    )
+
+    play = qualify(market, Side.YES, evidence)
+
+    assert play.suggested_action != Action.BUY
+    assert "mlb_postseason_calibration_safety" in play.verdict.failed_gates
+
+
+def test_unvalidated_postseason_round_cannot_produce_buy():
+    market = mlb_market()
+    league_championship = replace(game(), game_type="L")
+    evidence = MLBEvidenceProvider(
+        FakeMLBSource(league_championship), clock=utcnow
+    ).assess(market)
+
+    assert evidence is not None
+    assert evidence.validation_status == "UNVALIDATED"
+    assert evidence.forecast_metadata["official_game_type"] == "L"
     assert qualify(market, "YES", evidence).suggested_action != Action.BUY
 
 
@@ -147,6 +185,68 @@ def test_v2_probability_is_bounded_and_deterministic():
     first = _v2_predictions([row])[0]
     assert first == _v2_predictions([row])[0]
     assert 0.05 <= first[0] <= 0.95
+
+
+def test_validation_reports_division_series_as_a_distinct_target_class():
+    rows = [
+        {
+            "game_id": "train-home",
+            "season": 2024,
+            "game_type": "R",
+            "start_time": "2024-04-01T20:00:00Z",
+            "home_team": "A",
+            "away_team": "B",
+            "home_id": "1",
+            "away_id": "2",
+            "home_runs": 5,
+            "away_runs": 2,
+            "home_won": True,
+        },
+        {
+            "game_id": "train-away",
+            "season": 2024,
+            "game_type": "R",
+            "start_time": "2024-04-02T20:00:00Z",
+            "home_team": "B",
+            "away_team": "A",
+            "home_id": "2",
+            "away_id": "1",
+            "home_runs": 1,
+            "away_runs": 3,
+            "home_won": False,
+        },
+        {
+            "game_id": "holdout-regular",
+            "season": 2025,
+            "game_type": "R",
+            "start_time": "2025-09-28T20:00:00Z",
+            "home_team": "A",
+            "away_team": "B",
+            "home_id": "1",
+            "away_id": "2",
+            "home_runs": 4,
+            "away_runs": 3,
+            "home_won": True,
+        },
+        {
+            "game_id": "holdout-division-series",
+            "season": 2025,
+            "game_type": "D",
+            "start_time": "2025-10-04T20:00:00Z",
+            "home_team": "A",
+            "away_team": "B",
+            "home_id": "1",
+            "away_id": "2",
+            "home_runs": 2,
+            "away_runs": 1,
+            "home_won": True,
+        },
+    ]
+
+    report = evaluate_cache({"rows": rows})
+
+    assert report["target_game_type_reports"]["D"]["predictions"] == 1
+    assert report["target_game_type_reports"]["R"]["predictions"] == 1
 
 
 def test_walk_forward_report_is_deterministic_and_bounded():

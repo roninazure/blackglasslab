@@ -9,7 +9,13 @@ from .alerts import dispatch_scored_buy, reconcile_active_buy_alerts
 from .api import server
 from .demo import demo_inputs
 from .entitlements import Plan
-from .mlb import _team_key, selected_team_for_moneyline
+from .mlb import (
+    SOURCE_ID as MLB_SOURCE_ID,
+    _team_key,
+    mlb_target_model_version,
+    mlb_target_validation_reference,
+    selected_team_for_moneyline,
+)
 from .models import Action, utcnow
 from .service import PlayService
 from .sources import collect_markets
@@ -86,6 +92,114 @@ def _buy_candidate_rank(candidate) -> tuple:
         str(play.market_id),
         str(play.side),
     )
+
+
+def certify_mlb_publication_rows(
+    service: PlayService,
+    rows: list[dict],
+    slate: dict,
+) -> list[dict]:
+    """Attach a fail-closed, per-position publication attestation to MLB BUYs."""
+    markets = {
+        (market.venue, market.venue_market_id): market for market in service.markets
+    }
+    collection = service.collection if isinstance(service.collection, dict) else {}
+    market_game_ids = collection.get("_market_game_ids")
+    if not isinstance(market_game_ids, dict):
+        market_game_ids = {}
+    unavailable = {
+        str(game_id)
+        for game_id in collection.get("_slate_data_unavailable_game_ids", ())
+    }
+    games = {
+        str(game.get("game_id")): game
+        for date_row in slate.get("dates", ())
+        if isinstance(date_row, dict)
+        for game in date_row.get("games", ())
+        if isinstance(game, dict) and game.get("game_id")
+    }
+    enriched = []
+    for source in rows:
+        row = dict(source)
+        venue = str(row.get("venue") or "")
+        market_id = str(row.get("market_id") or "")
+        game_id = market_game_ids.get(f"{venue}:{market_id}")
+        game = games.get(str(game_id))
+        market = next(
+            (
+                candidate
+                for (candidate_venue, candidate_id), candidate in markets.items()
+                if (
+                    candidate_venue.value
+                    if hasattr(candidate_venue, "value")
+                    else str(candidate_venue)
+                ) == venue
+                and candidate_id == market_id
+            ),
+            None,
+        )
+        evidence = row.get("evidence")
+        verdict = row.get("verdict")
+        failed_gates = verdict.get("failed_gates") if isinstance(verdict, dict) else None
+        selected_team = (
+            selected_team_for_moneyline(market, row.get("side"))
+            if market is not None
+            else None
+        )
+        participants = {
+            _team_key(game.get("away_team")),
+            _team_key(game.get("home_team")),
+        } if game else set()
+        selected_key = _team_key(selected_team)
+        game_type = (
+            evidence.get("forecast_metadata", {}).get("official_game_type")
+            if isinstance(evidence, dict)
+            else None
+        )
+        evidence_ok = bool(
+            isinstance(evidence, dict)
+            and evidence.get("source") == MLB_SOURCE_ID
+            and evidence.get("model_version") == mlb_target_model_version(game_type)
+            and evidence.get("validation_status") == "CALIBRATED"
+            and evidence.get("validation_reference")
+            == mlb_target_validation_reference(game_type)
+        )
+        eligible = bool(
+            row.get("suggested_action") == "BUY"
+            and failed_gates in ([], ())
+            and row.get("data_freshness") == "FRESH"
+            and row.get("status") == "CURRENT"
+            and market is not None
+            and str(market.status).upper() == "OPEN"
+            and game is not None
+            and game.get("status") == "BUY"
+            and str(game_id) not in unavailable
+            and selected_key
+            and selected_key in participants
+            and evidence_ok
+        )
+        if row.get("suggested_action") == "BUY":
+            row.update(
+                {
+                    "publication_eligible": eligible,
+                    "game_id": str(game_id or ""),
+                    "game_start": game.get("start_time") if game else None,
+                    "away_team": game.get("away_team") if game else None,
+                    "home_team": game.get("home_team") if game else None,
+                    "selected_team": selected_team,
+                    "economic_key": (
+                        f"MLB:{game_id}:{selected_key}"
+                        if game_id and selected_key
+                        else None
+                    ),
+                    "mapping_status": "MAPPED_GAME_WINNER" if game else "UNMAPPED",
+                    "acquisition_status": "ACQUIRED" if market is not None else "UNAVAILABLE",
+                    "market_status": str(market.status).upper() if market else None,
+                    "fee_status": market.mechanics.fee_status if market else None,
+                }
+            )
+        enriched.append(row)
+    return enriched
 
 
 def dispatch_scan_buy_alerts(service: PlayService, *, sport: str) -> dict[str, int]:
@@ -254,6 +368,10 @@ def main():
             payload["buy_lifecycle"] = reconcile_scan_buy_lifecycle(service, sport="MLB")
             payload["slate"] = mlb_slate_report(service)
         payload["plays"] = service.plays(Plan.PRO)
+        if not args.demo:
+            payload["plays"]["items"] = certify_mlb_publication_rows(
+                service, payload["plays"]["items"], payload["slate"]
+            )
         payload["signals"] = service.signals(Plan.PRO)
         if args.summary:
             payload["plays"]["items"] = [

@@ -11,18 +11,33 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from maker_spread_economics.polymarket_us import PolymarketUSPublicClient
-from parallax.cfb import VALIDATION_ECE, CFBEvidenceProvider, active_cfb_season, fetch_games, is_supported_market, map_market_to_game, probability_for_game
+from parallax.cfb import MODEL_VERSION, VALIDATION_ECE, VALIDATION_REFERENCE, CFBEvidenceProvider, _canonical_team, active_cfb_season, fetch_games, is_supported_market, map_market_to_game, probability_for_game
 from parallax.discovery import MAX_ACTIVE_MARKETS_PER_VENUE, paginate, paginate_collection
 from parallax.economics import retail_example
 from parallax.engine import qualify
 from parallax.fees import attach_fees
-from parallax.models import Side, Venue, utcnow
+from parallax.models import Action, Side, Venue, utcnow
 from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.sources import KalshiPublicClient
 from parallax.track_record import TrackRecord
 
 CFB_MARKET_DISCOVERY_LIMIT = 1_000
 PROSPECTIVE_DB = Path("data/parallax-commercial/prospective.sqlite")
+
+
+def _selected_team(mapping, side: Side) -> str | None:
+    if mapping.game is None or not mapping.selected_team:
+        return None
+    yes_key = _canonical_team(mapping.selected_team)
+    home_key = _canonical_team(mapping.game.home_team)
+    away_key = _canonical_team(mapping.game.away_team)
+    if yes_key == home_key:
+        yes_team, no_team = mapping.game.home_team, mapping.game.away_team
+    elif yes_key == away_key:
+        yes_team, no_team = mapping.game.away_team, mapping.game.home_team
+    else:
+        return None
+    return yes_team if side == Side.YES else no_team
 
 
 def _capture_evaluated(store, market, side, evidence, now):
@@ -138,7 +153,27 @@ def _scan() -> dict:
                     for index, stake in ((1, 25), (2, 50), (3, 100)):
                         ex = play.retail_examples[index]
                         example_rows[f"net_ev_{stake}"] = (play.model_probability * ex.estimated_payout_if_correct - ex.total_cost) if play.model_probability is not None and ex.available and ex.total_cost is not None else None
-                    row = {"venue": venue_name, "market_id": market.venue_market_id, "matchup": f"{mapping.game.away_team} at {mapping.game.home_team}", "kickoff_utc": mapping.game.kickoff, "side": side.value, "cfb_v1_probability": play.model_probability if side == Side.YES else (1 - play.model_probability if play.model_probability is not None else None), "executable_price": play.executable_price, "raw_edge": play.edge_points, "cfb_safety": play.edge_points is not None and play.edge_points > VALIDATION_ECE + 1e-9, "fee": play.fees_estimate, "fee_status": market.mechanics.fee_status, "net_ev_25": play.expected_value, **example_rows, "max_loss": play.retail_examples[1].maximum_loss, "payout": play.retail_examples[1].estimated_payout_if_correct, "liquidity": play.executable_size, "verdict": play.suggested_action.value}
+                    selected_team = _selected_team(mapping, side)
+                    cfb_safety = play.edge_points is not None and play.edge_points > VALIDATION_ECE + 1e-9
+                    evidence_certified = bool(
+                        play.evidence
+                        and play.evidence.source == "CollegeFootballData"
+                        and play.evidence.model_version == MODEL_VERSION
+                        and play.evidence.validation_status == "CALIBRATED"
+                        and play.evidence.validation_reference == VALIDATION_REFERENCE
+                    )
+                    publication_eligible = bool(
+                        play.suggested_action == Action.BUY
+                        and not play.verdict.failed_gates
+                        and play.data_freshness == "FRESH"
+                        and play.status == "CURRENT"
+                        and market.status == "OPEN"
+                        and mapping.status == "MAPPED"
+                        and selected_team
+                        and cfb_safety
+                        and evidence_certified
+                    )
+                    row = {"venue": venue_name, "market_id": market.venue_market_id, "matchup": f"{mapping.game.away_team} at {mapping.game.home_team}", "game_id": mapping.game.game_id, "away_team": mapping.game.away_team, "home_team": mapping.game.home_team, "selected_team": selected_team, "economic_key": f"CFB:{mapping.game.game_id}:{_canonical_team(selected_team)}" if selected_team else None, "kickoff_utc": mapping.game.kickoff, "game_start": mapping.game.kickoff, "side": side.value, "cfb_v1_probability": play.model_probability, "executable_price": play.executable_price, "raw_edge": play.edge_points, "cfb_safety": cfb_safety, "fee": play.fees_estimate, "fee_status": market.mechanics.fee_status, "net_ev_25": play.expected_value, "expected_return": play.expected_return, **example_rows, "max_loss": play.retail_examples[1].maximum_loss, "payout": play.retail_examples[1].estimated_payout_if_correct, "liquidity": play.executable_size, "verdict": play.suggested_action.value, "failed_gates": list(play.verdict.failed_gates), "mapping_status": mapping.status, "acquisition_status": "ACQUIRED", "market_status": market.status, "data_freshness": play.data_freshness, "status": play.status, "updated_at": play.updated_at, "expires_at": play.expires_at, "evidence_source": play.evidence.source if play.evidence else None, "evidence_model_version": play.evidence.model_version if play.evidence else None, "evidence_validation_status": play.evidence.validation_status if play.evidence else None, "evidence_validation_reference": play.evidence.validation_reference if play.evidence else None, "publication_eligible": publication_eligible}
                     scored.append(row)
                     statuses[venue_name]["FULLY_SCORED_SIDES"] += 1
                     statuses[venue_name][play.suggested_action.value] += 1

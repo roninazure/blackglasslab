@@ -21,8 +21,7 @@ ISSUED = "2026-09-24T12:00:00+00:00"
 def completed_mlb_stdout() -> str:
     plays = []
     for index, action in enumerate(("BUY", "WATCH", "PASS")):
-        plays.append(
-            {
+        row = {
                 "id": f"internal-uuid-{index}",
                 "sport": "MLB",
                 "venue": "POLYMARKET" if index == 0 else "KALSHI",
@@ -39,7 +38,7 @@ def completed_mlb_stdout() -> str:
                 "edge_points": 19.0,
                 "confidence_band": "HIGH",
                 "data_freshness": "FRESH",
-                "status": "OPEN",
+                "status": "CURRENT",
                 "created_at": ISSUED,
                 "updated_at": "2026-09-24T12:05:00Z",
                 "expires_at": "2026-09-24T13:00:00Z",
@@ -74,7 +73,36 @@ def completed_mlb_stdout() -> str:
                 "authorization": "Bearer private-token",
                 "runtime_path": "/private/runtime/path",
             }
-        )
+        if index == 0:
+            row.update(
+                {
+                    "publication_eligible": True,
+                    "game_id": "mlb-game-0",
+                    "game_start": "2026-09-25T00:00:00Z",
+                    "away_team": "Los Angeles Dodgers",
+                    "home_team": "New York Mets",
+                    "selected_team": "Los Angeles Dodgers",
+                    "economic_key": "MLB:mlb-game-0:losangelesdodgers",
+                    "mapping_status": "MAPPED_GAME_WINNER",
+                    "acquisition_status": "ACQUIRED",
+                    "market_status": "OPEN",
+                    "fee_status": "VERIFIED_SCHEDULE",
+                    "fees_estimate": 0.50,
+                    "expected_value": 3.0,
+                    "expected_return": 0.12,
+                    "executable_size": 100.0,
+                    "failed_gates": [],
+                    "verdict": {"failed_gates": []},
+                    "evidence": {
+                        "source": "official-mlb-statsapi",
+                        "model_version": "mlb-division-series-conservative-v1",
+                        "validation_status": "CALIBRATED",
+                        "validation_reference": "validation:mlb-division-series-conservative-v1:2024-features-2025-holdout-n18",
+                        "forecast_metadata": {"official_game_type": "D"},
+                    },
+                }
+            )
+        plays.append(row)
     return json.dumps(
         {
             "health": {
@@ -87,7 +115,22 @@ def completed_mlb_stdout() -> str:
                 "as_of": "2026-09-24T12:05:00Z",
                 "items": plays,
             },
-            "slate": {"market_data_complete": True},
+            "slate": {
+                "market_data_complete": True,
+                "dates": [
+                    {
+                        "date": "2026-09-24",
+                        "games": [
+                            {
+                                "game_id": "mlb-game-0",
+                                "away_team": "Los Angeles Dodgers",
+                                "home_team": "New York Mets",
+                                "status": "BUY",
+                            }
+                        ],
+                    }
+                ],
+            },
             "environment": {"TOKEN": "environment-secret"},
         }
     )
@@ -160,6 +203,45 @@ def completed_cfb_stdout() -> str:
             "mapping_failure_reasons": {"DATE_MISMATCH": 1},
         }
     )
+
+
+def eligible_cfb_buy() -> dict:
+    return {
+        "venue": "PMUS",
+        "market_id": "cfb-certified-buy",
+        "matchup": "Georgia at Alabama",
+        "game_id": "cfb-game-1",
+        "away_team": "Georgia",
+        "home_team": "Alabama",
+        "selected_team": "Alabama",
+        "economic_key": "CFB:cfb-game-1:alabama",
+        "kickoff_utc": "2026-09-26T19:30:00Z",
+        "game_start": "2026-09-26T19:30:00Z",
+        "side": "YES",
+        "cfb_v1_probability": 0.72,
+        "executable_price": 0.49,
+        "raw_edge": 23.0,
+        "cfb_safety": True,
+        "fee": 0.50,
+        "fee_status": "VERIFIED_UPPER_BOUND",
+        "net_ev_25": 3.0,
+        "expected_return": 0.12,
+        "liquidity": 100.0,
+        "verdict": "BUY",
+        "failed_gates": [],
+        "mapping_status": "MAPPED",
+        "acquisition_status": "ACQUIRED",
+        "market_status": "OPEN",
+        "data_freshness": "FRESH",
+        "status": "CURRENT",
+        "updated_at": "2026-09-24T12:29:30+00:00",
+        "expires_at": "2026-09-24T12:30:30+00:00",
+        "evidence_source": "CollegeFootballData",
+        "evidence_model_version": "cfb-v1-rolling-elo",
+        "evidence_validation_status": "CALIBRATED",
+        "evidence_validation_reference": "CFB V1 validated 2025 holdout",
+        "publication_eligible": True,
+    }
 
 
 def eligible_nfl_buy(
@@ -666,7 +748,7 @@ def test_nfl_publisher_blocks_internally_consistent_team_outside_matchup():
     assert result["summary"]["buy"] == 0
 
 
-def test_any_explicit_incomplete_signal_overrides_conflicting_complete_signal():
+def test_explicit_incomplete_aggregate_does_not_override_certified_mlb_buy():
     payload = json.loads(completed_mlb_stdout())
     payload["market_data_complete"] = True
     payload["slate"]["market_data_complete"] = False
@@ -674,8 +756,9 @@ def test_any_explicit_incomplete_signal_overrides_conflicting_complete_signal():
     result = sanitize_completed_scan("mlb", json.dumps(payload), generated_at=NOW)
 
     assert result["market_data_complete"] is False
-    assert result["buy_publication_eligible"] is False
-    assert result["summary"]["buy"] == 0
+    assert result["data_quality_state"] == "DEGRADED"
+    assert result["buy_publication_eligible"] is True
+    assert result["summary"]["buy"] == 1
 
 
 def test_public_feed_preserves_only_sanitized_dynamic_slate_fields():
@@ -842,3 +925,98 @@ def test_cfb_export_is_local_postprocessing_only(tmp_path):
 
     assert destination == tmp_path / "public_feed" / "cfb.json"
     assert json.loads(destination.read_text())["lane"] == "CFB"
+
+
+def test_certified_cfb_buy_publishes_while_lane_remains_unverified():
+    payload = json.loads(completed_cfb_stdout())
+    payload["rows"] = [eligible_cfb_buy()]
+    payload["venues"]["PMUS"]["coverage"]["state"] = "BOUNDED"
+
+    result = sanitize_completed_scan("cfb", json.dumps(payload), generated_at=NOW)
+
+    assert result["data_quality_state"] == "UNVERIFIED"
+    assert result["buy_publication_eligible"] is True
+    assert result["summary"]["buy"] == 1
+    assert result["plays"][0]["publication_eligible"] is True
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("publication_eligible", False),
+        ("mapping_status", "TEAM_PAIR_MISMATCH"),
+        ("data_freshness", "STALE_OR_UNKNOWN"),
+        ("expires_at", "2026-09-24T12:29:59+00:00"),
+        ("selected_team", "Texas"),
+        ("fee_status", "UNVERIFIED"),
+        ("expected_return", 0.049),
+    ],
+)
+def test_uncertified_malformed_or_stale_cfb_buy_is_withheld(field, value):
+    payload = json.loads(completed_cfb_stdout())
+    buy = eligible_cfb_buy()
+    buy[field] = value
+    payload["rows"] = [buy]
+
+    result = sanitize_completed_scan("cfb", json.dumps(payload), generated_at=NOW)
+
+    assert result["buy_publication_eligible"] is False
+    assert result["summary"]["buy"] == 0
+    assert result["plays"] == []
+
+
+def test_certified_mlb_postseason_buy_survives_unrelated_slate_degradation():
+    payload = json.loads(completed_mlb_stdout())
+    payload["slate"]["market_data_complete"] = False
+    payload["slate"]["dates"][0]["games"].append(
+        {
+            "game_id": "unrelated-broken-game",
+            "away_team": "Boston Red Sox",
+            "home_team": "New York Yankees",
+            "status": "DATA_UNAVAILABLE",
+        }
+    )
+
+    result = sanitize_completed_scan("mlb", json.dumps(payload), generated_at=NOW)
+
+    assert result["data_quality_state"] == "DEGRADED"
+    assert result["market_data_complete"] is False
+    assert result["buy_publication_eligible"] is True
+    assert result["summary"]["buy"] == 1
+
+
+def test_current_13_5_point_division_series_edge_clears_frozen_safety():
+    payload = json.loads(completed_mlb_stdout())
+    buy = payload["plays"]["items"][0]
+    buy["executable_price"] = 0.33
+    buy["model_probability"] = 0.465
+    buy["edge_points"] = 13.5
+
+    result = sanitize_completed_scan("mlb", json.dumps(payload), generated_at=NOW)
+
+    assert result["buy_publication_eligible"] is True
+    assert result["summary"]["buy"] == 1
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("evidence", "validation_status"), "UNVALIDATED"),
+        (("evidence", "validation_reference"), "unvalidated:mlb-v2:official-postseason"),
+        (("evidence", "forecast_metadata", "official_game_type"), "L"),
+        (("selected_team",), "Ambiguous Baseball Club"),
+        (("mapping_status",), "AMBIGUOUS"),
+    ],
+)
+def test_unvalidated_or_ambiguous_mlb_postseason_buy_is_withheld(path, value):
+    payload = json.loads(completed_mlb_stdout())
+    target = payload["plays"]["items"][0]
+    nested = target
+    for key in path[:-1]:
+        nested = nested[key]
+    nested[path[-1]] = value
+
+    result = sanitize_completed_scan("mlb", json.dumps(payload), generated_at=NOW)
+
+    assert result["buy_publication_eligible"] is False
+    assert result["summary"]["buy"] == 0

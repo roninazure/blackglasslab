@@ -17,6 +17,8 @@ from urllib.parse import urlparse
 import fcntl
 
 from .nfl import NFL_TEAM_NAMES
+from .cfb import MODEL_VERSION as CFB_MODEL_VERSION, VALIDATION_ECE as CFB_VALIDATION_ECE, VALIDATION_REFERENCE as CFB_VALIDATION_REFERENCE, _canonical_team
+from .mlb import DIVISION_SERIES_VALIDATION_ECE, SOURCE_ID as MLB_SOURCE_ID, _team_key as _mlb_team_key, mlb_target_model_version, mlb_target_validation_reference
 
 
 SCHEMA_VERSION = "parallax.public.v1"
@@ -485,6 +487,173 @@ def _nfl_buy_source_eligible(row: Mapping[str, Any], now: datetime) -> bool:
     )
 
 
+def _cfb_buy_source_eligible(row: Mapping[str, Any], now: datetime) -> bool:
+    if (
+        row.get("publication_eligible") is not True
+        or _action(row) != "BUY"
+        or row.get("mapping_status") != "MAPPED"
+        or row.get("acquisition_status") != "ACQUIRED"
+        or row.get("market_status") != "OPEN"
+        or row.get("data_freshness") != "FRESH"
+        or row.get("status") != "CURRENT"
+        or row.get("failed_gates") not in ([], ())
+        or row.get("cfb_safety") is not True
+        or row.get("fee_status")
+        not in {"REVIEWED", "VERIFIED_SCHEDULE", "VERIFIED_UPPER_BOUND"}
+        or row.get("evidence_source") != "CollegeFootballData"
+        or row.get("evidence_model_version") != CFB_MODEL_VERSION
+        or row.get("evidence_validation_status") != "CALIBRATED"
+        or row.get("evidence_validation_reference") != CFB_VALIDATION_REFERENCE
+    ):
+        return False
+    required = {
+        key: _text(row.get(key))
+        for key in (
+            "venue", "market_id", "side", "game_id", "economic_key",
+            "selected_team", "away_team", "home_team",
+        )
+    }
+    if not all(required.values()):
+        return False
+    selected_key = _canonical_team(required["selected_team"])
+    participants = {
+        _canonical_team(required["away_team"]),
+        _canonical_team(required["home_team"]),
+    }
+    if (
+        required["venue"].upper() not in {"PMUS", "KALSHI"}
+        or required["side"].upper() not in {"YES", "NO"}
+        or selected_key not in participants
+        or required["economic_key"]
+        != f"CFB:{required['game_id']}:{selected_key}"
+    ):
+        return False
+    numeric = {
+        "price": _number(row.get("executable_price")),
+        "probability": _number(row.get("cfb_v1_probability")),
+        "fee": _number(row.get("fee")),
+        "edge": _number(row.get("raw_edge")),
+        "liquidity": _number(row.get("liquidity")),
+        "net_ev": _number(row.get("net_ev_25")),
+        "expected_return": _number(row.get("expected_return")),
+    }
+    if not all(value is not None and math.isfinite(value) for value in numeric.values()):
+        return False
+    if not (
+        0 < numeric["price"] < 1
+        and 0 < numeric["probability"] < 1
+        and numeric["fee"] >= 0
+        and abs((numeric["probability"] - numeric["price"]) * 100 - numeric["edge"]) <= 1e-6
+        and numeric["edge"] / 100 > CFB_VALIDATION_ECE + 1e-9
+        and numeric["liquidity"] > 0
+        and numeric["net_ev"] > 0
+        and numeric["expected_return"] >= 0.05
+    ):
+        return False
+    updated_at = _parse_timestamp(row.get("updated_at"))
+    expires_at = _parse_timestamp(row.get("expires_at"))
+    game_start = _parse_timestamp(_first(row, "game_start", "kickoff_utc"))
+    return bool(
+        updated_at and expires_at and game_start
+        and updated_at <= now < expires_at
+        and now < game_start
+    )
+
+
+def _mlb_buy_source_eligible(
+    row: Mapping[str, Any], now: datetime, game: Mapping[str, Any] | None
+) -> bool:
+    evidence = row.get("evidence")
+    verdict = row.get("verdict")
+    failed_gates = verdict.get("failed_gates") if isinstance(verdict, Mapping) else None
+    game_type = (
+        evidence.get("forecast_metadata", {}).get("official_game_type")
+        if isinstance(evidence, Mapping)
+        and isinstance(evidence.get("forecast_metadata"), Mapping)
+        else None
+    )
+    if (
+        row.get("publication_eligible") is not True
+        or _action(row) != "BUY"
+        or row.get("mapping_status") != "MAPPED_GAME_WINNER"
+        or row.get("acquisition_status") != "ACQUIRED"
+        or row.get("market_status") != "OPEN"
+        or row.get("data_freshness") != "FRESH"
+        or row.get("status") != "CURRENT"
+        or failed_gates not in ([], ())
+        or row.get("fee_status")
+        not in {"REVIEWED", "VERIFIED_SCHEDULE", "VERIFIED_UPPER_BOUND"}
+        or not isinstance(evidence, Mapping)
+        or evidence.get("source") != MLB_SOURCE_ID
+        or evidence.get("model_version") != mlb_target_model_version(game_type)
+        or evidence.get("validation_status") != "CALIBRATED"
+        or evidence.get("validation_reference") != mlb_target_validation_reference(game_type)
+        or game is None
+        or game.get("status") != "BUY"
+    ):
+        return False
+    required = {
+        key: _text(row.get(key))
+        for key in (
+            "venue", "market_id", "side", "game_id", "economic_key",
+            "selected_team", "away_team", "home_team",
+        )
+    }
+    if not all(required.values()) or required["game_id"] != str(game.get("game_id") or ""):
+        return False
+    selected_key = _mlb_team_key(required["selected_team"])
+    row_participants = {
+        _mlb_team_key(required["away_team"]),
+        _mlb_team_key(required["home_team"]),
+    }
+    slate_participants = {
+        _mlb_team_key(game.get("away_team")),
+        _mlb_team_key(game.get("home_team")),
+    }
+    if (
+        required["venue"].upper() not in {"POLYMARKET", "PMUS", "KALSHI"}
+        or required["side"].upper() not in {"YES", "NO"}
+        or selected_key not in row_participants
+        or row_participants != slate_participants
+        or required["economic_key"] != f"MLB:{required['game_id']}:{selected_key}"
+    ):
+        return False
+    numeric = {
+        "price": _number(row.get("executable_price")),
+        "probability": _number(row.get("model_probability")),
+        "fee": _number(row.get("fees_estimate")),
+        "edge": _number(row.get("edge_points")),
+        "liquidity": _number(row.get("executable_size")),
+        "net_ev": _number(row.get("expected_value")),
+        "expected_return": _number(row.get("expected_return")),
+    }
+    if not all(value is not None and math.isfinite(value) for value in numeric.values()):
+        return False
+    if not (
+        0 < numeric["price"] < 1
+        and 0 < numeric["probability"] < 1
+        and numeric["fee"] >= 0
+        and abs((numeric["probability"] - numeric["price"]) * 100 - numeric["edge"]) <= 1e-6
+        and numeric["edge"] >= 5.0 - 1e-9
+        and (
+            game_type != "D"
+            or numeric["edge"] / 100 > DIVISION_SERIES_VALIDATION_ECE + 1e-9
+        )
+        and numeric["liquidity"] > 0
+        and numeric["net_ev"] > 0
+        and numeric["expected_return"] >= 0.05
+    ):
+        return False
+    updated_at = _parse_timestamp(row.get("updated_at"))
+    expires_at = _parse_timestamp(row.get("expires_at"))
+    game_start = _parse_timestamp(_first(row, "game_start", "resolution_time"))
+    return bool(
+        updated_at and expires_at and game_start
+        and updated_at <= now < expires_at
+        and now < game_start
+    )
+
+
 def _nfl_buy_rank(row: Mapping[str, Any]) -> tuple[Any, ...]:
     return (
         float(row["executable_price"]),
@@ -544,6 +713,40 @@ def _eligible_nfl_buy_indexes(
             grouped.setdefault(str(row["economic_key"]), []).append((index, row))
     return {
         min(equivalents, key=lambda item: _nfl_buy_rank(item[1]))[0]
+        for equivalents in grouped.values()
+    }
+
+
+def _eligible_cfb_buy_indexes(
+    rows: list[Mapping[str, Any]], now: datetime
+) -> set[int]:
+    return {
+        index for index, row in enumerate(rows)
+        if _cfb_buy_source_eligible(row, now)
+    }
+
+
+def _eligible_mlb_buy_indexes(
+    rows: list[Mapping[str, Any]], now: datetime, slate: object
+) -> set[int]:
+    slate_games = _nfl_slate_games(slate)
+    grouped: dict[str, list[tuple[int, Mapping[str, Any]]]] = {}
+    for index, row in enumerate(rows):
+        game = slate_games.get(str(row.get("game_id") or ""))
+        if _mlb_buy_source_eligible(row, now, game):
+            grouped.setdefault(str(row["economic_key"]), []).append((index, row))
+    return {
+        min(
+            equivalents,
+            key=lambda item: (
+                float(item[1]["executable_price"]),
+                -float(item[1]["edge_points"]),
+                -float(item[1]["executable_size"]),
+                str(item[1]["venue"]),
+                str(item[1]["market_id"]),
+                str(item[1]["side"]),
+            ),
+        )[0]
         for equivalents in grouped.values()
     }
 
@@ -632,7 +835,7 @@ def _public_play(row: Mapping[str, Any], lane: str) -> dict[str, Any] | None:
     examples = _retail_examples(row.get("retail_examples"))
     if examples is not None:
         public["retail_examples"] = examples
-    if lane == "nfl" and action == "BUY" and row.get("publication_eligible") is True:
+    if action == "BUY" and row.get("publication_eligible") is True:
         public["publication_eligible"] = True
 
     # Defense in depth: the returned keys are fixed even if this function changes.
@@ -665,21 +868,27 @@ def sanitize_completed_scan(
         if normalized_lane == "nfl"
         else set()
     )
-    allow_buy = (
-        market_data_complete is True
-        if normalized_lane == "mlb"
-        else bool(nfl_buy_indexes)
-        if normalized_lane == "nfl"
-        else False
+    cfb_buy_indexes = (
+        _eligible_cfb_buy_indexes(rows, now) if normalized_lane == "cfb" else set()
     )
+    mlb_buy_indexes = (
+        _eligible_mlb_buy_indexes(rows, now, decoded.get("slate"))
+        if normalized_lane == "mlb"
+        else set()
+    )
+    eligible_buy_indexes = (
+        nfl_buy_indexes if normalized_lane == "nfl"
+        else cfb_buy_indexes if normalized_lane == "cfb"
+        else mlb_buy_indexes
+    )
+    allow_buy = bool(eligible_buy_indexes)
     plays = [
         play
         for index, row in enumerate(rows)
         if (play := _public_play(row, normalized_lane))
         and (
             play["action"] != "BUY"
-            or (normalized_lane == "mlb" and allow_buy)
-            or (normalized_lane == "nfl" and index in nfl_buy_indexes)
+            or index in eligible_buy_indexes
         )
     ]
     source_as_of = _source_as_of(decoded, rows)
@@ -724,7 +933,7 @@ def sanitize_completed_scan(
         result["slate"] = slate
     venues = _public_venues(
         decoded.get("venues"),
-        allow_buy=normalized_lane == "mlb" and allow_buy,
+        allow_buy=normalized_lane in {"cfb", "mlb"} and allow_buy,
     )
     if venues is not None:
         result["venues"] = venues

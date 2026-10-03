@@ -21,6 +21,10 @@ from .models import (
 from .normalization import rules_digest
 from .nfl import MODEL_VERSION as NFL_MODEL_VERSION, VALIDATION_ECE as NFL_VALIDATION_ECE
 from .cfb import MODEL_VERSION as CFB_MODEL_VERSION, VALIDATION_ECE as CFB_VALIDATION_ECE
+from .mlb import (
+    DIVISION_SERIES_VALIDATION_ECE,
+    DIVISION_SERIES_MODEL_VERSION,
+)
 
 MAX_AGE_SECONDS = 60
 MIN_EDGE = 0.05
@@ -215,6 +219,13 @@ def qualify(
             or evidence.model_version != CFB_MODEL_VERSION
             or (edge is not None and edge > CFB_VALIDATION_ECE + 1e-9),
             f"CFB nominal edge must exceed the frozen {CFB_VALIDATION_ECE * 100:.4f}-point validation ECE.",
+        ),
+        "mlb_postseason_calibration_safety": (
+            evidence is None
+            or evidence.model_version != DIVISION_SERIES_MODEL_VERSION
+            or evidence.forecast_metadata.get("official_game_type") != "D"
+            or (edge is not None and edge > DIVISION_SERIES_VALIDATION_ECE + 1e-9),
+            f"MLB Division Series nominal edge must exceed the frozen {DIVISION_SERIES_VALIDATION_ECE * 100:.4f}-point validation ECE.",
         ),
         "risk_reward": (
             bool(expected_return is not None and expected_return >= 0.05),

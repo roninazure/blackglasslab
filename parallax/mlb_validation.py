@@ -4,7 +4,7 @@ import json, math
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlencode
-from .mlb import MLB_API, MLBGameFact, V2State, advance_v2_state, game_probability_v1, is_calibrated_mlb_game_type, v2_probability_from_state
+from .mlb import DIVISION_SERIES_MODEL_VERSION, MLB_API, MLBGameFact, V2State, advance_v2_state, game_probability, game_probability_v1, is_calibrated_mlb_game_type, mlb_target_validation_reference, v2_probability_from_state
 
 def _season_schedule(season: int, transport: Callable[[str], dict[str, Any]]) -> list[dict[str, Any]]:
     payload = transport("/schedule?" + urlencode({"sportId": 1, "startDate": f"{season}-03-20", "endDate": f"{season}-11-01", "hydrate": "team"}))
@@ -48,10 +48,10 @@ def build_cache(seasons: tuple[int,...], transport: Callable[[str], dict[str,Any
     rows=[]
     for season in seasons:
         for g in _season_schedule(season,transport):
-            if g.get("status",{}).get("abstractGameState") != "Final" or not is_calibrated_mlb_game_type(g.get("gameType")): continue
+            if g.get("status",{}).get("abstractGameState") != "Final" or mlb_target_validation_reference(g.get("gameType")) is None: continue
             t=g.get("teams",{}); h=t.get("home",{}); a=t.get("away",{}); ht=h.get("team",{}); at=a.get("team",{})
             if not ht.get("id") or not at.get("id") or "isWinner" not in h: continue
-            rows.append({"game_id":str(g["gamePk"]),"season":season,"start_time":g["gameDate"],"home_team":ht.get("name"),"away_team":at.get("name"),"home_id":str(ht["id"]),"away_id":str(at["id"]),"home_runs":int(h.get("score",0)),"away_runs":int(a.get("score",0)),"home_won":bool(h["isWinner"])})
+            rows.append({"game_id":str(g["gamePk"]),"season":season,"game_type":str(g.get("gameType") or "R").upper(),"start_time":g["gameDate"],"home_team":ht.get("name"),"away_team":at.get("name"),"home_id":str(ht["id"]),"away_id":str(at["id"]),"home_runs":int(h.get("score",0)),"away_runs":int(a.get("score",0)),"home_won":bool(h["isWinner"])})
     rows.sort(key=lambda r:(r["start_time"],r["game_id"]))
     return {"source":MLB_API,"seasons":list(seasons),"feature_window":"strictly prior completed official games","features":["online Elo","prior-game win rate","prior-game runs scored/allowed","home field"],"rejected_features":{"starting_pitcher":"historical pregame availability not proven","bullpen":"not cheaply reconstructible without player usage joins","park_weather_lineups_injuries":"pregame timestamps not proven"},"rows":rows}
 
@@ -59,7 +59,24 @@ def _v2_predictions(rows: list[dict[str,Any]]) -> tuple[list[float],list[int]]:
     state=V2State(); ps=[]; ys=[]
     for r in sorted(rows,key=lambda x:(x["start_time"],x["game_id"])):
         normalized={"home_id":r.get("home_id") or r.get("home_team"),"away_id":r.get("away_id") or r.get("away_team"),"home_won":r["home_won"],"home_runs":r.get("home_runs",r.get("home_run_diff_per_game",0)),"away_runs":r.get("away_runs",r.get("away_run_diff_per_game",0))}
-        ps.append(v2_probability_from_state(str(normalized["home_id"]),str(normalized["away_id"]),state)); ys.append(int(r["home_won"])); advance_v2_state(state,normalized)
+        ps.append(v2_probability_from_state(str(normalized["home_id"]),str(normalized["away_id"]),state)); ys.append(int(r["home_won"]));
+        if is_calibrated_mlb_game_type(r.get("game_type")): advance_v2_state(state,normalized)
+    return ps,ys
+
+def _division_series_predictions(rows: list[dict[str,Any]], season: int=2025) -> tuple[list[float],list[int]]:
+    prior=[r for r in rows if int(r["season"])==season-1 and str(r.get("game_type") or "R").upper()=="R"]
+    stats={}
+    for r in prior:
+        home=str(r["home_team"]); away=str(r["away_team"]); home_won=bool(r["home_won"]); margin=float(r["home_runs"])-float(r["away_runs"])
+        for team,won,diff in ((home,home_won,margin),(away,not home_won,-margin)):
+            values=stats.setdefault(team,[0.0,0.0,0.0]); values[0]+=int(won); values[1]+=diff; values[2]+=1
+    ps=[]; ys=[]
+    targets=[r for r in rows if int(r["season"])==season and str(r.get("game_type") or "R").upper()=="D"]
+    for r in sorted(targets,key=lambda x:(x["start_time"],x["game_id"])):
+        home=stats.get(str(r["home_team"]),[0.0,0.0,0.0]); away=stats.get(str(r["away_team"]),[0.0,0.0,0.0])
+        home_games=home[2]; away_games=away[2]
+        fact=MLBGameFact(str(r["game_id"]),str(r["start_time"])[:10],str(r["start_time"]),str(r["home_team"]),str(r["away_team"]),home[0]/home_games if home_games else .5,away[0]/away_games if away_games else .5,home[1]/home_games if home_games else 0.,away[1]/away_games if away_games else 0.,home_won=bool(r["home_won"]),game_type="D")
+        ps.append(game_probability(fact)); ys.append(int(r["home_won"]))
     return ps,ys
 
 def evaluate_cache(cache: dict[str,Any]) -> dict[str,Any]:
@@ -73,8 +90,14 @@ def evaluate_cache(cache: dict[str,Any]) -> dict[str,Any]:
         hw,hd=agg(r["home_team"]); aw,ad=agg(r["away_team"]); v1.append(game_probability_v1(MLBGameFact(r["game_id"],r["start_time"][:10],r["start_time"],r["home_team"],r["away_team"],hw,aw,hd,ad,home_won=r["home_won"])))
     reports={}
     for s in seasons:
-        ix=[i for i,r in enumerate(rows) if int(r["season"])==s]; prior=[r for r in rows if int(r["season"])<s]; br=sum(int(r["home_won"]) for r in prior)/len(prior) if prior else .5; y=[ys[i] for i in ix]; p=[v2[i] for i in ix]; reports[str(s)]={"predictions":len(ix),"baseline":_metric([br]*len(ix),y),"v1":_metric([v1[i] for i in ix],y),"v2":_metric(p,y),"v2_calibration":_calibration(p,y),"v2_ece":_ece(p,y),"v2_auc":_auc(p,y),"v2_distribution":{"min":min(p),"max":max(p),"mean":sum(p)/len(p),"bands":{label:sum(1 for x in p if lo<=x<hi)/len(p) for label,lo,hi in (("50-55%",.5,.55),("55-60%",.55,.6),("60-70%",.6,.7),(">70%",.7,1.01))}}}
-    final=reports.get("2025",{}) or next(iter(reports.values()),{}); return {"model_version":"mlb-pregame-elo-v2","predictions":len(rows),"season_reports":reports,"baseline":final.get("baseline"),"model":final.get("v2"),"v1":final.get("v1"),"v2_calibration":final.get("v2_calibration"),"model_calibration":final.get("v2_calibration"),"v2_ece":final.get("v2_ece"),"v2_auc":final.get("v2_auc"),"probability_distribution":final.get("v2_distribution"),"calibrator_training_season":2024}
+        ix=[i for i,r in enumerate(rows) if int(r["season"])==s and str(r.get("game_type") or "R").upper()=="R"]; prior=[r for r in rows if int(r["season"])<s and str(r.get("game_type") or "R").upper()=="R"]; br=sum(int(r["home_won"]) for r in prior)/len(prior) if prior else .5; y=[ys[i] for i in ix]; p=[v2[i] for i in ix]; reports[str(s)]={"predictions":len(ix),"baseline":_metric([br]*len(ix),y),"v1":_metric([v1[i] for i in ix],y),"v2":_metric(p,y),"v2_calibration":_calibration(p,y),"v2_ece":_ece(p,y),"v2_auc":_auc(p,y),"v2_distribution":{"min":min(p),"max":max(p),"mean":sum(p)/len(p),"bands":{label:sum(1 for x in p if lo<=x<hi)/len(p) for label,lo,hi in (("50-55%",.5,.55),("55-60%",.55,.6),("60-70%",.6,.7),(">70%",.7,1.01))}}}
+    target_reports={}
+    ix=[i for i,r in enumerate(rows) if int(r["season"])==2025 and str(r.get("game_type") or "R").upper()=="R"]
+    regular_y=[ys[i] for i in ix]; regular_p=[v2[i] for i in ix]
+    target_reports["R"]={"model_version":"mlb-pregame-elo-v2","predictions":len(ix),"model":_metric(regular_p,regular_y),"calibration":_calibration(regular_p,regular_y),"ece":_ece(regular_p,regular_y),"auc":_auc(regular_p,regular_y)}
+    division_p,division_y=_division_series_predictions(rows,2025)
+    target_reports["D"]={"model_version":DIVISION_SERIES_MODEL_VERSION,"predictions":len(division_p),"model":_metric(division_p,division_y),"calibration":_calibration(division_p,division_y),"ece":_ece(division_p,division_y),"auc":_auc(division_p,division_y)}
+    final=reports.get("2025",{}) or next(iter(reports.values()),{}); return {"model_version":"mlb-pregame-elo-v2","predictions":len(rows),"season_reports":reports,"target_game_type_reports":target_reports,"baseline":final.get("baseline"),"model":final.get("v2"),"v1":final.get("v1"),"v2_calibration":final.get("v2_calibration"),"model_calibration":final.get("v2_calibration"),"v2_ece":final.get("v2_ece"),"v2_auc":final.get("v2_auc"),"probability_distribution":final.get("v2_distribution"),"calibrator_training_season":2024}
 
 def write_cache(cache: dict[str,Any], path: str|Path) -> None:
     Path(path).write_text(json.dumps(cache,separators=(",",":"),sort_keys=True)+"\n",encoding="utf-8")

@@ -1,0 +1,23 @@
+{
+  "evaluation_season": 2025,
+  "feature_season": 2024,
+  "features": [
+    "prior-season regular-game run differential",
+    "fixed home-field adjustment"
+  ],
+  "game_type": "D",
+  "model_version": "mlb-division-series-conservative-v1",
+  "official_source": "https://statsapi.mlb.com/api/v1",
+  "predictions": 18,
+  "state_update_game_types": [
+    "R"
+  ],
+  "v2": {
+    "accuracy": 0.5555555555555556,
+    "auc": 0.4791666666666667,
+    "brier": 0.24379228614458087,
+    "ece": 0.13032235939643347,
+    "log_loss": 0.68069894517107
+  },
+  "validation_policy": "Division Series targets only; nominal edge must strictly exceed frozen ECE. Other postseason game types remain unvalidated."
+}
