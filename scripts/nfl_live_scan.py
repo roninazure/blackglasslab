@@ -296,6 +296,40 @@ def _publication_candidates(
     return [min(equivalents, key=_buy_candidate_rank) for equivalents in grouped.values()]
 
 
+def _ordered_game_rows(pmus_rows, kalshi_rows, games, scheduled, discovery_at):
+    """Group discovered rows by their authoritative game before scoring them."""
+    venues = (("PMUS", pmus_rows), ("KALSHI", kalshi_rows))
+    grouped: dict[str, list[tuple[str, dict]]] = {
+        game["game_id"]: [] for game in scheduled
+    }
+    unassigned: list[tuple[str, dict]] = []
+    for venue, raw_rows in venues:
+        for raw in raw_rows:
+            try:
+                event = raw.get("_discovery_event") if venue == "KALSHI" else None
+                market = (
+                    normalize_pmus(raw, {}, discovery_at.isoformat())
+                    if venue == "PMUS"
+                    else normalize_kalshi(raw, {}, "live-scan", event=event)
+                )
+                mapping = map_market_to_game(market, games, now=discovery_at)
+            except (KeyError, TypeError, ValueError):
+                unassigned.append((venue, raw))
+                continue
+            game_id = getattr(getattr(mapping, "game", None), "game_id", None)
+            if game_id in grouped:
+                grouped[game_id].append((venue, raw))
+            else:
+                unassigned.append((venue, raw))
+    ordered = []
+    for game in scheduled:
+        game_id = game["game_id"]
+        ordered.append((game_id, grouped[game_id]))
+    if unassigned:
+        ordered.append((None, unassigned))
+    return ordered
+
+
 def _dispatch_buy_alert(
     dispatcher,
     play,
@@ -561,8 +595,12 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
         economic_keys_by_play_id = {}
         data_unavailable_game_ids: set[str] = set()
         mapping_failure_game_ids: set[str] = set()
-        for venue, raw_rows in (("PMUS", pmus_rows), ("KALSHI", kalshi_rows)):
-            for raw in raw_rows:
+        alert_summary = {"sent": 0, "deduplicated": 0, "failed": 0, "withheld": 0}
+        scheduled_game_ids = {game["game_id"] for game in scheduled_for_discovery}
+        for batch_game_id, game_rows in _ordered_game_rows(
+            pmus_rows, kalshi_rows, games, scheduled_for_discovery, discovery_at
+        ):
+            for venue, raw in game_rows:
                 try:
                     event = raw.get("_discovery_event") if venue == "KALSHI" else None
                     if venue == "PMUS":
@@ -576,7 +614,7 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                 if support_reason != "SUPPORTED":
                     rejection_reasons[support_reason] += 1
                     continue
-                mapping = map_market_to_game(market, games)
+                mapping = map_market_to_game(market, games, now=discovery_at)
                 statuses[mapping.status] += 1
                 row = {"venue": venue, "market_id": market.venue_market_id, "status": mapping.status, "reason": mapping.reason, "title": market.title}
                 if mapping.game:
@@ -665,6 +703,45 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                         data_unavailable_game_ids.add(mapping.game.game_id)
                         row["scoring_error"], row["scoring_error_reason"] = _scoring_failure(exc)
                 rows_out.append(row)
+            if batch_game_id is not None and any(
+                candidate[2].game.game_id == batch_game_id
+                for candidate in buy_candidates
+            ):
+                game_candidates = [
+                    candidate
+                    for candidate in buy_candidates
+                    if candidate[2].game.game_id == batch_game_id
+                ]
+                game_blocked_ids = (
+                    {batch_game_id}
+                    if batch_game_id in data_unavailable_game_ids
+                    or batch_game_id in mapping_failure_game_ids
+                    else set()
+                )
+                finalized_at = utcnow()
+                publication_candidates = _publication_candidates(
+                    game_candidates,
+                    scheduled_game_ids=scheduled_game_ids,
+                    blocked_game_ids=game_blocked_ids,
+                    now=finalized_at,
+                )
+                for play, _market, _mapping, _detected_at, _key, _team in publication_candidates:
+                    scored_rows_by_play_id[play.id]["publication_eligible"] = True
+                game_alerts = _dispatch_eligible_buy_alerts(
+                    alert_dispatcher, publication_candidates
+                )
+                alert_summary["sent"] += game_alerts["sent"]
+                alert_summary["deduplicated"] += game_alerts["deduplicated"]
+                alert_summary["failed"] += game_alerts["failed"]
+                alert_summary["withheld"] += sum(
+                    not _buy_candidate_publication_eligible(
+                        candidate,
+                        scheduled_game_ids=scheduled_game_ids,
+                        blocked_game_ids=game_blocked_ids,
+                        now=finalized_at,
+                    )
+                    for candidate in game_candidates
+                )
     finally:
         pmus.close()
     result["pmus_acquisition"] = acquisition.diagnostics()
@@ -676,27 +753,6 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
         mapping_failure_game_ids=mapping_failure_game_ids,
     )
     publication_at = utcnow()
-    blocked_game_ids = data_unavailable_game_ids | mapping_failure_game_ids
-    publication_candidates = _publication_candidates(
-        buy_candidates,
-        scheduled_game_ids={game["game_id"] for game in scheduled_for_discovery},
-        blocked_game_ids=blocked_game_ids,
-        now=publication_at,
-    )
-    for play, _market, _mapping, _detected_at, _key, _team in publication_candidates:
-        scored_rows_by_play_id[play.id]["publication_eligible"] = True
-    alert_summary = _dispatch_eligible_buy_alerts(
-        alert_dispatcher, publication_candidates
-    )
-    alert_summary["withheld"] = sum(
-        not _buy_candidate_publication_eligible(
-            candidate,
-            scheduled_game_ids={game["game_id"] for game in scheduled_for_discovery},
-            blocked_game_ids=blocked_game_ids,
-            now=publication_at,
-        )
-        for candidate in buy_candidates
-    )
     result["alerts"] = alert_summary["sent"]
     statuses["ALERT_DEDUPLICATED"] += alert_summary["deduplicated"]
     statuses["ALERT_ERROR"] += alert_summary["failed"]

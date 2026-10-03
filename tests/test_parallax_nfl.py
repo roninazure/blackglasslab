@@ -1073,6 +1073,8 @@ def _run_pmus_scan(
     kalshi_coverage_state="COMPLETE",
     scan_games=None,
     utcnow_values=None,
+    scan_clock=None,
+    action_by_market_side=None,
 ):
     constructed = []
     now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
@@ -1128,7 +1130,13 @@ def _run_pmus_scan(
     retail_examples = [SimpleNamespace(available=False, total_cost=None)] * 4
 
     def captured(_store, _market, side, _evidence, _now):
-        selected_action = action_by_side(side) if action_by_side else action
+        selected_action = (
+            action_by_market_side(_market, side)
+            if action_by_market_side
+            else action_by_side(side)
+            if action_by_side
+            else action
+        )
         return SimpleNamespace(
             id=f"play-{side.value}",
             venue=Venue.POLYMARKET,
@@ -1145,9 +1153,9 @@ def _run_pmus_scan(
             verdict=SimpleNamespace(failed_gates=()),
             suggested_action=selected_action,
             retail_examples=retail_examples,
-            created_at=now.isoformat(),
-            updated_at=now.isoformat(),
-            expires_at=(now + timedelta(seconds=60)).isoformat(),
+            created_at=_now.isoformat(),
+            updated_at=_now.isoformat(),
+            expires_at=(_now + timedelta(seconds=60)).isoformat(),
             data_freshness="FRESH",
             status="CURRENT",
             demo=False,
@@ -1156,7 +1164,9 @@ def _run_pmus_scan(
 
     monkeypatch.setattr(nfl_live_scan, "PolymarketUSPublicClient", FakePMUS)
     monkeypatch.setattr(nfl_live_scan, "fetch_games", lambda: scan_games or [game])
-    if utcnow_values is None:
+    if scan_clock is not None:
+        monkeypatch.setattr(nfl_live_scan, "utcnow", lambda: scan_clock[0])
+    elif utcnow_values is None:
         monkeypatch.setattr(nfl_live_scan, "utcnow", lambda: now)
     else:
         clock = iter(utcnow_values)
@@ -1178,7 +1188,13 @@ def _run_pmus_scan(
             {"state": kalshi_coverage_state, "failed_scopes": []},
         ),
     )
-    monkeypatch.setattr(nfl_live_scan, "normalize_pmus", lambda *_args, **_kwargs: market)
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "normalize_pmus",
+        lambda raw, *_args, **_kwargs: SimpleNamespace(
+            **{**vars(market), "venue_market_id": raw["id"]}
+        ),
+    )
     monkeypatch.setattr(nfl_live_scan, "attach_fees", lambda value, *_args, **_kwargs: value)
     monkeypatch.setattr(
         nfl_live_scan, "market_support_reason", lambda _market: "SUPPORTED"
@@ -1186,11 +1202,19 @@ def _run_pmus_scan(
     monkeypatch.setattr(
         nfl_live_scan,
         "map_market_to_game",
-        lambda *_args, **_kwargs: SimpleNamespace(
+        lambda market, *_args, **_kwargs: SimpleNamespace(
             status="MAPPED_GAME_WINNER",
             reason="exact team/date match",
-            game=game,
-            selected_team="CIN",
+            game=next(
+                candidate
+                for candidate in (scan_games or [game])
+                if candidate.game_id == (
+                    "game-b"
+                    if market.venue_market_id == "b-pmus"
+                    else (scan_games or [game])[0].game_id
+                )
+            ),
+            selected_team="LAC" if market.venue_market_id == "b-pmus" else "CIN",
         ),
     )
     monkeypatch.setattr(nfl_live_scan, "probability_for_game", lambda *_args: 0.5)
@@ -1201,7 +1225,16 @@ def _run_pmus_scan(
             assess=lambda _market: SimpleNamespace(fair_probability=0.5)
         ),
     )
-    monkeypatch.setattr(nfl_live_scan, "_capture_evaluated", captured)
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "_capture_evaluated",
+        lambda store, scored_market, side, evidence, decision_at: SimpleNamespace(
+            **{
+                **vars(captured(store, scored_market, side, evidence, decision_at)),
+                "market_id": scored_market.venue_market_id,
+            }
+        ),
+    )
     if dispatched is None:
         monkeypatch.setattr(
             nfl_live_scan, "_dispatch_buy_alert", lambda *_args, **_kwargs: None
@@ -1683,6 +1716,7 @@ def _publication_candidate(
     action=Action.BUY,
     freshness="FRESH",
     market_status="OPEN",
+    venue=Venue.KALSHI,
 ):
     game = SimpleNamespace(
         game_id=game_id,
@@ -1698,7 +1732,7 @@ def _publication_candidate(
     play = SimpleNamespace(
         market_id=market_id,
         side=side,
-        venue=Venue.KALSHI,
+        venue=venue,
         executable_price=price,
         model_probability=0.65,
         edge_points=22.54868024,
@@ -1718,7 +1752,7 @@ def _publication_candidate(
     market = SimpleNamespace(
         title=f"{contract_team} wins",
         venue_market_id=market_id,
-        venue=Venue.KALSHI,
+        venue=venue,
         status=market_status,
     )
     return (
@@ -1781,6 +1815,98 @@ def test_economic_duplicate_contracts_dispatch_once(monkeypatch):
     }
 
 
+def test_equivalent_pmus_and_kalshi_contracts_dispatch_once(monkeypatch):
+    from parallax.public_feed import sanitize_completed_scan
+
+    sent = []
+    monkeypatch.setattr(
+        nfl_live_scan,
+        "_dispatch_buy_alert",
+        lambda _dispatcher, play, *_args, **_kwargs: sent.append(play.market_id)
+        or {"status": "SENT", "deduplicated": False},
+    )
+    now = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
+    candidates = [
+        _publication_candidate(now, market_id="kalshi-contract", price=0.36),
+        _publication_candidate(
+            now,
+            market_id="pmus-contract",
+            price=0.35,
+            venue=Venue.POLYMARKET,
+        ),
+    ]
+    eligible = nfl_live_scan._publication_candidates(
+        candidates,
+        scheduled_game_ids={"2026_04_IND_WAS"},
+        blocked_game_ids=set(),
+        now=now,
+    )
+    summary = nfl_live_scan._dispatch_eligible_buy_alerts(object(), eligible)
+    public = sanitize_completed_scan(
+        "nfl",
+        json.dumps(
+            {
+                "slate": {
+                    "market_data_complete": False,
+                    "expected_games": 1,
+                    "accounted_games": 1,
+                    "all_games_accounted": True,
+                    "dates": [{
+                        "date": "2026-10-04",
+                        "games": [{
+                            "game_id": "2026_04_IND_WAS",
+                            "away_team": "IND",
+                            "home_team": "WAS",
+                            "status": "BUY",
+                        }],
+                    }],
+                },
+                "summary": {"rows": [
+                    {
+                        "venue": "KALSHI", "market_id": "kalshi-contract",
+                        "game_id": "2026_04_IND_WAS", "side": "YES",
+                        "verdict": "BUY", "executable_price": 0.36,
+                        "nfl_v1_probability": 0.65, "raw_edge": 22.55,
+                        "safety_margin": 0.17, "fee": 0.01,
+                        "net_ev_25": 3, "expected_return": 0.1,
+                        "liquidity": 100, "failed_gates": [],
+                        "mapping_status": "MAPPED_GAME_WINNER",
+                        "acquisition_status": "ACQUIRED", "economic_key": "NFL:2026_04_IND_WAS:WAS",
+                        "economic_team": "WAS", "selected_team": "Washington Commanders",
+                        "updated_at": now.isoformat(),
+                        "expires_at": (now + timedelta(seconds=60)).isoformat(),
+                        "data_freshness": "FRESH", "status": "CURRENT",
+                        "game_start": "2026-10-04T13:30:00+00:00",
+                        "publication_eligible": True,
+                    },
+                    {
+                        "venue": "PMUS", "market_id": "pmus-contract",
+                        "game_id": "2026_04_IND_WAS", "side": "YES",
+                        "verdict": "BUY", "executable_price": 0.35,
+                        "nfl_v1_probability": 0.65, "raw_edge": 22.55,
+                        "safety_margin": 0.17, "fee": 0.01,
+                        "net_ev_25": 3, "expected_return": 0.1,
+                        "liquidity": 100, "failed_gates": [],
+                        "mapping_status": "MAPPED_GAME_WINNER",
+                        "acquisition_status": "ACQUIRED", "economic_key": "NFL:2026_04_IND_WAS:WAS",
+                        "economic_team": "WAS", "selected_team": "Washington Commanders",
+                        "updated_at": now.isoformat(),
+                        "expires_at": (now + timedelta(seconds=60)).isoformat(),
+                        "data_freshness": "FRESH", "status": "CURRENT",
+                        "game_start": "2026-10-04T13:30:00+00:00",
+                        "publication_eligible": True,
+                    },
+                ]},
+            }
+        ),
+        generated_at=now,
+    )
+
+    assert summary["sent"] == 1
+    assert sent == ["pmus-contract"]
+    assert public["summary"]["buy"] == 1
+
+
 @pytest.mark.parametrize("unrelated_failure", ["GB_TB", "JAX_CIN"])
 def test_unrelated_game_failure_does_not_block_safe_buy(unrelated_failure):
     now = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
@@ -1809,14 +1935,15 @@ def test_buy_own_game_localized_failure_is_blocked(failure):
 
 
 def test_stale_buy_is_not_publication_eligible():
-    now = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
-    candidate = _publication_candidate(now, freshness="STALE_OR_UNKNOWN")
+    decision_at = datetime(2026, 10, 3, 11, 12, tzinfo=UTC)
+    actual_publication_at = decision_at + timedelta(seconds=61)
+    candidate = _publication_candidate(decision_at)
 
     assert nfl_live_scan._publication_candidates(
         [candidate],
         scheduled_game_ids={"2026_04_IND_WAS"},
         blocked_game_ids=set(),
-        now=now,
+        now=actual_publication_at,
     ) == []
 
 
@@ -1952,6 +2079,82 @@ def test_degraded_scan_with_individually_safe_buy_still_publishes(
     assert next(play for play in public["plays"] if play["action"] == "BUY")[
         "publication_eligible"
     ] is True
+
+
+def test_nfl_game_buy_finalizes_before_unrelated_slow_game(monkeypatch, tmp_path):
+    """A slow unrelated game cannot consume a valid BUY's publication window."""
+    t0 = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
+    game_a = NFLGame(
+        "game-a", 2026, "REG", "2026-09-28T00:20:00+00:00", "PIT", "CIN", None, None
+    )
+    game_b = NFLGame(
+        "game-b", 2026, "REG", "2026-09-28T00:20:00+00:00", "ARI", "LAC", None, None
+    )
+    rows = [
+        _pmus_nfl_row("a-pmus", "nfl-cin-pit-2026-09-27"),
+        _pmus_nfl_row("b-pmus", "nfl-lac-ari-2026-09-27"),
+    ]
+    clock = [t0]
+    dispatched = []
+
+    def book(slug):
+        if slug.endswith("lac-ari-2026-09-27"):
+            clock[0] += timedelta(seconds=61)
+            raise RuntimeError("unrelated game book failed")
+        return {"slug": slug}
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=rows,
+        book=book,
+        action_by_market_side=lambda market, side: (
+            Action.BUY
+            if market.venue_market_id == "a-pmus" and side == Side.YES
+            else Action.PASS
+        ),
+        dispatched=dispatched,
+        scan_games=[game_a, game_b],
+        scan_clock=clock,
+    )
+    assert len(clients) == 1
+    assert result["alerts"] == 1
+    assert [entry[0].market_id for entry in dispatched] == ["a-pmus"]
+    assert result["summary"]["status_counts"].get("BUY_ALERT_WITHHELD_INELIGIBLE", 0) == 0
+    assert result["slate"]["market_data_complete"] is False
+
+
+def test_nfl_later_own_game_failure_blocks_buy_before_finalization(
+    monkeypatch, tmp_path
+):
+    now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
+    game_a = NFLGame(
+        "game-a", 2026, "REG", "2026-09-28T00:20:00+00:00", "PIT", "CIN", None, None
+    )
+
+    def book(slug):
+        if slug.endswith("aec-nfl-cin-pit-2026-09-27"):
+            raise RuntimeError("later equivalent contract book failed")
+        return {"slug": slug}
+
+    result, _clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[
+            _pmus_nfl_row("a-pmus", "nfl-cin-pit-2026-09-27"),
+            _pmus_nfl_row("a-pmus-failure", "aec-nfl-cin-pit-2026-09-27"),
+        ],
+        book=book,
+        action_by_market_side=lambda market, side: (
+            Action.BUY if market.venue_market_id == "a-pmus" and side == Side.YES
+            else Action.PASS
+        ),
+        scan_games=[game_a],
+        scan_clock=[now],
+    )
+
+    assert result["alerts"] == 0
+    assert result["summary"]["status_counts"]["BUY_ALERT_WITHHELD_INELIGIBLE"] == 1
 
 
 @pytest.mark.parametrize("action", [__import__("parallax.models", fromlist=["Action"]).Action.WATCH, __import__("parallax.models", fromlist=["Action"]).Action.PASS])
