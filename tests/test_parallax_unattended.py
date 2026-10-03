@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,54 @@ def completed_cfb_stdout() -> str:
             "rows": [],
         }
     )
+
+
+def completed_cfb_buy_stdout() -> str:
+    now = datetime.now(UTC)
+    payload = json.loads(completed_cfb_stdout())
+    payload["alerts"] = 1
+    payload["venues"]["PMUS"].update(
+        {"BUY": 1, "status_counts": {"BUY": 1}}
+    )
+    payload["rows"] = [
+        {
+            "venue": "PMUS",
+            "market_id": "cfb-certified-buy",
+            "matchup": "Georgia at Alabama",
+            "game_id": "cfb-game-1",
+            "away_team": "Georgia",
+            "home_team": "Alabama",
+            "selected_team": "Alabama",
+            "economic_key": "CFB:cfb-game-1:alabama",
+            "kickoff_utc": (now + timedelta(days=1)).isoformat(),
+            "game_start": (now + timedelta(days=1)).isoformat(),
+            "side": "YES",
+            "cfb_v1_probability": 0.72,
+            "executable_price": 0.49,
+            "raw_edge": 23.0,
+            "cfb_safety": True,
+            "fee": 0.50,
+            "fee_status": "VERIFIED_UPPER_BOUND",
+            "net_ev_25": 3.0,
+            "expected_return": 0.12,
+            "liquidity": 100.0,
+            "verdict": "BUY",
+            "failed_gates": [],
+            "mapping_status": "MAPPED",
+            "acquisition_status": "ACQUIRED",
+            "market_status": "OPEN",
+            "data_freshness": "FRESH",
+            "status": "CURRENT",
+            "updated_at": (now - timedelta(seconds=1)).isoformat(),
+            "expires_at": (now + timedelta(minutes=30)).isoformat(),
+            "evidence_source": "CollegeFootballData",
+            "evidence_model_version": "cfb-v1-rolling-elo",
+            "evidence_validation_status": "CALIBRATED",
+            "evidence_validation_reference": "CFB V1 validated 2025 holdout",
+            "publication_eligible": True,
+        }
+    ]
+    return json.dumps(payload)
 
 
 def test_second_singleton_fails_closed(tmp_path):
@@ -325,15 +374,18 @@ def test_incomplete_market_data_exports_degraded_feed_without_advancing_success(
     assert public["plays"] == []
 
 
-def test_enabled_cfb_exports_existing_scanner_contract_without_provider_calls(tmp_path):
+def test_completed_certified_cfb_buy_replaces_public_feed_while_unverified(tmp_path):
     runtime_env = tmp_path / "runtime.env"
     runtime_env.write_text("PARALLAX_CFB_ENABLED=1\n", encoding="utf-8")
+    cfb_feed = tmp_path / "state/public_feed/cfb.json"
+    cfb_feed.parent.mkdir(parents=True)
+    cfb_feed.write_text('{"generation": "stale-empty"}\n', encoding="utf-8")
     runner_calls = []
 
     def runner(command, **_kwargs):
         runner_calls.append(command)
         if command[1].endswith("cfb_live_scan.py"):
-            output = completed_cfb_stdout()
+            output = completed_cfb_buy_stdout()
         elif command[1].endswith("nfl_live_scan.py") or command[1] == "-m":
             output = json.dumps({"slate": {"market_data_complete": True}})
         else:
@@ -354,7 +406,12 @@ def test_enabled_cfb_exports_existing_scanner_contract_without_provider_calls(tm
     assert len(runner_calls) == 4
     assert health["last_successful_cfb_scan"] == "2026-09-24T00:00:00+00:00"
     assert health["state"] == "RUNNING"
-    assert json.loads((tmp_path / "state/public_feed/cfb.json").read_text())["lane"] == "CFB"
+    public = json.loads(cfb_feed.read_text())
+    assert "generation" not in public
+    assert public["lane"] == "CFB"
+    assert public["data_quality_state"] == "UNVERIFIED"
+    assert public["summary"]["buy"] == 1
+    assert public["plays"][0]["publication_eligible"] is True
 
 
 def test_malformed_cfb_output_preserves_feed_and_fails_lane(tmp_path):

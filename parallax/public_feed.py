@@ -243,10 +243,13 @@ def _validate_cfb_payload(payload: Mapping[str, Any]) -> None:
     """Require the current CFB scanner's fail-closed, read-only output contract."""
     if payload.get("read_only") is not True:
         raise ValueError("CFB scan output must attest read_only=true")
-    for field in ("orders", "alerts", "published"):
+    for field in ("orders", "published"):
         value = payload.get(field)
         if isinstance(value, bool) or value != 0:
             raise ValueError(f"CFB scan output must attest {field}=0")
+    alerts = payload.get("alerts")
+    if isinstance(alerts, bool) or not isinstance(alerts, int) or alerts < 0:
+        raise ValueError("CFB scan output must report a non-negative alert count")
     venues = payload.get("venues")
     if not isinstance(venues, Mapping) or not all(
         isinstance(name, str) and isinstance(value, Mapping)
