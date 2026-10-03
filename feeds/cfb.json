@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-03T23:31:15.929119+00:00",
+  "generated_at": "2026-10-03T23:36:17.658280+00:00",
   "lane": "CFB",
   "plays": [
     {
@@ -12,14 +12,25 @@
       "sport": "CFB",
       "start_time": "2026-10-04T00:00:00+00:00",
       "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "YES",
+      "edge_pp": 19.61398456,
+      "market_id": "984733",
+      "matchup": "Baylor at Arizona State",
+      "model_probability": 0.5861398456416786,
+      "price": 0.39,
+      "sport": "CFB",
+      "start_time": "2026-10-04T02:30:00+00:00",
+      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-03T22:33:07.418441+00:00",
+  "source_feed_generated_at": "2026-10-03T23:35:48.698357+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 1
+    "buy": 2
   }
 }
