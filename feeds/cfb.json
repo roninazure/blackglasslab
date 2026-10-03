@@ -1,40 +1,7 @@
 {
-  "generated_at": "2026-10-03T23:01:13.335544+00:00",
+  "generated_at": "2026-10-03T23:31:15.929119+00:00",
   "lane": "CFB",
   "plays": [
-    {
-      "contract_side": "NO",
-      "edge_pp": 27.84111157,
-      "market_id": "1083553",
-      "matchup": "Miami at Clemson",
-      "model_probability": 0.42341111569022327,
-      "price": 0.145,
-      "sport": "CFB",
-      "start_time": "2026-10-03T23:30:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "YES",
-      "edge_pp": 6.98605995,
-      "market_id": "983090",
-      "matchup": "Army at Louisiana Tech",
-      "model_probability": 0.5698605994776852,
-      "price": 0.5,
-      "sport": "CFB",
-      "start_time": "2026-10-03T23:30:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "NO",
-      "edge_pp": 27.72101207,
-      "market_id": "984731",
-      "matchup": "Texas Tech at Colorado",
-      "model_probability": 0.4522101207419563,
-      "price": 0.175,
-      "sport": "CFB",
-      "start_time": "2026-10-03T23:30:00+00:00",
-      "venue": "POLYMARKET"
-    },
     {
       "contract_side": "NO",
       "edge_pp": 42.43192413,
@@ -53,6 +20,6 @@
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 4
+    "buy": 1
   }
 }
