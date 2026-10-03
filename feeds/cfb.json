@@ -1,18 +1,7 @@
 {
-  "generated_at": "2026-10-03T22:36:11.150348+00:00",
+  "generated_at": "2026-10-03T23:01:13.335544+00:00",
   "lane": "CFB",
   "plays": [
-    {
-      "contract_side": "NO",
-      "edge_pp": 11.9612758,
-      "market_id": "984730",
-      "matchup": "BYU at TCU",
-      "model_probability": 0.44961275803734246,
-      "price": 0.33,
-      "sport": "CFB",
-      "start_time": "2026-10-03T23:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
     {
       "contract_side": "NO",
       "edge_pp": 27.84111157,
@@ -64,6 +53,6 @@
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 5
+    "buy": 4
   }
 }
