@@ -1,30 +1,30 @@
 {
-  "generated_at": "2026-10-03T22:34:09.379995+00:00",
+  "generated_at": "2026-10-03T23:34:11.500924+00:00",
   "lane": "NFL",
   "plays": [
     {
       "away_team": "Indianapolis Colts",
-      "contract_side": "YES",
+      "contract_side": "NO",
       "date": "2026-10-04",
       "economic_key": "NFL:2026_04_IND_WAS:WAS",
-      "edge_pp": 22.54868024,
+      "edge_pp": 22.79868024,
       "game_id": "2026_04_IND_WAS",
       "home_team": "Washington Commanders",
-      "lifecycle_updated_at": "2026-10-03T22:30:45.911480+00:00",
-      "market_id": "KXNFLGAME-26OCT04INDWAS-WAS",
+      "lifecycle_updated_at": "2026-10-03T23:33:22.072010+00:00",
+      "market_id": "960578",
       "model_probability": 0.5754868023642871,
       "opponent": "Indianapolis Colts",
-      "price": 0.35,
+      "price": 0.3475,
       "schedule_status": "SCHEDULED",
       "selected_team": "Washington Commanders",
       "sport": "NFL",
       "start_time": "2026-10-04T13:30:00+00:00",
-      "venue": "KALSHI"
+      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-03T22:31:19.980310+00:00",
+  "source_feed_generated_at": "2026-10-03T23:34:00.034745+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
