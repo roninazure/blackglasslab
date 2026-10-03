@@ -1,13 +1,69 @@
 {
-  "generated_at": "2026-10-03T21:11:07.234660+00:00",
+  "generated_at": "2026-10-03T22:36:11.150348+00:00",
   "lane": "CFB",
-  "plays": [],
+  "plays": [
+    {
+      "contract_side": "NO",
+      "edge_pp": 11.9612758,
+      "market_id": "984730",
+      "matchup": "BYU at TCU",
+      "model_probability": 0.44961275803734246,
+      "price": 0.33,
+      "sport": "CFB",
+      "start_time": "2026-10-03T23:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 27.84111157,
+      "market_id": "1083553",
+      "matchup": "Miami at Clemson",
+      "model_probability": 0.42341111569022327,
+      "price": 0.145,
+      "sport": "CFB",
+      "start_time": "2026-10-03T23:30:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "YES",
+      "edge_pp": 6.98605995,
+      "market_id": "983090",
+      "matchup": "Army at Louisiana Tech",
+      "model_probability": 0.5698605994776852,
+      "price": 0.5,
+      "sport": "CFB",
+      "start_time": "2026-10-03T23:30:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 27.72101207,
+      "market_id": "984731",
+      "matchup": "Texas Tech at Colorado",
+      "model_probability": 0.4522101207419563,
+      "price": 0.175,
+      "sport": "CFB",
+      "start_time": "2026-10-03T23:30:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 42.43192413,
+      "market_id": "961031",
+      "matchup": "Indiana at Rutgers",
+      "model_probability": 0.4843192413488483,
+      "price": 0.06,
+      "sport": "CFB",
+      "start_time": "2026-10-04T00:00:00+00:00",
+      "venue": "POLYMARKET"
+    }
+  ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-03T21:09:31.460390+00:00",
+  "source_feed_generated_at": "2026-10-03T22:33:07.418441+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 0
+    "buy": 5
   }
 }
