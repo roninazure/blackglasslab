@@ -270,6 +270,20 @@ class AlertDeliveryStore:
                     """,
                     (migrated_at, migrated_at),
                 )
+            nfl_migrated_at = utcnow().isoformat()
+            conn.execute(
+                """
+                UPDATE buy_alert_state
+                SET status = 'SUPERSEDED',
+                    updated_at = ?,
+                    closed_at = ?,
+                    close_reason = 'Superseded by NFL economic-position alert normalization.'
+                WHERE sport = 'NFL'
+                  AND status = 'ACTIVE'
+                  AND economic_key = ''
+                """,
+                (nfl_migrated_at, nfl_migrated_at),
+            )
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS buy_alert_state_status

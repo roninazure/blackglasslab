@@ -708,7 +708,7 @@ def test_economic_lifecycle_stays_active_when_equivalent_contract_is_still_buy(t
     assert len(transport.calls) == 1
 
 
-def test_schema_migration_supersedes_only_legacy_active_mlb_rows(tmp_path):
+def test_schema_migration_supersedes_legacy_active_mlb_and_nfl_rows(tmp_path):
     path = tmp_path / "alerts.sqlite"
     with sqlite3.connect(path) as conn:
         conn.execute(
@@ -775,11 +775,11 @@ def test_schema_migration_supersedes_only_legacy_active_mlb_rows(tmp_path):
     store = AlertDeliveryStore(path)
 
     assert store.active_buys("MLB") == []
-    assert len(store.active_buys("NFL")) == 1
+    assert store.active_buys("NFL") == []
     with sqlite3.connect(path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(buy_alert_state)")}
-        mlb_status = conn.execute(
-            "SELECT status FROM buy_alert_state WHERE sport = 'MLB'"
-        ).fetchone()[0]
+        statuses = dict(
+            conn.execute("SELECT sport, status FROM buy_alert_state").fetchall()
+        )
     assert "economic_key" in columns
-    assert mlb_status == "SUPERSEDED"
+    assert statuses == {"MLB": "SUPERSEDED", "NFL": "SUPERSEDED"}

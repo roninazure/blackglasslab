@@ -18,7 +18,7 @@ from typing import Any, Callable
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from .models import Evidence, NormalizedMarket, PlayType, Venue, utcnow
+from .models import Evidence, NormalizedMarket, PlayType, Side, Venue, utcnow
 from .normalization import rules_digest
 
 SOURCE_URL = "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv"
@@ -40,6 +40,19 @@ NFL_TEAM_ALIASES = {
     "newyorkjets": "NYJ", "philadelphiaeagles": "PHI", "pittsburghsteelers": "PIT",
     "sanfrancisco49ers": "SF", "seattleseahawks": "SEA", "tampabaybuccaneers": "TB",
     "tennesseetitans": "TEN", "washingtoncommanders": "WAS",
+}
+NFL_TEAM_NAMES = {
+    "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+    "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+    "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+    "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
+    "KC": "Kansas City Chiefs", "LA": "Los Angeles Rams", "LAC": "Los Angeles Chargers",
+    "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
+    "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
+    "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
+    "SEA": "Seattle Seahawks", "SF": "San Francisco 49ers", "TB": "Tampa Bay Buccaneers",
+    "TEN": "Tennessee Titans", "WAS": "Washington Commanders",
 }
 
 
@@ -291,6 +304,29 @@ def nfl_calibration_safe(edge: float | None) -> bool:
 def _team_key(value: Any) -> str:
     key = re.sub(r"[^a-z0-9]", "", str(value or "").lower())
     return NFL_TEAM_ALIASES.get(key, key.upper())
+
+
+def economic_team_for_side(mapping: NFLMapping, side: Side | str) -> str | None:
+    """Return the official team bought by one mapped binary contract side.
+
+    NFL venues may expose one contract for each team.  Consequently, NO on
+    the away-team contract and YES on the home-team contract are the same
+    economic position.  Resolve that identity from the authoritative game and
+    the mapped YES proposition rather than from contract ordering or labels.
+    """
+    if mapping.status != "MAPPED_GAME_WINNER" or mapping.game is None:
+        return None
+    participants = {
+        _team_key(mapping.game.away_team),
+        _team_key(mapping.game.home_team),
+    } - {""}
+    selected = _team_key(mapping.selected_team)
+    if len(participants) != 2 or selected not in participants:
+        return None
+    if Side(side) == Side.YES:
+        return selected
+    opponents = participants - {selected}
+    return next(iter(opponents)) if len(opponents) == 1 else None
 
 
 def _selected_team_from_pmus_sides(raw: dict[str, Any], game: NFLGame) -> str | None:

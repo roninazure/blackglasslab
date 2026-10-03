@@ -34,6 +34,8 @@ from parallax.models import Action, Side, utcnow
 from parallax.nfl import (
     VALIDATION_ECE,
     NFLEvidenceProvider,
+    NFL_TEAM_NAMES,
+    economic_team_for_side,
     fetch_games,
     market_support_reason,
     map_market_to_game,
@@ -189,7 +191,39 @@ def _capture_evaluated(store, market, side, evidence, now):
     return play
 
 
-def _dispatch_buy_alert(dispatcher, play, market, mapping, detected_at):
+def _nfl_economic_position(play, mapping) -> tuple[str, str] | None:
+    """Bind a scored side to one authoritative game/team economic position."""
+    selected_team = economic_team_for_side(mapping, play.side)
+    if selected_team is None or mapping.game is None:
+        return None
+    selected_label = NFL_TEAM_NAMES.get(selected_team)
+    if selected_label is None:
+        return None
+    return f"NFL:{mapping.game.game_id}:{selected_team}", selected_label
+
+
+def _buy_candidate_rank(candidate) -> tuple:
+    play, _market, _mapping, _detected_at, _economic_key, _selected_team = candidate
+    return (
+        float("inf") if play.executable_price is None else float(play.executable_price),
+        -(float("-inf") if play.edge_points is None else float(play.edge_points)),
+        -float(play.executable_size or 0),
+        str(play.venue),
+        str(play.market_id),
+        str(play.side),
+    )
+
+
+def _dispatch_buy_alert(
+    dispatcher,
+    play,
+    market,
+    mapping,
+    detected_at,
+    *,
+    economic_key=None,
+    selected_side=None,
+):
     """Send one immediate deduplicated ntfy alert for a scored NFL BUY."""
     if play.suggested_action != Action.BUY:
         return None
@@ -206,7 +240,47 @@ def _dispatch_buy_alert(dispatcher, play, market, mapping, detected_at):
         matchup=matchup,
         detected_at=detected_at.isoformat(),
         game_start=mapping.game.kickoff if mapping.game else None,
+        economic_key=economic_key,
+        selected_side=selected_side,
     )
+
+
+def _dispatch_complete_buy_alerts(dispatcher, candidates, slate) -> dict[str, int]:
+    """Dispatch one canonical BUY per position only from a complete NFL scan."""
+    summary = {"sent": 0, "deduplicated": 0, "failed": 0, "withheld": 0}
+    if slate.get("market_data_complete") is not True:
+        summary["withheld"] = len(candidates)
+        return summary
+
+    grouped = {}
+    for candidate in candidates:
+        grouped.setdefault(candidate[4], []).append(candidate)
+    for equivalents in grouped.values():
+        play, market, mapping, detected_at, economic_key, selected_team = min(
+            equivalents, key=_buy_candidate_rank
+        )
+        try:
+            result = _dispatch_buy_alert(
+                dispatcher,
+                play,
+                market,
+                mapping,
+                detected_at,
+                economic_key=economic_key,
+                selected_side=selected_team,
+            )
+        except Exception:
+            summary["failed"] += 1
+            continue
+        if result is None:
+            continue
+        if result["deduplicated"]:
+            summary["deduplicated"] += 1
+        elif result["status"] == "SENT":
+            summary["sent"] += 1
+        elif result["status"] in {"FAILED", "UNKNOWN", "PENDING"}:
+            summary["failed"] += 1
+    return summary
 
 
 def _text(row: dict) -> str:
@@ -409,6 +483,8 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
         rejection_reasons = Counter()
         rows_out = []
         scored_plays = []
+        buy_candidates = []
+        economic_keys_by_play_id = {}
         data_unavailable_game_ids: set[str] = set()
         mapping_failure_game_ids: set[str] = set()
         for venue, raw_rows in (("PMUS", pmus_rows), ("KALSHI", kalshi_rows)):
@@ -483,23 +559,27 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                                 result["prospective_captured"] += 1
                                 scored_plays.append(play)
                                 statuses[f"SCORED_{play.suggested_action}"] += 1
-                                try:
-                                    alert_result = _dispatch_buy_alert(
-                                        alert_dispatcher,
-                                        play,
-                                        market,
-                                        mapping,
-                                        decision_at,
+                                economic_position = _nfl_economic_position(play, mapping)
+                                if economic_position is None:
+                                    raise ValueError(
+                                        "scored NFL side lacks authoritative economic identity"
                                     )
-                                    if (
-                                        alert_result is not None
-                                        and alert_result["status"] == "SENT"
-                                        and not alert_result["deduplicated"]
-                                    ):
-                                        result["alerts"] += 1
-                                except Exception:
-                                    statuses["ALERT_ERROR"] += 1
+                                economic_key, selected_team = economic_position
+                                economic_keys_by_play_id[play.id] = economic_key
+                                if play.suggested_action == Action.BUY:
+                                    buy_candidates.append(
+                                        (
+                                            play,
+                                            market,
+                                            mapping,
+                                            decision_at,
+                                            economic_key,
+                                            selected_team,
+                                        )
+                                    )
                                 scored = {"venue": venue, "market": market.title, "market_id": market.venue_market_id, "game_id": mapping.game.game_id, "side": side.value, "game_start": mapping.game.kickoff, "nfl_v1_probability": play.model_probability, "executable_price": play.executable_price, "raw_edge": play.edge_points, "safety_margin": (play.edge_points / 100 - VALIDATION_ECE) if play.edge_points is not None else None, "fee": play.fees_estimate, "net_ev_25": play.expected_value, "net_ev_50": None, "net_ev_100": None, "liquidity": play.executable_size, "failed_gates": list(play.verdict.failed_gates), "verdict": play.suggested_action.value}
+                                scored["economic_key"] = economic_key
+                                scored["selected_team"] = selected_team
                                 for index, key in ((2, "net_ev_50"), (3, "net_ev_100")):
                                     example = play.retail_examples[index]
                                     scored[key] = (play.model_probability * example.estimated_payout_if_correct - example.total_cost) if play.model_probability is not None and example.available and example.total_cost is not None else None
@@ -511,13 +591,6 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
                 rows_out.append(row)
     finally:
         pmus.close()
-    lifecycle_at = utcnow()
-    result["buy_lifecycle"] = reconcile_active_buy_alerts(
-        alert_dispatcher,
-        scored_plays,
-        sport="NFL",
-        detected_at=lifecycle_at.isoformat(),
-    )
     result["pmus_acquisition"] = acquisition.diagnostics()
     result["slate"] = reconcile_slate(
         scheduled_for_discovery,
@@ -525,6 +598,21 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None) -> dict:
         discovery_complete=pmus_discovery_complete and kalshi_discovery_complete,
         data_unavailable_game_ids=data_unavailable_game_ids,
         mapping_failure_game_ids=mapping_failure_game_ids,
+    )
+    alert_summary = _dispatch_complete_buy_alerts(
+        alert_dispatcher, buy_candidates, result["slate"]
+    )
+    result["alerts"] = alert_summary["sent"]
+    statuses["ALERT_DEDUPLICATED"] += alert_summary["deduplicated"]
+    statuses["ALERT_ERROR"] += alert_summary["failed"]
+    statuses["BUY_ALERT_WITHHELD_INCOMPLETE"] += alert_summary["withheld"]
+    lifecycle_at = utcnow()
+    result["buy_lifecycle"] = reconcile_active_buy_alerts(
+        alert_dispatcher,
+        scored_plays,
+        sport="NFL",
+        detected_at=lifecycle_at.isoformat(),
+        economic_key_for_play=lambda play: economic_keys_by_play_id.get(play.id),
     )
     result["summary"] = {"nfl_markets_discovered": {"PMUS": len(pmus_rows), "KALSHI": len(kalshi_rows)}, "status_counts": dict(statuses), "rejection_counts": dict(rejection_reasons), "rows": rows_out}
     return result
