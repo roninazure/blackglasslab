@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-03T19:03:58.657572+00:00",
+  "generated_at": "2026-10-03T20:09:00.828765+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -10,7 +10,7 @@
       "edge_pp": 22.79868024,
       "game_id": "2026_04_IND_WAS",
       "home_team": "Washington Commanders",
-      "lifecycle_updated_at": "2026-10-03T19:02:48.157091+00:00",
+      "lifecycle_updated_at": "2026-10-03T20:05:53.015183+00:00",
       "market_id": "960578",
       "model_probability": 0.5754868023642871,
       "opponent": "Indianapolis Colts",
@@ -24,7 +24,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-03T19:03:22.336673+00:00",
+  "source_feed_generated_at": "2026-10-03T20:06:30.907167+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
