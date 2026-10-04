@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-04T18:51:08.987938+00:00",
+  "generated_at": "2026-10-04T18:51:19.644115+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -77,14 +77,33 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "KALSHI"
+    },
+    {
+      "away_team": "Las Vegas Raiders",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_LV_NE:NE",
+      "edge_pp": 11.38897714,
+      "game_id": "2026_05_LV_NE",
+      "home_team": "New England Patriots",
+      "lifecycle_updated_at": "2026-10-04T18:51:11.519795+00:00",
+      "market_id": "KXNFLGAME-26OCT11LVNE-LV",
+      "model_probability": 0.7338897714025671,
+      "opponent": "Las Vegas Raiders",
+      "price": 0.62,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "New England Patriots",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "KALSHI"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T18:51:04.863963+00:00",
+  "source_feed_generated_at": "2026-10-04T18:51:11.522697+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 4
+    "buy": 5
   }
 }
