@@ -2831,3 +2831,91 @@ def test_incremental_without_current_buy_does_not_kick_publisher(tmp_path, monke
     assert nfl_live_scan._kick_nfl_publisher_for_current_buy(
         payload, destination
     ) is False
+
+
+@pytest.mark.parametrize(
+    ("away", "home", "selected", "title"),
+    [
+        ("ARI", "NYG", "NYG", "New York G wins"),
+        ("ARI", "NYG", "ARI", "Arizona wins"),
+        ("GB", "TB", "GB", "Green Bay wins"),
+        ("GB", "TB", "TB", "Tampa Bay wins"),
+        ("LA", "PHI", "LA", "Los Angeles wins"),
+        ("LA", "PHI", "PHI", "Philadelphia wins"),
+        ("NYJ", "CHI", "NYJ", "New York J wins"),
+        ("KC", "LV", "KC", "Kansas City wins"),
+        ("KC", "LV", "LV", "Las Vegas wins"),
+    ],
+)
+def test_kalshi_nfl_ticker_suffix_resolves_selected_team_when_title_is_abbreviated(
+    away, home, selected, title
+):
+    observed = datetime(2026, 10, 4, 12, 0, tzinfo=UTC)
+    kickoff = "2026-10-05T20:00:00+00:00"
+    event_ticker = f"KXNFLGAME-26OCT05{away}{home}"
+
+    raw = {
+        "ticker": f"{event_ticker}-{selected}",
+        "event_ticker": event_ticker,
+        "title": title,
+        "yes_sub_title": "YES",
+        "no_sub_title": "NO",
+        "status": "open",
+        "market_type": "binary",
+        "expected_expiration_time": kickoff,
+        "rules_primary": "Contract resolves from the official NFL result.",
+        "away_team": away,
+        "home_team": home,
+        "scheduled_start": kickoff,
+    }
+    event = {
+        "ticker": event_ticker,
+        "title": f"{away} vs {home} NFL game",
+        "away_team": away,
+        "home_team": home,
+        "scheduled_start": kickoff,
+    }
+
+    market = normalize_kalshi(raw, {}, observed.isoformat(), event=event)
+    game = NFLGame("game", 2026, "REG", kickoff, home, away, None, None)
+
+    mapping = map_market_to_game(market, [game], now=observed)
+
+    assert mapping.status == "MAPPED_GAME_WINNER"
+    assert mapping.selected_team == selected
+
+
+def test_kalshi_nfl_ticker_suffix_not_in_official_game_fails_closed():
+    observed = datetime(2026, 10, 4, 12, 0, tzinfo=UTC)
+    kickoff = "2026-10-05T20:00:00+00:00"
+    event_ticker = "KXNFLGAME-26OCT05ARINYG"
+
+    raw = {
+        "ticker": f"{event_ticker}-XXX",
+        "event_ticker": event_ticker,
+        "title": "Unknown wins",
+        "yes_sub_title": "YES",
+        "no_sub_title": "NO",
+        "status": "open",
+        "market_type": "binary",
+        "expected_expiration_time": kickoff,
+        "rules_primary": "Contract resolves from the official NFL result.",
+        "away_team": "ARI",
+        "home_team": "NYG",
+        "scheduled_start": kickoff,
+    }
+    event = {
+        "ticker": event_ticker,
+        "title": "ARI vs NYG NFL game",
+        "away_team": "ARI",
+        "home_team": "NYG",
+        "scheduled_start": kickoff,
+    }
+
+    market = normalize_kalshi(raw, {}, observed.isoformat(), event=event)
+    game = NFLGame("game", 2026, "REG", kickoff, "NYG", "ARI", None, None)
+
+    mapping = map_market_to_game(market, [game], now=observed)
+
+    assert mapping.status == "AMBIGUOUS"
+    assert mapping.selected_team is None
