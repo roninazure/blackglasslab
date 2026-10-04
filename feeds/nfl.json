@@ -1,45 +1,7 @@
 {
-  "generated_at": "2026-10-04T20:56:59.927606+00:00",
+  "generated_at": "2026-10-04T20:57:15.114668+00:00",
   "lane": "NFL",
   "plays": [
-    {
-      "away_team": "Tampa Bay Buccaneers",
-      "contract_side": "YES",
-      "date": "2026-10-08",
-      "economic_key": "NFL:2026_05_TB_DAL:TB",
-      "edge_pp": 18.40945183,
-      "game_id": "2026_05_TB_DAL",
-      "home_team": "Dallas Cowboys",
-      "lifecycle_updated_at": "2026-10-04T20:56:13.420666+00:00",
-      "market_id": "1030131",
-      "model_probability": 0.37659451833045976,
-      "opponent": "Dallas Cowboys",
-      "price": 0.1925,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Tampa Bay Buccaneers",
-      "sport": "NFL",
-      "start_time": "2026-10-09T00:15:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "away_team": "Chicago Bears",
-      "contract_side": "NO",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_CHI_GB:GB",
-      "edge_pp": 19.98591036,
-      "game_id": "2026_05_CHI_GB",
-      "home_team": "Green Bay Packers",
-      "lifecycle_updated_at": "2026-10-04T20:56:17.673588+00:00",
-      "market_id": "1083103",
-      "model_probability": 0.6773591035884879,
-      "opponent": "Chicago Bears",
-      "price": 0.4775,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Green Bay Packers",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
     {
       "away_team": "Indianapolis Colts",
       "contract_side": "YES",
@@ -96,14 +58,33 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "KALSHI"
+    },
+    {
+      "away_team": "San Francisco 49ers",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_SF_SEA:SEA",
+      "edge_pp": 7.79149042,
+      "game_id": "2026_05_SF_SEA",
+      "home_team": "Seattle Seahawks",
+      "lifecycle_updated_at": "2026-10-04T20:57:15.005632+00:00",
+      "market_id": "KXNFLGAME-26OCT11SFSEA-SF",
+      "model_probability": 0.6179149042426768,
+      "opponent": "San Francisco 49ers",
+      "price": 0.54,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Seattle Seahawks",
+      "sport": "NFL",
+      "start_time": "2026-10-11T20:25:00+00:00",
+      "venue": "KALSHI"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T20:56:51.808339+00:00",
+  "source_feed_generated_at": "2026-10-04T20:57:15.008848+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 5
+    "buy": 4
   }
 }
