@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-04T17:33:48.729738+00:00",
+  "generated_at": "2026-10-04T17:33:59.302118+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -41,25 +41,6 @@
       "venue": "POLYMARKET"
     },
     {
-      "away_team": "Chicago Bears",
-      "contract_side": "NO",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_CHI_GB:GB",
-      "edge_pp": 14.42088986,
-      "game_id": "2026_05_CHI_GB",
-      "home_team": "Green Bay Packers",
-      "lifecycle_updated_at": "2026-10-04T17:33:20.954597+00:00",
-      "market_id": "1083103",
-      "model_probability": 0.6717088985884373,
-      "opponent": "Chicago Bears",
-      "price": 0.5275,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Green Bay Packers",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
       "away_team": "Cleveland Browns",
       "contract_side": "YES",
       "date": "2026-10-11",
@@ -96,11 +77,30 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "POLYMARKET"
+    },
+    {
+      "away_team": "Las Vegas Raiders",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_LV_NE:NE",
+      "edge_pp": 9.38897714,
+      "game_id": "2026_05_LV_NE",
+      "home_team": "New England Patriots",
+      "lifecycle_updated_at": "2026-10-04T17:33:51.180041+00:00",
+      "market_id": "KXNFLGAME-26OCT11LVNE-LV",
+      "model_probability": 0.7338897714025671,
+      "opponent": "Las Vegas Raiders",
+      "price": 0.64,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "New England Patriots",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "KALSHI"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T17:33:44.611693+00:00",
+  "source_feed_generated_at": "2026-10-04T17:33:51.183029+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
