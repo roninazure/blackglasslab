@@ -1,52 +1,33 @@
 {
-  "generated_at": "2026-10-04T15:44:36.265560+00:00",
+  "generated_at": "2026-10-04T16:29:00.181716+00:00",
   "lane": "NFL",
   "plays": [
     {
-      "away_team": "Cincinnati Bengals",
+      "away_team": "Arizona Cardinals",
       "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_CIN_MIA:MIA",
-      "edge_pp": 32.82701218,
-      "game_id": "2026_05_CIN_MIA",
-      "home_team": "Miami Dolphins",
-      "lifecycle_updated_at": "2026-10-04T15:39:24.180440+00:00",
-      "market_id": "KXNFLGAME-26OCT11CINMIA-MIA",
-      "model_probability": 0.508270121813281,
-      "opponent": "Cincinnati Bengals",
-      "price": 0.18,
+      "date": "2026-10-04",
+      "economic_key": "NFL:2026_04_ARI_NYG:NYG",
+      "edge_pp": 12.73539578,
+      "game_id": "2026_04_ARI_NYG",
+      "home_team": "New York Giants",
+      "lifecycle_updated_at": "2026-10-04T16:29:00.071084+00:00",
+      "market_id": "KXNFLGAME-26OCT04ARINYG-NYG",
+      "model_probability": 0.577353957845947,
+      "opponent": "Arizona Cardinals",
+      "price": 0.45,
       "schedule_status": "SCHEDULED",
-      "selected_team": "Miami Dolphins",
+      "selected_team": "New York Giants",
       "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "KALSHI"
-    },
-    {
-      "away_team": "Indianapolis Colts",
-      "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_IND_PIT:PIT",
-      "edge_pp": 15.61730406,
-      "game_id": "2026_05_IND_PIT",
-      "home_team": "Pittsburgh Steelers",
-      "lifecycle_updated_at": "2026-10-04T15:39:34.925322+00:00",
-      "market_id": "KXNFLGAME-26OCT11INDPIT-PIT",
-      "model_probability": 0.726173040588477,
-      "opponent": "Indianapolis Colts",
-      "price": 0.57,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Pittsburgh Steelers",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
+      "start_time": "2026-10-04T17:00:00+00:00",
       "venue": "KALSHI"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T15:39:54.128287+00:00",
+  "source_feed_generated_at": "2026-10-04T16:29:00.074128+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 2
+    "buy": 1
   }
 }
