@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-04T14:14:52.343652+00:00",
+  "generated_at": "2026-10-04T14:39:53.894336+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -10,7 +10,7 @@
       "edge_pp": 32.82701218,
       "game_id": "2026_05_CIN_MIA",
       "home_team": "Miami Dolphins",
-      "lifecycle_updated_at": "2026-10-04T14:12:58.843211+00:00",
+      "lifecycle_updated_at": "2026-10-04T14:36:33.750068+00:00",
       "market_id": "KXNFLGAME-26OCT11CINMIA-MIA",
       "model_probability": 0.508270121813281,
       "opponent": "Cincinnati Bengals",
@@ -29,7 +29,7 @@
       "edge_pp": 15.61730406,
       "game_id": "2026_05_IND_PIT",
       "home_team": "Pittsburgh Steelers",
-      "lifecycle_updated_at": "2026-10-04T14:13:09.333231+00:00",
+      "lifecycle_updated_at": "2026-10-04T14:36:44.356553+00:00",
       "market_id": "KXNFLGAME-26OCT11INDPIT-PIT",
       "model_probability": 0.726173040588477,
       "opponent": "Indianapolis Colts",
@@ -43,7 +43,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T14:13:28.727580+00:00",
+  "source_feed_generated_at": "2026-10-04T14:37:03.528733+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
