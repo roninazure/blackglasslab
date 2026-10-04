@@ -1,18 +1,7 @@
 {
-  "generated_at": "2026-10-03T23:36:17.658280+00:00",
+  "generated_at": "2026-10-04T00:01:20.174611+00:00",
   "lane": "CFB",
   "plays": [
-    {
-      "contract_side": "NO",
-      "edge_pp": 42.43192413,
-      "market_id": "961031",
-      "matchup": "Indiana at Rutgers",
-      "model_probability": 0.4843192413488483,
-      "price": 0.06,
-      "sport": "CFB",
-      "start_time": "2026-10-04T00:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
     {
       "contract_side": "YES",
       "edge_pp": 19.61398456,
@@ -31,6 +20,6 @@
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 2
+    "buy": 1
   }
 }
