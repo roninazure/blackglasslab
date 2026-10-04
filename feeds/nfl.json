@@ -1,45 +1,7 @@
 {
-  "generated_at": "2026-10-04T23:04:00.220880+00:00",
+  "generated_at": "2026-10-04T23:04:11.018471+00:00",
   "lane": "NFL",
   "plays": [
-    {
-      "away_team": "Chicago Bears",
-      "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_CHI_GB:GB",
-      "edge_pp": 17.73591036,
-      "game_id": "2026_05_CHI_GB",
-      "home_team": "Green Bay Packers",
-      "lifecycle_updated_at": "2026-10-04T23:03:00.478130+00:00",
-      "market_id": "KXNFLGAME-26OCT11CHIGB-GB",
-      "model_probability": 0.6773591035884879,
-      "opponent": "Chicago Bears",
-      "price": 0.5,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Green Bay Packers",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "KALSHI"
-    },
-    {
-      "away_team": "Cincinnati Bengals",
-      "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_CIN_MIA:MIA",
-      "edge_pp": 31.54233259,
-      "game_id": "2026_05_CIN_MIA",
-      "home_team": "Miami Dolphins",
-      "lifecycle_updated_at": "2026-10-04T23:03:09.055229+00:00",
-      "market_id": "KXNFLGAME-26OCT11CINMIA-MIA",
-      "model_probability": 0.5254233259133121,
-      "opponent": "Cincinnati Bengals",
-      "price": 0.21,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Miami Dolphins",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "KALSHI"
-    },
     {
       "away_team": "Indianapolis Colts",
       "contract_side": "YES",
@@ -96,14 +58,33 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "KALSHI"
+    },
+    {
+      "away_team": "Denver Broncos",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_DEN_LAC:LAC",
+      "edge_pp": 9.25713853,
+      "game_id": "2026_05_DEN_LAC",
+      "home_team": "Los Angeles Chargers",
+      "lifecycle_updated_at": "2026-10-04T23:04:08.893486+00:00",
+      "market_id": "1083100",
+      "model_probability": 0.4700713852626923,
+      "opponent": "Denver Broncos",
+      "price": 0.3775,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Los Angeles Chargers",
+      "sport": "NFL",
+      "start_time": "2026-10-11T20:05:00+00:00",
+      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T23:03:52.100511+00:00",
+  "source_feed_generated_at": "2026-10-04T23:04:08.897025+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 5
+    "buy": 4
   }
 }
