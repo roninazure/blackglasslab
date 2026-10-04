@@ -130,7 +130,7 @@ def test_startup_runs_active_nfl_mlb_and_reconciliation_immediately(tmp_path):
     assert json.loads((tmp_path / "state" / HEALTH_FILENAME).read_text()) == health
 
 
-def test_active_sports_run_on_startup_then_hourly_while_reconciliation_runs_each_cycle(tmp_path):
+def test_nfl_runs_independently_while_cfb_and_mlb_remain_hourly(tmp_path):
     calls = []
     now = [0.0]
 
@@ -150,14 +150,79 @@ def test_active_sports_run_on_startup_then_hourly_while_reconciliation_runs_each
 
     now[0] = 300
     scheduler.run_cycle()
-    assert len(calls) == 4
+    assert len(calls) == 5
 
     now[0] = 3600
     health = scheduler.run_cycle()
-    assert len(calls) == 7
+    assert len(calls) == 8
     assert health["last_successful_nfl_scan"] is not None
     assert health["last_successful_cfb_scan"] is None
     assert health["last_successful_mlb_scan"] is not None
+
+
+def test_nfl_scheduler_boundary_is_45_seconds_and_reconciliation_stays_five_minutes(tmp_path):
+    calls = []
+    now = [0.0]
+
+    def runner(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+    scheduler = UnattendedScheduler(
+        root=tmp_path / "release",
+        state_dir=tmp_path / "state",
+        runner=runner,
+        monotonic=lambda: now[0],
+    )
+    scheduler.run_cycle()
+    now[0] = 44.999
+    scheduler.run_cycle()
+    now[0] = 45.0
+    scheduler.run_cycle()
+
+    nfl = [call for call in calls if call[1].endswith("nfl_live_scan.py")]
+    mlb = [call for call in calls if call[1] == "-m"]
+    reconciliation = [
+        call for call in calls if call[1].endswith("parallax_reconcile_prospective.py")
+    ]
+    assert len(nfl) == 2
+    assert len(mlb) == 1
+    assert len(reconciliation) == 1
+
+
+@pytest.mark.parametrize(
+    ("duration", "next_wake", "expected_nfl_runs", "immediate_repeat_runs"),
+    [(30.0, 35.0, 1, 1), (44.0, 49.0, 2, 2), (46.0, 51.0, 2, 3)],
+)
+def test_slow_nfl_scan_is_serial_and_does_not_create_backlog(
+    tmp_path, duration, next_wake, expected_nfl_runs, immediate_repeat_runs
+):
+    now = [0.0]
+    nfl_starts = []
+    running = [False]
+
+    def runner(command, **_kwargs):
+        if command[1].endswith("nfl_live_scan.py"):
+            assert running[0] is False
+            running[0] = True
+            nfl_starts.append(now[0])
+            now[0] += duration
+            running[0] = False
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+    scheduler = UnattendedScheduler(
+        root=tmp_path / "release",
+        state_dir=tmp_path / "state",
+        runner=runner,
+        monotonic=lambda: now[0],
+    )
+    scheduler.run_cycle()
+    assert scheduler.next_due["nfl"] == 45.0  # Due time uses cycle start.
+    now[0] = next_wake
+    scheduler.run_cycle()
+    assert len(nfl_starts) == expected_nfl_runs
+    scheduler.run_cycle()  # At most one NFL invocation per cycle, even when overdue.
+    assert len(nfl_starts) == immediate_repeat_runs
 
 
 def test_cfb_requires_explicit_enable_and_isolated_failure(tmp_path):

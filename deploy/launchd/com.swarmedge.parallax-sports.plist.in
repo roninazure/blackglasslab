@@ -15,7 +15,7 @@
     <string>--runtime-env</string>
     <string>@BGL_RUNTIME_ENV_FILE@</string>
     <string>--interval-seconds</string>
-    <string>300</string>
+    <string>5</string>
   </array>
   <key>UserName</key>
   <string>scottsteele</string>

@@ -29,6 +29,7 @@ from parallax.nfl import (
     validate,
 )
 from parallax.normalization import normalize_kalshi, normalize_pmus
+from parallax.nfl_runtime_state import NFLRuntimeState
 from parallax.pmus_acquisition import PMUSAcquisition, PMUSAcquisitionUnavailable
 from parallax.pmus_market_data import PMUSMarketDataUnavailable, PMUSStreamBook
 from parallax.sources import (
@@ -805,7 +806,10 @@ def test_nfl_scan_reports_redacted_rejections_and_scores_property_disclaimer_mar
     )
     acquisition = SimpleNamespace(diagnostics=lambda: {})
 
-    result = nfl_live_scan._scan(pmus_acquisition=acquisition)
+    result = nfl_live_scan._scan(
+        pmus_acquisition=acquisition,
+        nfl_runtime_state=NFLRuntimeState(tmp_path / "nfl-runtime", clock=lambda: now),
+    )
 
     assert kalshi.book_calls == [supported["ticker"]]
     assert captured == [(supported["ticker"], Side.YES), (supported["ticker"], Side.NO)]
@@ -1089,6 +1093,9 @@ def _run_pmus_scan(
     stream_factory=None,
     direct_scope=False,
     fast_publisher=None,
+    runtime_state=None,
+    model_probability=None,
+    pmus_constructor_error=None,
 ):
     constructed = []
     now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
@@ -1105,6 +1112,8 @@ def _run_pmus_scan(
 
     class FakePMUS:
         def __init__(self, *args, **kwargs):
+            if pmus_constructor_error is not None:
+                raise pmus_constructor_error
             self.closed = 0
             self.book_calls = []
             self.discovery_calls = []
@@ -1141,12 +1150,13 @@ def _run_pmus_scan(
                 return {}
             return kalshi_book(ticker)
 
-    def normalized_market(raw, venue):
+    def normalized_market(raw, venue, book=None):
         return SimpleNamespace(
             venue_market_id=raw["id"] if venue is Venue.POLYMARKET else raw["ticker"],
             title="CIN at PIT",
             venue=venue,
             status="OPEN",
+            quote_price=book.get("price") if isinstance(book, dict) else None,
         )
 
     retail_examples = [SimpleNamespace(available=False, total_cost=None)] * 4
@@ -1165,9 +1175,13 @@ def _run_pmus_scan(
             market_id=_market.venue_market_id,
             side=side,
             side_description="Cincinnati Bengals" if side == Side.YES else "Pittsburgh Steelers",
-            model_probability=0.5,
-            executable_price=0.5,
-            edge_points=10.0,
+            model_probability=model_probability if model_probability is not None else 0.5,
+            executable_price=getattr(_market, "quote_price", None) or 0.5,
+            edge_points=(
+                (model_probability - _market.quote_price) * 100
+                if model_probability is not None and _market.quote_price is not None
+                else 10.0
+            ),
             fees_estimate=0.0,
             expected_value=1.0,
             expected_return=0.1,
@@ -1227,7 +1241,7 @@ def _run_pmus_scan(
     monkeypatch.setattr(
         nfl_live_scan,
         "normalize_kalshi",
-        lambda raw, *_args, **_kwargs: normalized_market(raw, Venue.KALSHI),
+        lambda raw, book, *_args, **_kwargs: normalized_market(raw, Venue.KALSHI, book),
     )
     monkeypatch.setattr(nfl_live_scan, "attach_fees", lambda value, *_args, **_kwargs: value)
     monkeypatch.setattr(
@@ -1309,12 +1323,19 @@ def _run_pmus_scan(
     )
     if stream_factory is None:
         def stream_factory(_slugs):
-            raise PMUSMarketDataUnavailable("offline test stream unavailable")
+            return _FakePMUSStream(
+                _slugs, missing_slugs=_slugs, wait_ready=False
+            )
 
     return nfl_live_scan._scan(
         pmus_acquisition=acquisition,
         pmus_market_data_factory=stream_factory,
         fast_publisher=fast_publisher,
+        nfl_runtime_state=runtime_state
+        or NFLRuntimeState(
+            tmp_path / "nfl-runtime",
+            clock=lambda: scan_clock[0] if scan_clock is not None else now,
+        ),
     ), constructed
 
 
@@ -1638,7 +1659,7 @@ def test_nfl_partial_stream_keeps_sixteen_books_and_falls_back_only_for_missing(
     assert result["pmus_market_data"]["readiness"] == "PARTIAL"
 
 
-def test_nfl_terminal_startup_stream_failure_uses_governed_fallback(
+def test_nfl_terminal_startup_stream_failure_opens_cooldown_without_rest_fallback(
     monkeypatch, tmp_path
 ):
     row = _pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")
@@ -1656,10 +1677,111 @@ def test_nfl_terminal_startup_stream_failure_uses_governed_fallback(
         ),
     )
 
-    assert clients[0].book_calls == [row["slug"]]
-    assert result["pmus_acquisition"]["book_requests"] == 1
+    assert clients[0].book_calls == []
+    assert result["pmus_acquisition"]["book_requests"] == 0
     assert result["pmus_market_data"]["state"] == "UNAVAILABLE"
     assert result["pmus_market_data"]["startup_readiness"] == "FAILED"
+    assert result["pmus_cooldown"]["state"] == "COOLDOWN"
+    assert result["pmus_cooldown"]["stream_startup_attempted"] is True
+
+
+def test_pmus_stream_factory_unavailable_blocks_rest_and_preserves_kalshi(
+    monkeypatch, tmp_path
+):
+    runtime_dir = tmp_path / "nfl-runtime"
+    runtime = NFLRuntimeState(runtime_dir, clock=lambda: datetime(2026, 9, 27, 12, tzinfo=UTC))
+    dispatched = []
+
+    def unavailable_factory(_slugs):
+        raise PMUSMarketDataUnavailable("authenticated stream construction failed")
+
+    result, clients = _run_pmus_scan(
+        monkeypatch, tmp_path,
+        rows=[_pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")],
+        book=lambda _slug: pytest.fail("PMUS REST book fallback is forbidden"),
+        stream_factory=unavailable_factory,
+        kalshi_rows=[_kalshi_nfl_row()],
+        kalshi_book=lambda _ticker: {"orderbook": {}},
+        action_by_market_side=lambda market, side: (
+            Action.BUY if market.venue is Venue.KALSHI and side is Side.YES else Action.PASS
+        ),
+        dispatched=dispatched,
+        runtime_state=runtime,
+    )
+
+    assert clients[0].book_calls == []
+    assert result["pmus_acquisition"]["book_requests"] == 0
+    assert result["pmus_market_data"]["state"] == "UNAVAILABLE"
+    assert result["pmus_cooldown"]["state"] == "COOLDOWN"
+    assert result["pmus_cooldown"]["stream_startup_attempted"] is False
+    assert NFLRuntimeState(runtime_dir, clock=runtime.clock).pmus_status()["attempt_allowed"] is False
+    assert result["venues"]["KALSHI"]["coverage"]["book_request_count"] == 1
+    assert len(dispatched) == 1
+
+
+def test_pmus_constructor_failure_degrades_without_stopping_kalshi(monkeypatch, tmp_path):
+    dispatched = []
+    result, clients = _run_pmus_scan(
+        monkeypatch, tmp_path,
+        rows=[_pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")],
+        book=lambda _slug: pytest.fail("PMUS REST must not run"),
+        pmus_constructor_error=RuntimeError("PMUS client unavailable"),
+        kalshi_rows=[_kalshi_nfl_row()],
+        kalshi_book=lambda _ticker: {"orderbook": {}},
+        action_by_market_side=lambda market, side: (
+            Action.BUY if market.venue is Venue.KALSHI and side is Side.YES else Action.PASS
+        ),
+        dispatched=dispatched,
+    )
+
+    assert clients == []
+    assert result["venues"]["PMUS"]["coverage"]["state"] == "PARTIAL"
+    assert result["pmus_cooldown"]["state"] == "COOLDOWN"
+    assert result["venues"]["KALSHI"]["coverage"]["book_request_count"] == 1
+    assert len(dispatched) == 1
+
+
+def test_pmus_cooldown_write_failure_is_observable_and_kalshi_operates(monkeypatch, tmp_path):
+    runtime = NFLRuntimeState(tmp_path / "nfl-runtime", clock=lambda: datetime(2026, 9, 27, 12, tzinfo=UTC))
+    monkeypatch.setattr(runtime, "record_pmus_failure", lambda **_kwargs: (_ for _ in ()).throw(OSError("disk unavailable")))
+    dispatched = []
+    result, clients = _run_pmus_scan(
+        monkeypatch, tmp_path,
+        rows=[_pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")],
+        book=lambda _slug: pytest.fail("PMUS REST fallback is forbidden"),
+        stream_factory=lambda _slugs: (_ for _ in ()).throw(PMUSMarketDataUnavailable("stream unavailable")),
+        kalshi_rows=[_kalshi_nfl_row()],
+        kalshi_book=lambda _ticker: {"orderbook": {}},
+        action_by_market_side=lambda market, side: (
+            Action.BUY if market.venue is Venue.KALSHI and side is Side.YES else Action.PASS
+        ),
+        dispatched=dispatched,
+        runtime_state=runtime,
+    )
+
+    assert clients[0].book_calls == []
+    assert result["pmus_acquisition"]["book_requests"] == 0
+    assert result["pmus_market_data"]["state"] == "UNAVAILABLE"
+    assert result["pmus_cooldown"]["state"] == "STATE_UNAVAILABLE"
+    assert result["pmus_cooldown"]["persistence_error"] == "OSError"
+    assert result["venues"]["KALSHI"]["coverage"]["book_request_count"] == 1
+    assert len(dispatched) == 1
+
+
+def test_pmus_cooldown_read_failure_skips_pmus_and_preserves_kalshi(monkeypatch, tmp_path):
+    runtime = NFLRuntimeState(tmp_path / "nfl-runtime", clock=lambda: datetime(2026, 9, 27, 12, tzinfo=UTC))
+    monkeypatch.setattr(runtime, "pmus_status", lambda: (_ for _ in ()).throw(OSError("read unavailable")))
+    result, clients = _run_pmus_scan(
+        monkeypatch, tmp_path,
+        rows=[], book=lambda _slug: pytest.fail("PMUS REST must not run"),
+        kalshi_rows=[_kalshi_nfl_row()],
+        kalshi_book=lambda _ticker: {"orderbook": {}},
+        action=Action.WATCH, runtime_state=runtime,
+    )
+    assert clients == []
+    assert result["pmus_cooldown"]["state"] == "STATE_UNAVAILABLE"
+    assert result["pmus_cooldown"]["persistence_error"] == "OSError"
+    assert result["venues"]["KALSHI"]["coverage"]["book_request_count"] == 1
 
 
 def test_nfl_unexpected_stream_startup_exception_fails_closed_without_rest(
@@ -2454,6 +2576,300 @@ def test_pmus_rate_limit_does_not_block_valid_kalshi_buy(monkeypatch, tmp_path):
         if row.get("verdict") == "BUY"
     )["publication_eligible"] is True
     assert published[0]["slate"]["dates"][0]["games"][0]["status"] == "BUY"
+
+
+def test_pmus_cooldown_skips_repeated_process_attempts_while_kalshi_buys(
+    monkeypatch, tmp_path
+):
+    clock = [datetime(2026, 9, 27, 12, 0, tzinfo=UTC)]
+    runtime = NFLRuntimeState(tmp_path / "nfl-runtime", clock=lambda: clock[0])
+    runtime.record_pmus_failure(
+        classification="HTTP401", reason="authenticated stream rejected"
+    )
+    dispatched = []
+
+    first, first_clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[_pmus_nfl_row("must-not-run", "nfl-cin-pit-2026-09-27")],
+        book=lambda _slug: (_ for _ in ()).throw(
+            AssertionError("PMUS REST must not run during cooldown")
+        ),
+        kalshi_rows=[_kalshi_nfl_row()],
+        kalshi_book=lambda _ticker: {"orderbook": {}},
+        action_by_market_side=lambda market, side: (
+            Action.BUY
+            if market.venue is Venue.KALSHI and side is Side.YES
+            else Action.PASS
+        ),
+        dispatched=dispatched,
+        runtime_state=runtime,
+    )
+    second, second_clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[],
+        book=lambda _slug: {},
+        kalshi_rows=[_kalshi_nfl_row()],
+        kalshi_book=lambda _ticker: {"orderbook": {}},
+        action_by_market_side=lambda market, side: (
+            Action.BUY
+            if market.venue is Venue.KALSHI and side is Side.YES
+            else Action.PASS
+        ),
+        dispatched=dispatched,
+        runtime_state=runtime,
+    )
+
+    assert first_clients == second_clients == []
+    assert first["alerts"] == second["alerts"] == 1
+    assert first["pmus_cooldown"]["skipped_due_to_cooldown"] is True
+    assert first["venues"]["KALSHI"]["operating_during_pmus_cooldown"] is True
+    assert first["venues"]["KALSHI"]["coverage"]["hot_coverage_state"] == "COMPLETE"
+    assert second["venues"]["KALSHI"]["coverage"]["hot_selected_count"] == 1
+
+    clock[0] += timedelta(minutes=15)
+    recovered, recovered_clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[],
+        book=lambda _slug: {},
+        runtime_state=runtime,
+    )
+    assert len(recovered_clients) == 1
+    assert recovered["pmus_cooldown"]["provider_attempted"] is True
+
+
+@pytest.mark.parametrize("prior_action", [Action.WATCH, Action.PASS])
+def test_known_kalshi_nonbuy_reprices_to_buy_on_fast_refresh(
+    monkeypatch, tmp_path, prior_action
+):
+    clock = [datetime(2026, 9, 27, 12, 0, tzinfo=UTC)]
+    runtime = NFLRuntimeState(tmp_path / "nfl-runtime", clock=lambda: clock[0])
+    runtime.record_pmus_failure(
+        classification="HTTP401", reason="authenticated stream rejected"
+    )
+    price = [0.61]
+    book_calls = []
+    dispatched = []
+
+    def book(ticker):
+        book_calls.append(ticker)
+        return {"price": price[0], "orderbook": {}}
+
+    def scan():
+        result, _clients = _run_pmus_scan(
+            monkeypatch,
+            tmp_path,
+            rows=[],
+            book=lambda _slug: {},
+            kalshi_rows=[_kalshi_nfl_row()],
+            kalshi_book=book,
+            action_by_market_side=lambda market, side: (
+                (Action.BUY if 0.65 - market.quote_price >= 0.10 else prior_action)
+                if side is Side.YES else Action.PASS
+            ),
+            model_probability=0.65,
+            dispatched=dispatched,
+            runtime_state=runtime,
+            scan_clock=clock,
+        )
+        return result
+
+    first = scan()
+    assert first["scan_mode"] == "FULL_DISCOVERY"
+    assert first["alerts"] == 0
+    assert runtime.kalshi_snapshot()["refresh_tickers"] == ["kalshi-cin"]
+    assert runtime.kalshi_snapshot()["buy_tickers"] == []
+
+    clock[0] += timedelta(seconds=45)
+    price[0] = 0.52
+    second = scan()
+    assert second["scan_mode"] == "KALSHI_REFRESH"
+    assert second["venues"]["KALSHI"]["coverage"]["request_count"] == 0
+    assert second["venues"]["KALSHI"]["coverage"]["book_request_count"] == 1
+    assert second["venues"]["KALSHI"]["coverage"]["continuous_coverage"] is True
+    assert second["venues"]["KALSHI"]["coverage"]["hot_coverage_state"] == "COMPLETE"
+    assert second["venues"]["KALSHI"]["coverage"]["warm_known_count"] == 0
+    assert second["pmus_cooldown"]["skipped_due_to_cooldown"] is True
+    assert second["alerts"] == 1
+    assert next(row for row in second["summary"]["rows"] if row.get("verdict") == "BUY")["executable_price"] == 0.52
+    assert book_calls == ["kalshi-cin", "kalshi-cin"]
+    assert runtime.kalshi_snapshot()["buy_tickers"] == ["kalshi-cin"]
+
+
+@pytest.mark.parametrize("new_action", [Action.WATCH, Action.PASS])
+def test_prior_kalshi_buy_reprices_to_nonbuy_on_fast_refresh(
+    monkeypatch, tmp_path, new_action
+):
+    clock = [datetime(2026, 9, 27, 12, 0, tzinfo=UTC)]
+    runtime = NFLRuntimeState(tmp_path / "nfl-runtime", clock=lambda: clock[0])
+    price = [0.52]
+
+    def scan():
+        result, _clients = _run_pmus_scan(
+            monkeypatch,
+            tmp_path,
+            rows=[],
+            book=lambda _slug: {},
+            kalshi_rows=[_kalshi_nfl_row()],
+            kalshi_book=lambda _ticker: {"price": price[0], "orderbook": {}},
+            action_by_market_side=lambda market, side: (
+                (Action.BUY if 0.65 - market.quote_price >= 0.10 else new_action)
+                if side is Side.YES else Action.PASS
+            ),
+            model_probability=0.65,
+            runtime_state=runtime,
+            scan_clock=clock,
+        )
+        return result
+
+    assert scan()["alerts"] == 0  # Dispatch is stubbed, qualification is still BUY.
+    assert runtime.kalshi_snapshot()["buy_tickers"] == ["kalshi-cin"]
+    clock[0] += timedelta(seconds=45)
+    price[0] = 0.61
+    refreshed = scan()
+    assert refreshed["scan_mode"] == "KALSHI_REFRESH"
+    assert any(row.get("verdict") == new_action.value for row in refreshed["summary"]["rows"])
+    assert runtime.kalshi_snapshot()["buy_tickers"] == []
+
+
+def test_fast_refresh_overflow_is_reported_as_partial_and_rotates(
+    monkeypatch, tmp_path
+):
+    clock = [datetime(2026, 9, 27, 12, 0, tzinfo=UTC)]
+    runtime = NFLRuntimeState(tmp_path / "nfl-runtime", clock=lambda: clock[0])
+    rows = [_kalshi_nfl_row(f"kalshi-{index:02d}") for index in range(13)]
+    book_calls = []
+
+    def scan():
+        result, _clients = _run_pmus_scan(
+            monkeypatch,
+            tmp_path,
+            rows=[],
+            book=lambda _slug: {},
+            kalshi_rows=rows,
+            kalshi_book=lambda ticker: book_calls.append(ticker) or {"orderbook": {}},
+            action=Action.WATCH,
+            runtime_state=runtime,
+            scan_clock=clock,
+        )
+        return result
+
+    first = scan()
+    assert first["scan_mode"] == "FULL_DISCOVERY"
+    assert len(runtime.kalshi_snapshot()["refresh_tickers"]) == 13
+    book_calls.clear()
+
+    clock[0] += timedelta(seconds=45)
+    second = scan()
+    coverage = second["venues"]["KALSHI"]["coverage"]
+    assert second["scan_mode"] == "KALSHI_REFRESH"
+    assert len(book_calls) == 12
+    assert coverage["known_market_count"] == 13
+    assert coverage["selected_market_count"] == 12
+    assert coverage["unrefreshed_market_count"] == 1
+    assert coverage["continuous_coverage"] is False
+    assert coverage["hot_known_count"] == 13
+    assert coverage["hot_selected_count"] == 12
+    assert coverage["hot_omitted_count"] == 1
+    assert coverage["hot_coverage_state"] == "PARTIAL"
+    assert coverage["state"] == "PARTIAL"
+    assert second["refresh_complete"] is False
+    omitted = coverage["unrefreshed_tickers"][0]
+
+    book_calls.clear()
+    clock[0] += timedelta(seconds=45)
+    third = scan()
+    assert omitted in book_calls
+    assert third["venues"]["KALSHI"]["coverage"]["unrefreshed_market_count"] == 1
+
+
+def test_partial_hourly_discovery_does_not_repeat_every_fast_cycle(
+    monkeypatch, tmp_path
+):
+    clock = [datetime(2026, 9, 27, 12, 0, tzinfo=UTC)]
+    runtime = NFLRuntimeState(tmp_path / "nfl-runtime", clock=lambda: clock[0])
+
+    def scan():
+        result, _clients = _run_pmus_scan(
+            monkeypatch,
+            tmp_path,
+            rows=[],
+            book=lambda _slug: {},
+            kalshi_rows=[_kalshi_nfl_row()],
+            kalshi_book=lambda _ticker: {"orderbook": {}},
+            kalshi_coverage_state="PARTIAL",
+            action=Action.WATCH,
+            runtime_state=runtime,
+            scan_clock=clock,
+        )
+        return result
+
+    assert scan()["scan_mode"] == "FULL_DISCOVERY"
+    clock[0] += timedelta(seconds=45)
+    refreshed = scan()
+    assert refreshed["scan_mode"] == "KALSHI_REFRESH"
+    assert refreshed["venues"]["KALSHI"]["coverage"]["discovery_complete"] is False
+    assert refreshed["venues"]["KALSHI"]["coverage"]["state"] == "PARTIAL"
+    assert refreshed["refresh_complete"] is False
+
+
+def test_both_venues_unavailable_during_pmus_cooldown_is_nonactionable(
+    monkeypatch, tmp_path
+):
+    now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
+    runtime = NFLRuntimeState(tmp_path / "nfl-runtime", clock=lambda: now)
+    runtime.record_pmus_failure(
+        classification="HTTP401", reason="authenticated stream rejected"
+    )
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[],
+        book=lambda _slug: {},
+        kalshi_rows=[_kalshi_nfl_row()],
+        kalshi_book=lambda _ticker: (_ for _ in ()).throw(
+            RuntimeError("Kalshi unavailable")
+        ),
+        action=Action.BUY,
+        runtime_state=runtime,
+    )
+
+    assert clients == []
+    assert result["alerts"] == 0
+    assert result["refresh_complete"] is False
+    assert result["venues"]["KALSHI"]["coverage"]["hot_coverage_state"] == "PARTIAL"
+    assert result["venues"]["KALSHI"]["coverage"]["book_failure_count"] == 1
+    assert result["slate"]["market_data_complete"] is False
+    assert result["summary"]["status_counts"]["BOOK_OR_SCORING_ERROR"] == 1
+
+
+def test_hot_coverage_turns_partial_when_book_crosses_sixty_second_boundary(
+    monkeypatch, tmp_path
+):
+    clock = [datetime(2026, 9, 27, 12, 0, tzinfo=UTC)]
+    runtime = NFLRuntimeState(tmp_path / "nfl-runtime", clock=lambda: clock[0])
+
+    def delayed_scoring(_market, side):
+        if side is Side.YES:
+            clock[0] += timedelta(seconds=61)
+        return Action.PASS
+
+    result, _ = _run_pmus_scan(
+        monkeypatch, tmp_path, rows=[], book=lambda _slug: {},
+        kalshi_rows=[_kalshi_nfl_row()], kalshi_book=lambda _ticker: {"orderbook": {}},
+        action_by_market_side=delayed_scoring, runtime_state=runtime,
+        scan_clock=clock,
+    )
+    coverage = result["venues"]["KALSHI"]["coverage"]
+    assert coverage["book_request_count"] == 1
+    assert coverage["hot_selected_count"] == 1
+    assert coverage["oldest_hot_refresh_age_seconds"] == 61
+    assert coverage["hot_coverage_state"] == "PARTIAL"
+    assert coverage["continuous_coverage"] is False
+    assert result["refresh_complete"] is False
 
 
 def test_pmus_acquisition_avoided_does_not_block_valid_kalshi_buy(

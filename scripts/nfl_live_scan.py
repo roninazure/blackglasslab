@@ -46,6 +46,7 @@ from parallax.nfl import (
     probability_for_game,
 )
 from parallax.normalization import normalize_kalshi, normalize_pmus
+from parallax.nfl_runtime_state import KALSHI_REFRESH_MAX_MARKETS, NFLRuntimeState, kalshi_kickoff_tier
 from parallax.pmus_acquisition import PMUSAcquisition
 from parallax.pmus_market_data import (
     PMUSMarketDataStream,
@@ -592,11 +593,28 @@ def _scan(
     pmus_acquisition: PMUSAcquisition | None = None,
     pmus_market_data_factory: Callable[[list[str]], PMUSMarketDataStream] | None = None,
     fast_publisher=None,
+    nfl_runtime_state: NFLRuntimeState | None = None,
 ) -> dict:
     games = fetch_games()
     discovery_at = utcnow()
     scheduled_for_discovery = _upcoming_slate(games, discovery_at)
-    result = {"read_only": True, "orders": 0, "alerts": 0, "published": 0, "prospective_captured": 0, "validation_ece": VALIDATION_ECE, "venues": {}}
+    state_root = Path(
+        os.environ.get("PARALLAX_PUBLIC_FEED_STATE_DIR", "data/parallax-commercial")
+    )
+    runtime_state = nfl_runtime_state or NFLRuntimeState(state_root, clock=utcnow)
+    kalshi_snapshot = runtime_state.kalshi_snapshot()
+    full_kalshi_discovery = bool(kalshi_snapshot["discovery_due"])
+    result = {
+        "read_only": True,
+        "orders": 0,
+        "alerts": 0,
+        "published": 0,
+        "prospective_captured": 0,
+        "validation_ece": VALIDATION_ECE,
+        "scan_mode": "FULL_DISCOVERY" if full_kalshi_discovery else "KALSHI_REFRESH",
+        "refreshed_at": discovery_at.isoformat(),
+        "venues": {},
+    }
     prospective_store = TrackRecord(PROSPECTIVE_DB)
     alert_dispatcher = AlertDispatcher(
         AlertDeliveryStore(default_inbox_store().path)
@@ -605,45 +623,107 @@ def _scan(
     pmus_discovery_complete = False
     kalshi_discovery_complete = False
     acquisition = pmus_acquisition or PMUSAcquisition("NFL")
-    pmus = PolymarketUSPublicClient()
+    pmus = None
+    def pmus_state_error(exc: OSError) -> dict:
+        return {
+            "state": "STATE_UNAVAILABLE",
+            "attempt_allowed": False,
+            "persistence_error": type(exc).__name__,
+            "reason": "PMUS cooldown state unavailable",
+        }
+
+    def record_pmus_failure(exc: Exception, reason: str) -> dict:
+        try:
+            return runtime_state.record_pmus_failure(
+                classification=type(exc).__name__, reason=reason
+            )
+        except OSError as state_exc:
+            return pmus_state_error(state_exc)
+
+    try:
+        pmus_cooldown = runtime_state.pmus_status()
+    except OSError as exc:
+        pmus_cooldown = pmus_state_error(exc)
+    pmus_attempted = False
     pmus_stream: PMUSMarketDataStream | None = None
+    pmus_stream_started = False
     pmus_stream_failure: Exception | None = None
+    pmus_stop_error: str | None = None
     pmus_stream_diagnostics: dict = {
         "state": "NOT_STARTED",
         "rest_polling": False,
     }
     try:
-        try:
-            pmus_rows, pmus_cov = _scope_pmus(
-                pmus, scheduled_for_discovery, acquisition
-            )
+        if pmus_cooldown["attempt_allowed"]:
+            pmus_attempted = True
+            try:
+                pmus = PolymarketUSPublicClient()
+                pmus_rows, pmus_cov = _scope_pmus(
+                    pmus, scheduled_for_discovery, acquisition
+                )
+                result["venues"]["PMUS"] = {
+                    "coverage": pmus_cov,
+                    "universe_rows": len(pmus_rows),
+                    "nfl_rows": len(pmus_rows),
+                }
+                pmus_discovery_complete = pmus_cov.get("state") == "COMPLETE"
+            except Exception as exc:
+                if pmus is None:
+                    reason = " ".join(redact_sensitive(exc).split())[:240]
+                    pmus_cooldown = record_pmus_failure(exc, reason)
+                result["venues"]["PMUS"] = {
+                    "coverage": {"state": "PARTIAL", "reason": "market discovery unavailable"},
+                    "universe_rows": 0, "nfl_rows": 0,
+                    "failure": {
+                        "timestamp": utcnow().isoformat(), "venue": "PMUS",
+                        "context": "NFL prospective market discovery",
+                        "classification": type(exc).__name__,
+                        "underlying_error": redact_sensitive(getattr(exc, "underlying_error", exc)),
+                        "attempt_count": getattr(exc, "attempts", 1),
+                        "status": "DATA_UNAVAILABLE / NO_VALID_OBSERVATION",
+                    },
+                }
+        else:
             result["venues"]["PMUS"] = {
-                "coverage": pmus_cov,
-                "universe_rows": len(pmus_rows),
-                "nfl_rows": len(pmus_rows),
-            }
-            pmus_discovery_complete = pmus_cov.get("state") == "COMPLETE"
-        except Exception as exc:
-            result["venues"]["PMUS"] = {
-                "coverage": {"state": "PARTIAL", "reason": "market discovery unavailable"},
-                "universe_rows": 0, "nfl_rows": 0,
-                "failure": {
-                    "timestamp": utcnow().isoformat(), "venue": "PMUS",
-                    "context": "NFL prospective market discovery",
-                    "classification": type(exc).__name__,
-                    "underlying_error": redact_sensitive(getattr(exc, "underlying_error", exc)),
-                    "attempt_count": getattr(exc, "attempts", 1),
-                    "status": "DATA_UNAVAILABLE / NO_VALID_OBSERVATION",
+                "coverage": {
+                    "state": "PARTIAL",
+                    "reason": (
+                        "PMUS cooldown state unavailable"
+                        if pmus_cooldown["state"] == "STATE_UNAVAILABLE"
+                        else "PMUS startup cooldown active"
+                    ),
                 },
+                "universe_rows": 0,
+                "nfl_rows": 0,
             }
         kalshi = KalshiPublicClient()
-        try:
-            kalshi_rows, kalshi_cov = _scope_kalshi(kalshi, scheduled_for_discovery)
-            result["venues"]["KALSHI"] = {"coverage": kalshi_cov, "nfl_rows": len(kalshi_rows)}
-            kalshi_discovery_complete = kalshi_cov.get("state") == "COMPLETE"
-        except Exception as exc:
-            kalshi_rows, kalshi_cov = [], {"state": "PARTIAL", "failed_scopes": [{"stage": "series", "error": type(exc).__name__}]}
-            result["venues"]["KALSHI"] = {"coverage": kalshi_cov, "nfl_rows": 0}
+        refresh_selection = None
+        if full_kalshi_discovery:
+            try:
+                kalshi_rows, kalshi_cov = _scope_kalshi(kalshi, scheduled_for_discovery)
+                kalshi_discovery_complete = kalshi_cov.get("state") == "COMPLETE"
+            except Exception as exc:
+                kalshi_rows, kalshi_cov = [], {"state": "PARTIAL", "failed_scopes": [{"stage": "series", "error": type(exc).__name__}]}
+        else:
+            kalshi_rows, refresh_selection = runtime_state.kalshi_refresh_rows(
+                kalshi_snapshot
+            )
+            kalshi_cov = {
+                "state": "PARTIAL" if not refresh_selection["continuous_coverage"] else "TARGETED",
+                "reason": "known supported scheduled NFL winners selected for fresh books",
+                "discovered_at": kalshi_snapshot["discovered_at"],
+                "markets_returned": len(kalshi_rows),
+                "request_count": 0,
+                **{
+                    key: value for key, value in refresh_selection.items()
+                    if not key.startswith("next_")
+                },
+            }
+        result["venues"]["KALSHI"] = {
+            "coverage": kalshi_cov,
+            "nfl_rows": len(kalshi_rows),
+            "operating_during_pmus_cooldown": not pmus_cooldown["attempt_allowed"],
+        }
         stream_slugs = _mapped_pmus_slugs(
             pmus_rows, games, observed_at=discovery_at.isoformat()
         )
@@ -651,6 +731,7 @@ def _scan(
             try:
                 factory = pmus_market_data_factory or _pmus_stream_from_env
                 pmus_stream = factory(stream_slugs)
+                pmus_stream_started = True
                 pmus_stream.start()
                 full_ready = pmus_stream.wait_ready(
                     PMUS_NFL_STREAM_STARTUP_SECONDS
@@ -671,32 +752,52 @@ def _scan(
                     if full_ready
                     else pmus_stream_diagnostics.get("readiness", "NONE")
                 )
+                try:
+                    runtime_state.record_pmus_success()
+                    pmus_cooldown = runtime_state.pmus_status()
+                except OSError as state_exc:
+                    pmus_cooldown = pmus_state_error(state_exc)
             except PMUSMarketDataUnavailable as exc:
                 if pmus_stream is not None:
-                    pmus_stream.stop()
+                    try:
+                        pmus_stream.stop()
+                    except Exception as stop_exc:
+                        pmus_stop_error = type(stop_exc).__name__
                 pmus_stream = None
+                reason = " ".join(redact_sensitive(exc).split())[:240]
+                pmus_stream_failure = exc
+                pmus_cooldown = record_pmus_failure(exc, reason)
                 pmus_stream_diagnostics = {
                     "state": "UNAVAILABLE",
-                    "error": " ".join(redact_sensitive(exc).split())[:240],
+                    "error": reason,
                     "markets_requested": len(stream_slugs),
                     "startup_readiness": "FAILED",
                     "rest_polling": False,
                 }
             except Exception as exc:
                 if pmus_stream is not None:
-                    pmus_stream.stop()
+                    try:
+                        pmus_stream.stop()
+                    except Exception as stop_exc:
+                        pmus_stop_error = type(stop_exc).__name__
                 pmus_stream = None
+                reason = " ".join(redact_sensitive(exc).split())[:240]
                 pmus_stream_failure = exc
+                pmus_cooldown = record_pmus_failure(exc, reason)
                 pmus_stream_diagnostics = {
                     "state": "FAILED",
-                    "error": " ".join(redact_sensitive(exc).split())[:240],
+                    "error": reason,
                     "markets_requested": len(stream_slugs),
                     "startup_readiness": "FAILED",
                     "rest_polling": False,
                 }
         else:
             pmus_stream_diagnostics = {
-                "state": "NOT_REQUIRED",
+                "state": (
+                    pmus_cooldown["state"]
+                    if not pmus_cooldown["attempt_allowed"]
+                    else "NOT_REQUIRED"
+                ),
                 "markets_requested": 0,
                 "rest_polling": False,
             }
@@ -705,6 +806,13 @@ def _scan(
         rows_out = []
         scored_plays = []
         buy_candidates = []
+        actionable_kalshi_tickers: set[str] = set()
+        known_kalshi_tickers: set[str] = set()
+        known_kalshi_rows: dict[str, dict] = {}
+        observed_kalshi_tickers: set[str] = set()
+        kalshi_book_requests = 0
+        kalshi_book_failures = 0
+        kalshi_observed_at_by_ticker: dict[str, str] = {}
         scored_rows_by_play_id = {}
         economic_keys_by_play_id = {}
         data_unavailable_game_ids: set[str] = set()
@@ -742,6 +850,14 @@ def _scan(
                     if mapping.status not in {"MAPPED_GAME_WINNER", "PAST_START"}:
                         mapping_failure_game_ids.add(mapping.game.game_id)
                 if mapping.status == "MAPPED_GAME_WINNER" and mapping.game:
+                    if venue == "KALSHI":
+                        # A cached test/legacy discovery row may lack an event
+                        # kickoff; the authoritative mapped schedule supplies it.
+                        if not (event or {}).get("scheduled_start"):
+                            event = {**(event or {}), "scheduled_start": mapping.game.kickoff}
+                            raw = {**raw, "_discovery_event": event}
+                        known_kalshi_tickers.add(str(raw["ticker"]))
+                        known_kalshi_rows[str(raw["ticker"])] = raw
                     row["model_probability"] = probability_for_game(mapping.game, games)
                     try:
                         if venue == "PMUS":
@@ -754,9 +870,9 @@ def _scan(
                                 )
                                 rows_out.append(row)
                                 continue
-                            streamed = None
                             if pmus_stream_failure is not None:
                                 raise pmus_stream_failure
+                            streamed = None
                             if pmus_stream is not None:
                                 try:
                                     streamed = pmus_stream.book(raw["slug"])
@@ -794,8 +910,10 @@ def _scan(
                         else:
                             # Kalshi discovery rows are normalized with their public book
                             # below when the venue exposes one; failures stay explicit.
+                            kalshi_book_requests += 1
                             book = kalshi.book(raw["ticker"])
-                            market = attach_fees(normalize_kalshi(raw, book, utcnow().isoformat(), event=event), utcnow(), event=event, series=raw.get("_discovery_series"))
+                            book_observed_at = utcnow()
+                            market = attach_fees(normalize_kalshi(raw, book, book_observed_at.isoformat(), event=event), utcnow(), event=event, series=raw.get("_discovery_series"))
                             evidence = NFLEvidenceProvider(lambda: games).assess(market)
                         if evidence is None:
                             statuses["EVIDENCE_MISSING"] += 1
@@ -840,7 +958,12 @@ def _scan(
                                     scored[key] = (play.model_probability * example.estimated_payout_if_correct - example.total_cost) if play.model_probability is not None and example.available and example.total_cost is not None else None
                                 rows_out.append(scored)
                                 scored_rows_by_play_id[play.id] = scored
+                            if venue == "KALSHI":
+                                observed_kalshi_tickers.add(str(raw["ticker"]))
+                                kalshi_observed_at_by_ticker[str(raw["ticker"])] = book_observed_at.isoformat()
                     except Exception as exc:
+                        if venue == "KALSHI":
+                            kalshi_book_failures += 1
                         statuses["BOOK_OR_SCORING_ERROR"] += 1
                         data_unavailable_game_ids.add(mapping.game.game_id)
                         publication_blocked_game_venues.add(
@@ -868,6 +991,11 @@ def _scan(
                     blocked_game_ids=game_blocked_ids,
                     blocked_game_venues=publication_blocked_game_venues,
                     now=finalized_at,
+                )
+                actionable_kalshi_tickers.update(
+                    str(candidate[0].market_id)
+                    for candidate in publication_candidates
+                    if _publication_venue(candidate[0].venue) == "KALSHI"
                 )
                 for play, _market, _mapping, _detected_at, _key, _team in publication_candidates:
                     scored_rows_by_play_id[play.id]["publication_eligible"] = True
@@ -926,12 +1054,139 @@ def _scan(
             startup_readiness = pmus_stream_diagnostics.get(
                 "startup_readiness", "UNKNOWN"
             )
-            pmus_stream_diagnostics = pmus_stream.diagnostics()
-            pmus_stream_diagnostics["startup_readiness"] = startup_readiness
-            pmus_stream_diagnostics["shutdown_clean"] = pmus_stream.stop()
-        pmus.close()
-    result["pmus_acquisition"] = acquisition.diagnostics()
+            try:
+                pmus_stream_diagnostics = pmus_stream.diagnostics()
+                pmus_stream_diagnostics["startup_readiness"] = startup_readiness
+                pmus_stream_diagnostics["shutdown_clean"] = pmus_stream.stop()
+            except Exception as exc:
+                pmus_stream_diagnostics = {
+                    "state": "FAILED",
+                    "startup_readiness": startup_readiness,
+                    "shutdown_error": type(exc).__name__,
+                    "rest_polling": False,
+                }
+        if pmus_stop_error is not None:
+            pmus_stream_diagnostics["shutdown_error"] = pmus_stop_error
+        if pmus is not None:
+            try:
+                pmus.close()
+            except Exception as exc:
+                result["venues"]["PMUS"]["close_error"] = type(exc).__name__
+    try:
+        result["pmus_acquisition"] = acquisition.diagnostics()
+    except Exception as exc:
+        result["pmus_acquisition"] = {"state": "UNAVAILABLE", "error": type(exc).__name__}
     result["pmus_market_data"] = pmus_stream_diagnostics
+    result["pmus_cooldown"] = {
+        **pmus_cooldown,
+        "provider_attempted": pmus_attempted,
+        "stream_startup_attempted": pmus_stream_started,
+        "skipped_due_to_cooldown": not pmus_attempted,
+    }
+    kalshi_cov["book_request_count"] = kalshi_book_requests
+    kalshi_cov["book_failure_count"] = kalshi_book_failures
+    publication_at = utcnow()
+    if full_kalshi_discovery:
+        kalshi_cov["fast_refresh_capacity"] = KALSHI_REFRESH_MAX_MARKETS
+        kalshi_cov["fast_refresh_overflow_count"] = max(
+            0, len(known_kalshi_tickers) - KALSHI_REFRESH_MAX_MARKETS
+        )
+    # Coverage is judged at publication time, after book failures and quote
+    # expiry.  Cached timestamps are diagnostic only; they never supply books.
+    coverage_at = publication_at
+    if full_kalshi_discovery:
+        coverage_known_rows = (
+            {row["ticker"]: row for row in kalshi_snapshot["markets"]}
+            if not kalshi_discovery_complete else {}
+        )
+        coverage_known_rows.update(known_kalshi_rows)
+        known_rows = list(coverage_known_rows.values())
+    else:
+        known_rows = kalshi_snapshot["markets"]
+    selected_rows = list(known_kalshi_rows.values()) if full_kalshi_discovery else kalshi_rows
+    known_by_tier = {
+        tier: {
+            str(row["ticker"]) for row in known_rows
+            if kalshi_kickoff_tier(row, coverage_at) == tier
+        }
+        for tier in ("HOT", "WARM", "UNKNOWN")
+    }
+    selected_by_tier = {
+        tier: {
+            str(row["ticker"]) for row in selected_rows
+            if kalshi_kickoff_tier(row, coverage_at) == tier
+        }
+        for tier in ("HOT", "WARM")
+    }
+    observed_times = {
+        **kalshi_snapshot.get("last_observed_at_by_ticker", {}),
+        **kalshi_observed_at_by_ticker,
+    }
+    hot_ages = []
+    known_ages = []
+    hot_unknown_ages = 0
+    known_unknown_ages = 0
+    fresh_tickers = set()
+    for ticker in known_by_tier["HOT"] | known_by_tier["WARM"]:
+        value = observed_times.get(ticker)
+        try:
+            observed_at = datetime.fromisoformat(value) if value else None
+            age = (coverage_at - observed_at).total_seconds() if observed_at else None
+        except (TypeError, ValueError):
+            age = None
+        if age is not None and 0 <= age <= MAX_AGE_SECONDS and ticker in observed_kalshi_tickers:
+            fresh_tickers.add(ticker)
+        if age is None or age < 0:
+            known_unknown_ages += 1
+        else:
+            known_ages.append(age)
+        if ticker in known_by_tier["HOT"]:
+            if age is None or age < 0:
+                hot_unknown_ages += 1
+            else:
+                hot_ages.append(age)
+    hot_omitted = known_by_tier["HOT"] - selected_by_tier["HOT"]
+    warm_omitted = known_by_tier["WARM"] - selected_by_tier["WARM"]
+    hot_complete = (
+        kalshi_discovery_complete if full_kalshi_discovery else kalshi_snapshot["discovery_complete"]
+    ) and not known_by_tier["UNKNOWN"] and not hot_omitted and known_by_tier["HOT"] <= fresh_tickers
+    warm_refreshed = not warm_omitted and known_by_tier["WARM"] <= fresh_tickers
+    kalshi_cov.update({
+        "refresh_mode": result["scan_mode"],
+        "refreshed_at": coverage_at.isoformat(),
+        "known_market_count": len(known_by_tier["HOT"] | known_by_tier["WARM"]),
+        "selected_market_count": len(selected_by_tier["HOT"] | selected_by_tier["WARM"]),
+        "unrefreshed_market_count": len(hot_omitted | warm_omitted),
+        "hot_known_count": len(known_by_tier["HOT"]),
+        "hot_selected_count": len(selected_by_tier["HOT"]),
+        "hot_omitted_count": len(hot_omitted),
+        "warm_known_count": len(known_by_tier["WARM"]),
+        "warm_selected_count": len(selected_by_tier["WARM"]),
+        "warm_omitted_count": len(warm_omitted),
+        "hot_coverage_state": "COMPLETE" if hot_complete else "PARTIAL",
+        "warm_coverage_state": "NOT_APPLICABLE" if not known_by_tier["WARM"] else "REFRESHED_NOT_CONTINUOUS" if warm_refreshed else "PARTIAL_ROTATING",
+        "oldest_hot_refresh_age_seconds": max(hot_ages) if hot_ages else None,
+        "hot_unknown_refresh_age_count": hot_unknown_ages,
+        "oldest_known_refresh_age_seconds": max(known_ages) if known_ages else None,
+        "known_unknown_refresh_age_count": known_unknown_ages,
+        "continuous_coverage": hot_complete and not known_by_tier["WARM"],
+    })
+    if full_kalshi_discovery:
+        kalshi_cov["fast_refresh_overflow_count"] = max(
+            0, len(known_by_tier["HOT"] | known_by_tier["WARM"]) - KALSHI_REFRESH_MAX_MARKETS
+        )
+    if not hot_complete or not warm_refreshed:
+        kalshi_cov["state"] = "PARTIAL"
+    elif not full_kalshi_discovery:
+        kalshi_cov["state"] = "TARGETED"
+    refresh_truncated = bool(hot_omitted or warm_omitted or known_by_tier["UNKNOWN"])
+    result["refresh_complete"] = (
+        kalshi_book_failures == 0
+        and not refresh_truncated
+        and hot_complete
+        and warm_refreshed
+        and (not full_kalshi_discovery or kalshi_discovery_complete)
+    )
     result["slate"] = reconcile_slate(
         scheduled_for_discovery,
         rows_out,
@@ -951,7 +1206,7 @@ def _scan(
                 for game in date_row.get("games", [])
             ):
                 date_row["market_data_complete"] = False
-    publication_at = utcnow()
+    result["refreshed_at"] = publication_at.isoformat()
     result["alerts"] = alert_summary["sent"]
     statuses["ALERT_DEDUPLICATED"] += alert_summary["deduplicated"]
     statuses["ALERT_ERROR"] += alert_summary["failed"]
@@ -964,6 +1219,36 @@ def _scan(
         detected_at=lifecycle_at.isoformat(),
         economic_key_for_play=lambda play: economic_keys_by_play_id.get(play.id),
     )
+    if full_kalshi_discovery:
+        discovered_rows = list(known_kalshi_rows.values())
+        if not kalshi_discovery_complete:
+            # Retain previously known winners when an hourly discovery is partial.
+            prior = {row["ticker"]: row for row in kalshi_snapshot["markets"]}
+            prior.update({row["ticker"]: row for row in discovered_rows})
+            discovered_rows = list(prior.values())
+        runtime_state.record_kalshi_discovery(
+            discovered_rows,
+            actionable_tickers=(
+                (set(kalshi_snapshot["buy_tickers"]) - observed_kalshi_tickers)
+                | actionable_kalshi_tickers
+            ),
+            refreshed_at=publication_at,
+            coverage_complete=kalshi_discovery_complete,
+            observed_at_by_ticker={
+                **kalshi_snapshot.get("last_observed_at_by_ticker", {}),
+                **kalshi_observed_at_by_ticker,
+            },
+        )
+    elif refresh_selection is not None:
+        runtime_state.record_kalshi_refresh(
+            publication_at,
+            observed_tickers=observed_kalshi_tickers,
+            actionable_tickers=actionable_kalshi_tickers,
+            next_buy_cursor=refresh_selection["next_buy_cursor"],
+            next_other_cursor=refresh_selection["next_other_cursor"],
+            next_warm_cursor=refresh_selection["next_warm_cursor"],
+            observed_at_by_ticker=kalshi_observed_at_by_ticker,
+        )
     result["summary"] = {"nfl_markets_discovered": {"PMUS": len(pmus_rows), "KALSHI": len(kalshi_rows)}, "status_counts": dict(statuses), "rejection_counts": dict(rejection_reasons), "rows": rows_out}
     return result
 

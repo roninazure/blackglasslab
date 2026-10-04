@@ -28,7 +28,12 @@ HEALTH_FILENAME = "parallax_unattended_health.json"
 LOCK_FILENAME = "parallax_unattended.lock"
 LANES = ("nfl", "cfb", "mlb", "reconciliation")
 SPORTS_LANES = ("nfl", "cfb", "mlb")
-SPORTS_INTERVAL_SECONDS = 3600
+SPORTS_INTERVAL_SECONDS = {
+    "nfl": 45,
+    "cfb": 3600,
+    "mlb": 3600,
+}
+RECONCILIATION_INTERVAL_SECONDS = 300
 
 
 def utc_now() -> str:
@@ -111,6 +116,8 @@ def _reported_market_data_incomplete(stdout: str) -> bool:
         payload = json.loads(stdout)
     except (TypeError, json.JSONDecodeError):
         return False
+    if isinstance(payload, dict) and "refresh_complete" in payload:
+        return payload.get("refresh_complete") is not True
     if isinstance(payload, dict) and payload.get("market_data_complete") is False:
         return True
     slate = payload.get("slate") if isinstance(payload, dict) else None
@@ -138,10 +145,10 @@ class UnattendedScheduler:
         self.timeout_seconds = timeout_seconds
         self.started_at = clock()
         self.last_success: dict[str, str | None] = {lane: None for lane in LANES}
+        self.last_nfl_refresh: str | None = None
+        self.nfl_provider_state: dict[str, object] | None = None
         startup = self.monotonic()
-        self.next_due: dict[str, float] = {
-            lane: startup for lane in SPORTS_LANES
-        }
+        self.next_due: dict[str, float] = {lane: startup for lane in LANES}
         self.recent_errors: list[str] = []
 
     @property
@@ -186,6 +193,8 @@ class UnattendedScheduler:
             "runner_started_at": self.started_at,
             "last_heartbeat": heartbeat,
             "last_successful_nfl_scan": self.last_success["nfl"],
+            "last_successful_nfl_refresh": self.last_nfl_refresh,
+            "nfl_provider_state": self.nfl_provider_state,
             "last_successful_cfb_scan": self.last_success["cfb"],
             "last_successful_mlb_scan": self.last_success["mlb"],
             "last_successful_reconciliation": self.last_success["reconciliation"],
@@ -199,10 +208,13 @@ class UnattendedScheduler:
         now = self.monotonic()
         commands = self.commands()
         for lane, command in commands.items():
-            if lane in SPORTS_LANES and now < self.next_due[lane]:
+            if now < self.next_due.get(lane, now):
                 continue
-            if lane in SPORTS_LANES:
-                self.next_due[lane] = now + SPORTS_INTERVAL_SECONDS
+            self.next_due[lane] = now + (
+                SPORTS_INTERVAL_SECONDS[lane]
+                if lane in SPORTS_LANES
+                else RECONCILIATION_INTERVAL_SECONDS
+            )
             try:
                 completed = self.runner(
                     command,
@@ -218,6 +230,20 @@ class UnattendedScheduler:
                     raise RuntimeError(f"exit {completed.returncode}: {detail[:400]}")
                 if completed.stdout:
                     print(f"[{lane}] {completed.stdout.strip()}", flush=True)
+                decoded_output = None
+                if lane == "nfl":
+                    try:
+                        decoded_output = json.loads(completed.stdout)
+                    except (TypeError, json.JSONDecodeError):
+                        decoded_output = None
+                    if isinstance(decoded_output, dict):
+                        self.nfl_provider_state = {
+                            "scan_mode": decoded_output.get("scan_mode"),
+                            "refreshed_at": decoded_output.get("refreshed_at"),
+                            "refresh_complete": decoded_output.get("refresh_complete"),
+                            "pmus_cooldown": decoded_output.get("pmus_cooldown"),
+                            "kalshi": decoded_output.get("venues", {}).get("KALSHI"),
+                        }
                 if lane in SPORTS_LANES:
                     try:
                         export_completed_scan(lane, completed.stdout, self.state_dir)
@@ -236,6 +262,12 @@ class UnattendedScheduler:
                 ):
                     raise RuntimeError("market_data_complete is false")
                 self.last_success[lane] = self.clock()
+                if lane == "nfl":
+                    self.last_nfl_refresh = (
+                        decoded_output.get("refreshed_at")
+                        if isinstance(decoded_output, dict)
+                        else None
+                    ) or self.last_success[lane]
                 successful += 1
             except Exception as exc:  # Each lane must not prevent later lanes.
                 message = f"{lane}: {type(exc).__name__}: {exc}"
@@ -244,7 +276,19 @@ class UnattendedScheduler:
 
         self.recent_errors.extend(errors)
         heartbeat = self.clock()
-        state = "RUNNING" if not errors else ("FAILED" if successful == 0 else "DEGRADED")
+        pmus_degraded = bool(
+            self.nfl_provider_state
+            and isinstance(self.nfl_provider_state.get("pmus_cooldown"), dict)
+            and self.nfl_provider_state["pmus_cooldown"].get("state")
+            in {"COOLDOWN", "CORRUPT_COOLDOWN"}
+        )
+        state = (
+            "FAILED"
+            if errors and successful == 0
+            else "DEGRADED"
+            if errors or pmus_degraded
+            else "RUNNING"
+        )
         health = self._health(state, heartbeat)
         atomic_write_json(self.health_path, health)
         print(f"[health] state={state} successful_lanes={successful}/{len(commands)}", flush=True)
@@ -266,7 +310,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--runtime-env", type=Path)
-    parser.add_argument("--interval-seconds", type=int, default=300)
+    parser.add_argument("--interval-seconds", type=int, default=5)
     parser.add_argument("--timeout-seconds", type=int, default=600)
     args = parser.parse_args(argv)
     if args.interval_seconds < 1 or args.timeout_seconds < 1:
