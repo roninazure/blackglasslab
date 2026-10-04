@@ -1,33 +1,52 @@
 {
-  "generated_at": "2026-10-04T03:49:28.564186+00:00",
+  "generated_at": "2026-10-04T04:49:31.025631+00:00",
   "lane": "NFL",
   "plays": [
     {
       "away_team": "Indianapolis Colts",
-      "contract_side": "NO",
+      "contract_side": "YES",
       "date": "2026-10-04",
       "economic_key": "NFL:2026_04_IND_WAS:WAS",
-      "edge_pp": 22.79868024,
+      "edge_pp": 22.54868024,
       "game_id": "2026_04_IND_WAS",
       "home_team": "Washington Commanders",
-      "lifecycle_updated_at": "2026-10-04T03:46:08.129764+00:00",
-      "market_id": "960578",
+      "lifecycle_updated_at": "2026-10-04T04:48:40.197204+00:00",
+      "market_id": "KXNFLGAME-26OCT04INDWAS-WAS",
       "model_probability": 0.5754868023642871,
       "opponent": "Indianapolis Colts",
-      "price": 0.3475,
+      "price": 0.35,
       "schedule_status": "SCHEDULED",
       "selected_team": "Washington Commanders",
       "sport": "NFL",
       "start_time": "2026-10-04T13:30:00+00:00",
-      "venue": "POLYMARKET"
+      "venue": "KALSHI"
+    },
+    {
+      "away_team": "Cincinnati Bengals",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_CIN_MIA:MIA",
+      "edge_pp": 30.82701218,
+      "game_id": "2026_05_CIN_MIA",
+      "home_team": "Miami Dolphins",
+      "lifecycle_updated_at": "2026-10-04T04:49:21.033547+00:00",
+      "market_id": "KXNFLGAME-26OCT11CINMIA-MIA",
+      "model_probability": 0.508270121813281,
+      "opponent": "Cincinnati Bengals",
+      "price": 0.2,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Miami Dolphins",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "KALSHI"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T03:46:47.628956+00:00",
+  "source_feed_generated_at": "2026-10-04T04:49:28.371091+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 1
+    "buy": 2
   }
 }
