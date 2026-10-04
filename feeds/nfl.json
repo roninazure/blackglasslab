@@ -1,45 +1,7 @@
 {
-  "generated_at": "2026-10-04T23:03:49.669427+00:00",
+  "generated_at": "2026-10-04T23:04:00.220880+00:00",
   "lane": "NFL",
   "plays": [
-    {
-      "away_team": "Tampa Bay Buccaneers",
-      "contract_side": "YES",
-      "date": "2026-10-08",
-      "economic_key": "NFL:2026_05_TB_DAL:TB",
-      "edge_pp": 19.90945183,
-      "game_id": "2026_05_TB_DAL",
-      "home_team": "Dallas Cowboys",
-      "lifecycle_updated_at": "2026-10-04T23:02:56.209191+00:00",
-      "market_id": "1030131",
-      "model_probability": 0.37659451833045976,
-      "opponent": "Dallas Cowboys",
-      "price": 0.1775,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Tampa Bay Buccaneers",
-      "sport": "NFL",
-      "start_time": "2026-10-09T00:15:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "away_team": "Philadelphia Eagles",
-      "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_PHI_JAX:PHI",
-      "edge_pp": 19.5765611,
-      "game_id": "2026_05_PHI_JAX",
-      "home_team": "Jacksonville Jaguars",
-      "lifecycle_updated_at": "2026-10-04T23:02:56.383552+00:00",
-      "market_id": "1083081",
-      "model_probability": 0.5807656109932193,
-      "opponent": "Jacksonville Jaguars",
-      "price": 0.385,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Philadelphia Eagles",
-      "sport": "NFL",
-      "start_time": "2026-10-11T13:30:00+00:00",
-      "venue": "POLYMARKET"
-    },
     {
       "away_team": "Chicago Bears",
       "contract_side": "YES",
@@ -79,25 +41,6 @@
       "venue": "KALSHI"
     },
     {
-      "away_team": "Cleveland Browns",
-      "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_CLE_NYJ:CLE",
-      "edge_pp": 8.6534898,
-      "game_id": "2026_05_CLE_NYJ",
-      "home_team": "New York Jets",
-      "lifecycle_updated_at": "2026-10-04T23:03:19.656140+00:00",
-      "market_id": "1083082",
-      "model_probability": 0.5715348979514447,
-      "opponent": "New York Jets",
-      "price": 0.485,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Cleveland Browns",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
       "away_team": "Indianapolis Colts",
       "contract_side": "YES",
       "date": "2026-10-11",
@@ -134,14 +77,33 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "KALSHI"
+    },
+    {
+      "away_team": "Minnesota Vikings",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_MIN_NO:MIN",
+      "edge_pp": 15.58129328,
+      "game_id": "2026_05_MIN_NO",
+      "home_team": "New Orleans Saints",
+      "lifecycle_updated_at": "2026-10-04T23:03:52.097602+00:00",
+      "market_id": "KXNFLGAME-26OCT11MINNO-MIN",
+      "model_probability": 0.6858129328271653,
+      "opponent": "New Orleans Saints",
+      "price": 0.53,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Minnesota Vikings",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "KALSHI"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T23:03:41.546952+00:00",
+  "source_feed_generated_at": "2026-10-04T23:03:52.100511+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 7
+    "buy": 5
   }
 }
