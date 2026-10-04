@@ -2359,6 +2359,66 @@ def test_complete_scored_nfl_buy_survives_scan_to_publication_contract(
     }
 
 
+def test_full_kalshi_scan_publication_and_expiry_reconciliation_lifecycle(
+    monkeypatch, tmp_path
+):
+    from parallax.public_feed import export_completed_scan, publish_incremental_nfl_game
+
+    now = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
+    state_dir = tmp_path / "public-state"
+    incremental_writes = []
+
+    def fast_publish(payload):
+        destination = publish_incremental_nfl_game(
+            payload, state_dir, generated_at=now
+        )
+        incremental_writes.append(json.loads(destination.read_text()))
+
+    result, _clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[],
+        book=lambda _slug: {},
+        action_by_side=lambda side: Action.BUY if side == Side.YES else Action.PASS,
+        kalshi_rows=[_kalshi_nfl_row()],
+        kalshi_book=lambda _ticker: {"orderbook": {}},
+        fast_publisher=fast_publish,
+    )
+
+    assert len(incremental_writes) == 1
+    immediate = incremental_writes[0]
+    assert immediate["buy_publication_eligible"] is True
+    assert immediate["summary"]["buy"] == 1
+    assert immediate["plays"][0]["freshness"] == "FRESH"
+    assert immediate["plays"][0]["status"] == "CURRENT"
+    assert immediate["plays"][0]["price"] == 0.5
+
+    destination = export_completed_scan(
+        "nfl",
+        json.dumps(result),
+        state_dir,
+        generated_at=now + timedelta(seconds=61),
+    )
+    reconciled = json.loads(destination.read_text())
+
+    assert reconciled["buy_publication_eligible"] is False
+    assert reconciled["summary"] == {
+        "plays": 2,
+        "buy": 0,
+        "watch": 1,
+        "pass": 1,
+    }
+    expired = next(
+        play for play in reconciled["plays"] if play["status"] == "STALE"
+    )
+    assert expired["action"] == "WATCH"
+    assert expired["freshness"] == "STALE_OR_UNKNOWN"
+    assert expired["failed_gates"] == ["stale_data"]
+    assert "price" not in expired
+    assert "edge_pp" not in expired
+    assert reconciled["slate"]["dates"][0]["games"][0]["status"] == "WATCH"
+
+
 def test_pmus_rate_limit_does_not_block_valid_kalshi_buy(monkeypatch, tmp_path):
     dispatched = []
     published = []
@@ -2919,3 +2979,37 @@ def test_kalshi_nfl_ticker_suffix_not_in_official_game_fails_closed():
 
     assert mapping.status == "AMBIGUOUS"
     assert mapping.selected_team is None
+
+
+def test_kalshi_lar_ticker_suffix_maps_to_official_la_rams_identity():
+    observed = datetime(2026, 10, 4, 12, 0, tzinfo=UTC)
+    kickoff = "2026-10-05T20:00:00+00:00"
+    raw = {
+        "ticker": "KXNFLGAME-26OCT05LARPHI-LAR",
+        "event_ticker": "KXNFLGAME-26OCT05LARPHI",
+        "title": "Los Angeles wins",
+        "yes_sub_title": "YES",
+        "no_sub_title": "NO",
+        "status": "open",
+        "market_type": "binary",
+        "expected_expiration_time": kickoff,
+        "rules_primary": "Contract resolves from the official NFL result.",
+        "away_team": "LAR",
+        "home_team": "PHI",
+        "scheduled_start": kickoff,
+    }
+    event = {
+        "ticker": "KXNFLGAME-26OCT05LARPHI",
+        "title": "LAR vs PHI NFL game",
+        "away_team": "LAR",
+        "home_team": "PHI",
+        "scheduled_start": kickoff,
+    }
+    market = normalize_kalshi(raw, {}, observed.isoformat(), event=event)
+    game = NFLGame("game", 2026, "REG", kickoff, "PHI", "LA", None, None)
+
+    mapping = map_market_to_game(market, [game], now=observed)
+
+    assert mapping.status == "MAPPED_GAME_WINNER"
+    assert mapping.game is game
+    assert mapping.selected_team == "LA"

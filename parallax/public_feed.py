@@ -330,6 +330,7 @@ def _public_slate(
     *,
     allow_buy: bool,
     eligible_nfl_game_ids: set[str] | None = None,
+    expired_nfl_signal_game_ids: set[str] | None = None,
 ) -> dict[str, Any] | None:
     if not isinstance(value, Mapping):
         return None
@@ -399,7 +400,13 @@ def _public_slate(
                         )
                         and game_public.get("status", "").upper() == "BUY"
                     ):
-                        game_public["status"] = "WITHHELD_INCOMPLETE_DATA"
+                        game_public["status"] = (
+                            "WATCH"
+                            if expired_nfl_signal_game_ids is not None
+                            and game_public.get("game_id")
+                            in expired_nfl_signal_game_ids
+                            else "WITHHELD_INCOMPLETE_DATA"
+                        )
                     games_out.append(game_public)
             date_public["games"] = games_out
             if eligible_nfl_game_ids is not None:
@@ -419,8 +426,8 @@ def _public_slate(
     return public
 
 
-def _nfl_buy_source_eligible(row: Mapping[str, Any], now: datetime) -> bool:
-    """Cross-check an NFL scanner's per-position publication attestation."""
+def _nfl_buy_certificate_valid(row: Mapping[str, Any]) -> bool:
+    """Cross-check the immutable parts of an NFL BUY certificate."""
     if (
         row.get("publication_eligible") is not True
         or _action(row) != "BUY"
@@ -477,6 +484,13 @@ def _nfl_buy_source_eligible(row: Mapping[str, Any], now: datetime) -> bool:
         and numeric["net_ev"] > 0
         and numeric["expected_return"] >= 0.05
     ):
+        return False
+    return True
+
+
+def _nfl_buy_source_eligible(row: Mapping[str, Any], now: datetime) -> bool:
+    """Require a valid certificate backed by a currently executable quote."""
+    if not _nfl_buy_certificate_valid(row):
         return False
     updated_at = _parse_timestamp(row.get("updated_at"))
     expires_at = _parse_timestamp(row.get("expires_at"))
@@ -720,6 +734,64 @@ def _eligible_nfl_buy_indexes(
     }
 
 
+def _expired_nfl_buy_indexes(
+    rows: list[Mapping[str, Any]],
+    now: datetime,
+    slate: object,
+    eligible_indexes: set[int],
+) -> set[int]:
+    """Select certified BUYs whose executable quote, but not game, expired."""
+    slate_games = _nfl_slate_games(slate)
+    current_keys = {
+        str(rows[index]["economic_key"]) for index in eligible_indexes
+    }
+    observed_keys = {
+        str(row["economic_key"])
+        for row in rows
+        if _text(row.get("economic_key")) and _action(row) != "BUY"
+    }
+    grouped: dict[str, list[tuple[int, Mapping[str, Any]]]] = {}
+    terminal_game_states = {
+        "CANCELLED", "CANCELED", "POSTPONED", "SUSPENDED", "DELAYED",
+        "IN_PROGRESS", "PAST_START", "FINAL",
+    }
+    for index, row in enumerate(rows):
+        economic_key = str(row.get("economic_key") or "")
+        game = slate_games.get(str(row.get("game_id") or ""))
+        participants = (
+            {
+                str(game.get("away_team") or "").upper(),
+                str(game.get("home_team") or "").upper(),
+            }
+            if game is not None
+            else set()
+        ) - {""}
+        updated_at = _parse_timestamp(row.get("updated_at"))
+        expires_at = _parse_timestamp(row.get("expires_at"))
+        game_start = _parse_timestamp(row.get("game_start"))
+        game_state = str(
+            _first(game, "schedule_status", "status") if game is not None else ""
+        ).upper()
+        if (
+            economic_key
+            and economic_key not in current_keys
+            and economic_key not in observed_keys
+            and _nfl_buy_certificate_valid(row)
+            and game is not None
+            and str(row["economic_team"]).upper() in participants
+            and game_state not in terminal_game_states
+            and updated_at is not None
+            and expires_at is not None
+            and game_start is not None
+            and updated_at <= expires_at <= now < game_start
+        ):
+            grouped.setdefault(economic_key, []).append((index, row))
+    return {
+        min(equivalents, key=lambda item: _nfl_buy_rank(item[1]))[0]
+        for equivalents in grouped.values()
+    }
+
+
 def _eligible_cfb_buy_indexes(
     rows: list[Mapping[str, Any]], now: datetime
 ) -> set[int]:
@@ -846,6 +918,41 @@ def _public_play(row: Mapping[str, Any], lane: str) -> dict[str, Any] | None:
     return {key: value for key, value in public.items() if key in allowed}
 
 
+def _public_expired_nfl_signal(
+    row: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Render a prior BUY certificate without presenting its quote as current."""
+    public = _public_play(row, "nfl")
+    if public is None:
+        return None
+    checked_at = _timestamp(row.get("updated_at")) or "an unknown time"
+    expired_at = _timestamp(row.get("expires_at")) or "an unknown time"
+    price = _number(row.get("executable_price"))
+    price_text = f" at ${price:.4f}" if price is not None else ""
+    public.update(
+        {
+            "action": "WATCH",
+            "freshness": "STALE_OR_UNKNOWN",
+            "status": "STALE",
+            "reason": (
+                f"PARALLAX previously certified a BUY{price_text} at {checked_at}; "
+                f"that executable quote expired at {expired_at}. Revalidation is "
+                "required before acting."
+            ),
+            "failed_gates": ["stale_data"],
+        }
+    )
+    for field in (
+        "price",
+        "model_probability",
+        "edge_pp",
+        "retail_examples",
+        "publication_eligible",
+    ):
+        public.pop(field, None)
+    return public
+
+
 def sanitize_completed_scan(
     lane: str,
     completed_stdout: str,
@@ -871,6 +978,13 @@ def sanitize_completed_scan(
         if normalized_lane == "nfl"
         else set()
     )
+    expired_nfl_buy_indexes = (
+        _expired_nfl_buy_indexes(
+            rows, now, decoded.get("slate"), nfl_buy_indexes
+        )
+        if normalized_lane == "nfl"
+        else set()
+    )
     cfb_buy_indexes = (
         _eligible_cfb_buy_indexes(rows, now) if normalized_lane == "cfb" else set()
     )
@@ -885,15 +999,16 @@ def sanitize_completed_scan(
         else mlb_buy_indexes
     )
     allow_buy = bool(eligible_buy_indexes)
-    plays = [
-        play
-        for index, row in enumerate(rows)
-        if (play := _public_play(row, normalized_lane))
-        and (
-            play["action"] != "BUY"
-            or index in eligible_buy_indexes
-        )
-    ]
+    plays = []
+    for index, row in enumerate(rows):
+        if index in expired_nfl_buy_indexes:
+            play = _public_expired_nfl_signal(row)
+        else:
+            play = _public_play(row, normalized_lane)
+        if play is not None and (
+            play["action"] != "BUY" or index in eligible_buy_indexes
+        ):
+            plays.append(play)
     source_as_of = _source_as_of(decoded, rows)
     counts = {action: sum(play["action"] == action for play in plays) for action in PUBLIC_ACTIONS}
     result = {
@@ -927,10 +1042,16 @@ def sanitize_completed_scan(
         if normalized_lane == "nfl"
         else None
     )
+    expired_nfl_signal_game_ids = (
+        {str(rows[index]["game_id"]) for index in expired_nfl_buy_indexes}
+        if normalized_lane == "nfl"
+        else None
+    )
     slate = _public_slate(
         decoded.get("slate"),
         allow_buy=allow_buy,
         eligible_nfl_game_ids=eligible_nfl_game_ids,
+        expired_nfl_signal_game_ids=expired_nfl_signal_game_ids,
     )
     if slate is not None:
         result["slate"] = slate
@@ -1079,6 +1200,84 @@ def _aggregate_nfl_incremental_state(state: Mapping[str, Any]) -> dict[str, Any]
     }
 
 
+def _reconcile_nfl_signal_lifecycle(
+    previous: Mapping[str, Any],
+    completed: Mapping[str, Any],
+    *,
+    now: datetime,
+) -> dict[str, Any]:
+    """Carry missing certified positions only as expiring customer signals.
+
+    A current observation for the same economic position always wins, including
+    WATCH/PASS and failed-gate rows. Missing venue data is not itself evidence
+    that the prior signal was false, so its certificate remains available for
+    the sanitizer to render as a non-actionable expired-quote lifecycle record.
+    """
+    current_rows = list(_source_rows(completed, "nfl"))
+    current_keys = {
+        str(row["economic_key"])
+        for row in current_rows
+        if _text(row.get("economic_key"))
+    }
+    current_games = _nfl_slate_games(completed.get("slate"))
+    market_data_complete = _market_data_complete(completed)
+    candidates: dict[str, list[Mapping[str, Any]]] = {}
+    terminal_game_states = {
+        "CANCELLED", "CANCELED", "POSTPONED", "SUSPENDED", "DELAYED",
+        "IN_PROGRESS", "PAST_START", "FINAL",
+    }
+    for row in _source_rows(previous, "nfl"):
+        economic_key = str(row.get("economic_key") or "")
+        game_id = str(row.get("game_id") or "")
+        game = current_games.get(game_id)
+        participants = (
+            {
+                str(game.get("away_team") or "").upper(),
+                str(game.get("home_team") or "").upper(),
+            }
+            if game is not None
+            else set()
+        ) - {""}
+        game_start = _parse_timestamp(
+            _first(game, "start_time") if game is not None else None
+        ) or _parse_timestamp(row.get("game_start"))
+        schedule_state = str(
+            _first(game, "schedule_status", "status") if game is not None else ""
+        ).upper()
+        updated_at = _parse_timestamp(row.get("updated_at"))
+        expires_at = _parse_timestamp(row.get("expires_at"))
+        if (
+            economic_key
+            and economic_key not in current_keys
+            and game is not None
+            and schedule_state not in terminal_game_states
+            and schedule_state not in {"WATCH", "PASS"}
+            and not (
+                schedule_state == "NO_MARKET" and market_data_complete is True
+            )
+            and game_start is not None
+            and now < game_start
+            and updated_at is not None
+            and expires_at is not None
+            and updated_at <= expires_at
+            and updated_at <= now
+            and _nfl_buy_certificate_valid(row)
+            and str(row["economic_team"]).upper() in participants
+        ):
+            candidates.setdefault(economic_key, []).append(row)
+
+    carried = [
+        min(equivalents, key=_nfl_buy_rank)
+        for equivalents in candidates.values()
+    ]
+    reconciled = dict(completed)
+    summary = completed.get("summary")
+    reconciled_summary = dict(summary) if isinstance(summary, Mapping) else {}
+    reconciled_summary["rows"] = current_rows + carried
+    reconciled["summary"] = reconciled_summary
+    return reconciled
+
+
 def publish_incremental_nfl_game(
     finalized_game: Mapping[str, Any],
     state_dir: Path,
@@ -1128,12 +1327,20 @@ def publish_incremental_nfl_game(
     return destination
 
 
-def export_completed_scan(lane: str, completed_stdout: str, state_dir: Path) -> Path:
+def export_completed_scan(
+    lane: str,
+    completed_stdout: str,
+    state_dir: Path,
+    *,
+    generated_at: datetime | None = None,
+) -> Path:
     """Sanitize one already-completed scan and atomically publish it locally."""
     normalized_lane = lane.casefold()
     destination = Path(state_dir) / "public_feed" / f"{normalized_lane}.json"
     if normalized_lane != "nfl":
-        payload = sanitize_completed_scan(normalized_lane, completed_stdout)
+        payload = sanitize_completed_scan(
+            normalized_lane, completed_stdout, generated_at=generated_at
+        )
         _atomic_write(destination, payload)
         return destination
 
@@ -1143,15 +1350,24 @@ def export_completed_scan(lane: str, completed_stdout: str, state_dir: Path) -> 
         raise ValueError("Completed scan output must be valid JSON") from exc
     if not isinstance(decoded, Mapping):
         raise ValueError("Completed scan output must be a JSON object")
-    now = datetime.now(UTC)
-    payload = sanitize_completed_scan("nfl", completed_stdout, generated_at=now)
-    state = {
-        "schema_version": NFL_INCREMENTAL_SCHEMA_VERSION,
-        "reconciled_at": now.isoformat(),
-        "baseline": decoded,
-        "updates": {},
-    }
+    now = (generated_at or datetime.now(UTC)).astimezone(UTC)
     with _nfl_publication_lock(state_dir):
+        prior_state = _read_nfl_incremental_state(
+            _nfl_incremental_state_path(state_dir)
+        )
+        previous = _aggregate_nfl_incremental_state(prior_state)
+        reconciled = _reconcile_nfl_signal_lifecycle(
+            previous, decoded, now=now
+        )
+        payload = sanitize_completed_scan(
+            "nfl", json.dumps(reconciled), generated_at=now
+        )
+        state = {
+            "schema_version": NFL_INCREMENTAL_SCHEMA_VERSION,
+            "reconciled_at": now.isoformat(),
+            "baseline": reconciled,
+            "updates": {},
+        }
         # State goes first: interruption can delay a new feed, but cannot leave
         # stale merge state capable of resurrecting a reconciled-away BUY.
         _atomic_write(_nfl_incremental_state_path(state_dir), state)

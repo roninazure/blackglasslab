@@ -40,6 +40,9 @@ NFL_TEAM_ALIASES = {
     "newyorkjets": "NYJ", "philadelphiaeagles": "PHI", "pittsburghsteelers": "PIT",
     "sanfrancisco49ers": "SF", "seattleseahawks": "SEA", "tampabaybuccaneers": "TB",
     "tennesseetitans": "TEN", "washingtoncommanders": "WAS",
+    # Kalshi uses the league-standard LAR ticker suffix while nflverse uses
+    # LA.  This is an explicit identifier translation, not fuzzy matching.
+    "lar": "LA",
 }
 NFL_TEAM_NAMES = {
     "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
