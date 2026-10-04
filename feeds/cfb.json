@@ -1,13 +1,25 @@
 {
-  "generated_at": "2026-10-04T03:51:47.771139+00:00",
+  "generated_at": "2026-10-04T04:51:51.132386+00:00",
   "lane": "CFB",
-  "plays": [],
+  "plays": [
+    {
+      "contract_side": "NO",
+      "edge_pp": 31.59031497,
+      "market_id": "1071469",
+      "matchup": "Texas at Oklahoma",
+      "model_probability": 0.5509031496532268,
+      "price": 0.235,
+      "sport": "CFB",
+      "start_time": "2026-10-10T19:30:00+00:00",
+      "venue": "POLYMARKET"
+    }
+  ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T03:48:29.844651+00:00",
+  "source_feed_generated_at": "2026-10-04T04:51:35.437687+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 0
+    "buy": 1
   }
 }
