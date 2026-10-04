@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-04T17:46:47.519886+00:00",
+  "generated_at": "2026-10-04T17:46:58.117104+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -67,7 +67,7 @@
       "edge_pp": 29.82701218,
       "game_id": "2026_05_CIN_MIA",
       "home_team": "Miami Dolphins",
-      "lifecycle_updated_at": "2026-10-04T17:45:55.787163+00:00",
+      "lifecycle_updated_at": "2026-10-04T17:46:49.985074+00:00",
       "market_id": "KXNFLGAME-26OCT11CINMIA-MIA",
       "model_probability": 0.508270121813281,
       "opponent": "Cincinnati Bengals",
@@ -81,7 +81,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T17:46:41.412753+00:00",
+  "source_feed_generated_at": "2026-10-04T17:46:49.988063+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
