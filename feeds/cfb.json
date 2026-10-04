@@ -1,25 +1,36 @@
 {
-  "generated_at": "2026-10-04T19:57:42.771447+00:00",
+  "generated_at": "2026-10-04T21:02:46.293992+00:00",
   "lane": "CFB",
   "plays": [
     {
       "contract_side": "NO",
-      "edge_pp": 31.09031497,
+      "edge_pp": 30.59031497,
       "market_id": "1071469",
       "matchup": "Texas at Oklahoma",
       "model_probability": 0.5509031496532268,
-      "price": 0.24,
+      "price": 0.245,
       "sport": "CFB",
       "start_time": "2026-10-10T19:30:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "YES",
+      "edge_pp": 11.87355876,
+      "market_id": "1113507",
+      "matchup": "Georgia at Alabama",
+      "model_probability": 0.6087355876133824,
+      "price": 0.49,
+      "sport": "CFB",
+      "start_time": "2026-10-10T23:30:00+00:00",
       "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T19:55:49.841173+00:00",
+  "source_feed_generated_at": "2026-10-04T20:59:03.404235+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 1
+    "buy": 2
   }
 }
