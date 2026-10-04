@@ -971,14 +971,15 @@ def _scan(
 def _kick_nfl_publisher_for_current_buy(payload, destination: Path) -> bool:
     """Kick the existing NFL publisher only when this game's BUY survived sanitization."""
     public = json.loads(destination.read_text(encoding="utf-8"))
-    game_ids = {
-        str(row.get("game_id") or "")
+    market_ids = {
+        str(row.get("market_id") or "")
         for row in payload.get("summary", {}).get("rows", [])
+        if row.get("market_id")
     }
     has_current_buy = any(
         play.get("action") == "BUY"
         and play.get("publication_eligible") is True
-        and str(play.get("game_id") or "") in game_ids
+        and str(play.get("market_id") or "") in market_ids
         for play in public.get("plays", [])
     )
     if not has_current_buy:

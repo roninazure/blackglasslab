@@ -2735,27 +2735,43 @@ def test_nfl_watch_and_pass_do_not_dispatch_buy_alert(monkeypatch, action):
 
 
 def test_current_incremental_buy_kicks_existing_nfl_publisher_once(tmp_path, monkeypatch):
-    destination = tmp_path / "nfl.json"
-    destination.write_text(
-        json.dumps(
-            {
-                "plays": [
-                    {
-                        "action": "BUY",
-                        "publication_eligible": True,
-                        "game_id": "2026_04_IND_WAS",
-                    }
-                ]
-            }
-        )
+    import runpy
+    from datetime import UTC, datetime
+    from parallax.public_feed import publish_incremental_nfl_game
+
+    helpers = runpy.run_path(
+        str(Path(__file__).with_name("test_parallax_public_feed.py"))
+    )
+    buy = helpers["eligible_nfl_buy"](
+        game_id="2026_03_ARI_NYG",
+        market_id="KXNFLGAME-ARI-NYG-ARI",
     )
     payload = {
-        "summary": {
-            "rows": [
-                {"game_id": "2026_04_IND_WAS"}
-            ]
-        }
+        "read_only": True,
+        "orders": 0,
+        "published": 0,
+        "finalized_at": "2026-09-24T12:29:40+00:00",
+        "slate": helpers["nfl_slate_for"](
+            game_id="2026_03_ARI_NYG",
+            status="BUY",
+            complete=False,
+        ),
+        "summary": {"rows": [buy]},
     }
+
+    destination = publish_incremental_nfl_game(
+        payload,
+        tmp_path,
+        generated_at=datetime(2026, 9, 24, 12, 29, 40, tzinfo=UTC),
+    )
+    public = json.loads(destination.read_text(encoding="utf-8"))
+
+    assert len(public["plays"]) == 1
+    assert public["plays"][0]["action"] == "BUY"
+    assert public["plays"][0]["publication_eligible"] is True
+    assert public["plays"][0]["market_id"] == "KXNFLGAME-ARI-NYG-ARI"
+    assert "game_id" not in public["plays"][0]
+
     calls = []
 
     def fake_run(args, **kwargs):
@@ -2781,17 +2797,34 @@ def test_current_incremental_buy_kicks_existing_nfl_publisher_once(tmp_path, mon
 
 def test_incremental_without_current_buy_does_not_kick_publisher(tmp_path, monkeypatch):
     destination = tmp_path / "nfl.json"
-    destination.write_text(json.dumps({"plays": []}))
+    destination.write_text(
+        json.dumps(
+            {
+                "plays": [
+                    {
+                        "action": "BUY",
+                        "publication_eligible": True,
+                        "market_id": "KXNFLGAME-OTHER-GAME-TEAM",
+                    }
+                ]
+            }
+        )
+    )
     payload = {
         "summary": {
             "rows": [
-                {"game_id": "2026_04_IND_WAS"}
+                {
+                    "game_id": "2026_04_IND_WAS",
+                    "market_id": "KXNFLGAME-26OCT04INDWAS-WAS",
+                }
             ]
         }
     }
 
     def unexpected_run(*_args, **_kwargs):
-        raise AssertionError("publisher must not be kicked without a current BUY")
+        raise AssertionError(
+            "publisher must not be kicked for an unrelated existing BUY"
+        )
 
     monkeypatch.setattr(nfl_live_scan.subprocess, "run", unexpected_run)
 
