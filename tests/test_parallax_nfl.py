@@ -30,6 +30,7 @@ from parallax.nfl import (
 )
 from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.pmus_acquisition import PMUSAcquisition, PMUSAcquisitionUnavailable
+from parallax.pmus_market_data import PMUSMarketDataUnavailable, PMUSStreamBook
 from parallax.sources import (
     KalshiPublicClient,
     KalshiPublicRateLimit,
@@ -1085,6 +1086,8 @@ def _run_pmus_scan(
     evidence_for_market=None,
     mapping_for_market=None,
     pmus_acquisition=None,
+    stream_factory=None,
+    direct_scope=False,
     fast_publisher=None,
 ):
     constructed = []
@@ -1182,6 +1185,15 @@ def _run_pmus_scan(
         )
 
     monkeypatch.setattr(nfl_live_scan, "PolymarketUSPublicClient", FakePMUS)
+    if direct_scope:
+        monkeypatch.setattr(
+            nfl_live_scan,
+            "_scope_pmus",
+            lambda _client, _scheduled, _acquisition: (
+                rows,
+                {"state": "COMPLETE", "request_count": 0},
+            ),
+        )
     monkeypatch.setattr(nfl_live_scan, "fetch_games", lambda: scan_games or [game])
     if scan_clock is not None:
         monkeypatch.setattr(nfl_live_scan, "utcnow", lambda: scan_clock[0])
@@ -1295,8 +1307,14 @@ def _run_pmus_scan(
         clock=lambda: acquisition_now[0],
         sleeper=advance,
     )
+    if stream_factory is None:
+        def stream_factory(_slugs):
+            raise PMUSMarketDataUnavailable("offline test stream unavailable")
+
     return nfl_live_scan._scan(
-        pmus_acquisition=acquisition, fast_publisher=fast_publisher
+        pmus_acquisition=acquisition,
+        pmus_market_data_factory=stream_factory,
+        fast_publisher=fast_publisher,
     ), constructed
 
 
@@ -1471,6 +1489,258 @@ def test_nfl_scan_reuses_one_pmus_client_for_discovery_and_multiple_books(monkey
     assert clients[0].book_calls == [row["slug"] for row in rows]
     assert clients[0].closed == 1
     assert result["read_only"] is True and result["orders"] == 0
+
+
+class _FakePMUSStream:
+    def __init__(
+        self,
+        slugs,
+        books=None,
+        *,
+        fail_books=False,
+        missing_slugs=(),
+        wait_ready=True,
+        failed=False,
+        book_error=None,
+    ):
+        self.slugs = list(slugs)
+        self.books = books or {}
+        self.fail_books = fail_books
+        self.missing_slugs = set(missing_slugs)
+        self.wait_ready_result = wait_ready
+        self.failed = failed
+        self.book_error = book_error
+        self.started = False
+        self.stopped = False
+        self.book_calls = []
+        self.error = None
+
+    def start(self):
+        self.started = True
+
+    def wait_ready(self, _timeout):
+        return self.wait_ready_result
+
+    def book(self, slug):
+        self.book_calls.append(slug)
+        if self.book_error is not None:
+            raise self.book_error
+        if self.fail_books or slug in self.missing_slugs:
+            raise PMUSMarketDataUnavailable("stream unavailable")
+        return PMUSStreamBook(
+            self.books.get(slug, {"slug": slug}),
+            "2026-09-27T12:00:00+00:00",
+            10.0,
+        )
+
+    def diagnostics(self):
+        fresh_books = len(self.slugs) - len(self.missing_slugs)
+        return {
+            "state": "FAILED" if self.failed else "HEALTHY",
+            "markets_requested": len(self.slugs),
+            "fresh_books": fresh_books,
+            "readiness": (
+                "FULL"
+                if fresh_books == len(self.slugs)
+                else "PARTIAL"
+                if fresh_books
+                else "NONE"
+            ),
+            "rest_polling": False,
+        }
+
+    def stop(self):
+        self.stopped = True
+        return True
+
+
+def test_nfl_uses_fresh_stream_without_rest_book_call(monkeypatch, tmp_path):
+    row = _pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")
+    streams = []
+
+    def stream_factory(slugs):
+        stream = _FakePMUSStream(slugs)
+        streams.append(stream)
+        return stream
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[row],
+        book=lambda _slug: (_ for _ in ()).throw(
+            AssertionError("REST book must not be called for a fresh stream book")
+        ),
+        stream_factory=stream_factory,
+    )
+
+    assert streams[0].slugs == [row["slug"]]
+    assert streams[0].started and streams[0].stopped
+    assert streams[0].book_calls == [row["slug"]]
+    assert clients[0].book_calls == []
+    assert result["pmus_acquisition"]["book_requests"] == 0
+    assert result["summary"]["status_counts"]["BOOK_STREAMED"] == 1
+    assert result["pmus_market_data"]["shutdown_clean"] is True
+
+
+def test_nfl_stream_failure_falls_back_only_through_acquisition(monkeypatch, tmp_path):
+    row = _pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")
+    streams = []
+
+    def stream_factory(slugs):
+        stream = _FakePMUSStream(slugs, fail_books=True)
+        streams.append(stream)
+        return stream
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[row],
+        book=lambda slug: {"slug": slug},
+        stream_factory=stream_factory,
+    )
+
+    assert streams[0].book_calls == [row["slug"]]
+    assert clients[0].book_calls == [row["slug"]]
+    assert result["pmus_acquisition"]["book_requests"] == 1
+    assert result["pmus_acquisition"]["candidates_considered"] == 1
+
+
+def test_nfl_partial_stream_keeps_sixteen_books_and_falls_back_only_for_missing(
+    monkeypatch, tmp_path
+):
+    rows = [_pmus_nfl_row(str(index), f"nfl-partial-{index}") for index in range(17)]
+    missing_slug = rows[-1]["slug"]
+    streams = []
+
+    def stream_factory(slugs):
+        stream = _FakePMUSStream(
+            slugs,
+            missing_slugs={missing_slug},
+            wait_ready=False,
+        )
+        streams.append(stream)
+        return stream
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=rows,
+        book=lambda slug: {"slug": slug},
+        stream_factory=stream_factory,
+        direct_scope=True,
+    )
+
+    assert streams[0].stopped is True
+    assert clients[0].book_calls == [missing_slug]
+    assert result["summary"]["status_counts"]["BOOK_STREAMED"] == 16
+    assert result["pmus_acquisition"]["book_requests"] == 1
+    assert result["pmus_market_data"]["startup_readiness"] == "PARTIAL"
+    assert result["pmus_market_data"]["readiness"] == "PARTIAL"
+
+
+def test_nfl_terminal_startup_stream_failure_uses_governed_fallback(
+    monkeypatch, tmp_path
+):
+    row = _pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[row],
+        book=lambda slug: {"slug": slug},
+        stream_factory=lambda slugs: _FakePMUSStream(
+            slugs,
+            fail_books=True,
+            wait_ready=False,
+            failed=True,
+        ),
+    )
+
+    assert clients[0].book_calls == [row["slug"]]
+    assert result["pmus_acquisition"]["book_requests"] == 1
+    assert result["pmus_market_data"]["state"] == "UNAVAILABLE"
+    assert result["pmus_market_data"]["startup_readiness"] == "FAILED"
+
+
+def test_nfl_unexpected_stream_startup_exception_fails_closed_without_rest(
+    monkeypatch, tmp_path
+):
+    row = _pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")
+
+    def broken_factory(_slugs):
+        raise RuntimeError("stream implementation bug")
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[row],
+        book=lambda _slug: (_ for _ in ()).throw(
+            AssertionError("unexpected startup errors must not call REST")
+        ),
+        stream_factory=broken_factory,
+    )
+
+    assert clients[0].book_calls == []
+    assert result["pmus_acquisition"]["book_requests"] == 0
+    assert result["pmus_market_data"]["state"] == "FAILED"
+    failure = next(
+        item for item in result["summary"]["rows"] if "scoring_error" in item
+    )
+    assert failure["scoring_error"] == "RuntimeError"
+    assert not any("verdict" in item for item in result["summary"]["rows"])
+
+
+@pytest.mark.parametrize("unexpected", [RuntimeError("bug"), TypeError("bug")])
+def test_nfl_unexpected_stream_exception_fails_closed_without_rest(
+    monkeypatch, tmp_path, unexpected
+):
+    row = _pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[row],
+        book=lambda _slug: (_ for _ in ()).throw(
+            AssertionError("unexpected stream errors must not call REST")
+        ),
+        stream_factory=lambda slugs: _FakePMUSStream(
+            slugs, book_error=unexpected
+        ),
+    )
+
+    assert clients[0].book_calls == []
+    assert result["pmus_acquisition"]["book_requests"] == 0
+    failure = next(
+        item for item in result["summary"]["rows"] if "scoring_error" in item
+    )
+    assert failure["scoring_error"] == type(unexpected).__name__
+    assert not any("verdict" in item for item in result["summary"]["rows"])
+
+
+@pytest.mark.parametrize("action", [Action.BUY, Action.WATCH, Action.PASS])
+def test_streamed_equivalent_book_preserves_nfl_scoring_action(
+    monkeypatch, tmp_path, action
+):
+    row = _pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")
+
+    result, clients = _run_pmus_scan(
+        monkeypatch,
+        tmp_path,
+        rows=[row],
+        book=lambda _slug: (_ for _ in ()).throw(
+            AssertionError("equivalent streamed input must avoid REST")
+        ),
+        action=action,
+        stream_factory=lambda slugs: _FakePMUSStream(slugs),
+    )
+
+    verdicts = [
+        item["verdict"]
+        for item in result["summary"]["rows"]
+        if "verdict" in item
+    ]
+    assert verdicts == [action.value, action.value]
+    assert clients[0].book_calls == []
 
 
 def test_nfl_scan_reuses_duplicate_market_book_for_yes_and_no(monkeypatch, tmp_path):
@@ -2046,9 +2316,12 @@ def test_complete_scored_nfl_buy_survives_scan_to_publication_contract(
         monkeypatch,
         tmp_path,
         rows=[_pmus_nfl_row("825205", "nfl-cin-pit-2026-09-27")],
-        book=lambda slug: {"slug": slug},
+        book=lambda _slug: (_ for _ in ()).throw(
+            AssertionError("published streamed BUY must not call REST")
+        ),
         action_by_side=lambda side: Action.BUY if side == Side.YES else Action.PASS,
         dispatched=dispatched,
+        stream_factory=lambda slugs: _FakePMUSStream(slugs),
     )
     public = sanitize_completed_scan(
         "nfl",

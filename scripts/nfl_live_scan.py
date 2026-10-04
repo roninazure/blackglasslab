@@ -8,6 +8,7 @@ import re
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -30,7 +31,7 @@ from parallax.discovery import (
     paginate_collection,
 )
 from parallax.economics import retail_example
-from parallax.engine import qualify
+from parallax.engine import MAX_AGE_SECONDS, qualify
 from parallax.fees import attach_fees
 from parallax.inbox import default_inbox_store
 from parallax.models import Action, Side, timestamp, utcnow
@@ -46,6 +47,10 @@ from parallax.nfl import (
 )
 from parallax.normalization import normalize_kalshi, normalize_pmus
 from parallax.pmus_acquisition import PMUSAcquisition
+from parallax.pmus_market_data import (
+    PMUSMarketDataStream,
+    PMUSMarketDataUnavailable,
+)
 from parallax.slate import reconcile_slate
 from parallax.sources import KalshiPublicClient
 from parallax.track_record import TrackRecord
@@ -56,6 +61,8 @@ NFL_TZ = ZoneInfo("America/New_York")
 KALSHI_NFL_SERIES_TICKER = "KXNFLGAME"
 KALSHI_NFL_DISCOVERY_MAX_REQUESTS = 12
 PMUS_NFL_MAX_SLUGS = 100
+PMUS_NFL_STREAM_STARTUP_SECONDS = 8.0
+PMUS_NFL_STREAM_STALE_SECONDS = float(MAX_AGE_SECONDS)
 
 # nflverse uses LA for the Rams; both venues use LAR in contract identity.
 NFL_VENUE_TEAM_CODES = {"LA": "LAR"}
@@ -173,6 +180,34 @@ def _scope_pmus(
         ),
         "request_ceiling": client.max_requests_per_minute,
     }
+
+
+def _mapped_pmus_slugs(
+    rows: list[dict], games: list, *, observed_at: str
+) -> list[str]:
+    """Select only supported NFL markets that map to the authoritative slate."""
+    mapping_at = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    slugs: list[str] = []
+    for raw in rows:
+        try:
+            market = normalize_pmus(raw, {}, observed_at)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if market_support_reason(market) != "SUPPORTED":
+            continue
+        mapping = map_market_to_game(market, games, now=mapping_at)
+        if mapping.status == "MAPPED_GAME_WINNER" and mapping.game is not None:
+            slug = str(raw.get("slug") or "")
+            if slug:
+                slugs.append(slug)
+    return list(dict.fromkeys(slugs))
+
+
+def _pmus_stream_from_env(slugs: list[str]) -> PMUSMarketDataStream:
+    return PMUSMarketDataStream.from_env(
+        slugs,
+        stale_seconds=PMUS_NFL_STREAM_STALE_SECONDS,
+    )
 
 
 def _kalshi_event_ticker(game: dict) -> str:
@@ -552,7 +587,12 @@ def _scope_kalshi(client: KalshiPublicClient, scheduled: list[dict]) -> tuple[li
     }
 
 
-def _scan(*, pmus_acquisition: PMUSAcquisition | None = None, fast_publisher=None) -> dict:
+def _scan(
+    *,
+    pmus_acquisition: PMUSAcquisition | None = None,
+    pmus_market_data_factory: Callable[[list[str]], PMUSMarketDataStream] | None = None,
+    fast_publisher=None,
+) -> dict:
     games = fetch_games()
     discovery_at = utcnow()
     scheduled_for_discovery = _upcoming_slate(games, discovery_at)
@@ -566,6 +606,12 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None, fast_publisher=Non
     kalshi_discovery_complete = False
     acquisition = pmus_acquisition or PMUSAcquisition("NFL")
     pmus = PolymarketUSPublicClient()
+    pmus_stream: PMUSMarketDataStream | None = None
+    pmus_stream_failure: Exception | None = None
+    pmus_stream_diagnostics: dict = {
+        "state": "NOT_STARTED",
+        "rest_polling": False,
+    }
     try:
         try:
             pmus_rows, pmus_cov = _scope_pmus(
@@ -598,6 +644,62 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None, fast_publisher=Non
         except Exception as exc:
             kalshi_rows, kalshi_cov = [], {"state": "PARTIAL", "failed_scopes": [{"stage": "series", "error": type(exc).__name__}]}
             result["venues"]["KALSHI"] = {"coverage": kalshi_cov, "nfl_rows": 0}
+        stream_slugs = _mapped_pmus_slugs(
+            pmus_rows, games, observed_at=discovery_at.isoformat()
+        )
+        if stream_slugs:
+            try:
+                factory = pmus_market_data_factory or _pmus_stream_from_env
+                pmus_stream = factory(stream_slugs)
+                pmus_stream.start()
+                full_ready = pmus_stream.wait_ready(
+                    PMUS_NFL_STREAM_STARTUP_SECONDS
+                )
+                pmus_stream_diagnostics = pmus_stream.diagnostics()
+                stream_state = str(
+                    pmus_stream_diagnostics.get("state") or "UNKNOWN"
+                )
+                if not full_ready and (
+                    pmus_stream.failed or stream_state in {"FAILED", "STOPPED"}
+                ):
+                    raise PMUSMarketDataUnavailable(
+                        pmus_stream.error
+                        or "authenticated PMUS stream failed during startup"
+                    )
+                pmus_stream_diagnostics["startup_readiness"] = (
+                    "FULL"
+                    if full_ready
+                    else pmus_stream_diagnostics.get("readiness", "NONE")
+                )
+            except PMUSMarketDataUnavailable as exc:
+                if pmus_stream is not None:
+                    pmus_stream.stop()
+                pmus_stream = None
+                pmus_stream_diagnostics = {
+                    "state": "UNAVAILABLE",
+                    "error": " ".join(redact_sensitive(exc).split())[:240],
+                    "markets_requested": len(stream_slugs),
+                    "startup_readiness": "FAILED",
+                    "rest_polling": False,
+                }
+            except Exception as exc:
+                if pmus_stream is not None:
+                    pmus_stream.stop()
+                pmus_stream = None
+                pmus_stream_failure = exc
+                pmus_stream_diagnostics = {
+                    "state": "FAILED",
+                    "error": " ".join(redact_sensitive(exc).split())[:240],
+                    "markets_requested": len(stream_slugs),
+                    "startup_readiness": "FAILED",
+                    "rest_polling": False,
+                }
+        else:
+            pmus_stream_diagnostics = {
+                "state": "NOT_REQUIRED",
+                "markets_requested": 0,
+                "rest_polling": False,
+            }
         statuses = Counter()
         rejection_reasons = Counter()
         rows_out = []
@@ -652,25 +754,40 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None, fast_publisher=Non
                                 )
                                 rows_out.append(row)
                                 continue
-                            acquired = acquisition.book(
-                                raw["slug"],
-                                lambda raw=raw: pmus.book(raw["slug"]),
-                                fair_probability=evidence.fair_probability,
-                                calibration_edge=VALIDATION_ECE,
-                            )
-                            if acquired.book is None or acquired.observed_at is None:
-                                statuses["BOOK_REQUEST_AVOIDED"] += 1
-                                data_unavailable_game_ids.add(mapping.game.game_id)
-                                publication_blocked_game_venues.add(
-                                    (mapping.game.game_id, venue)
+                            streamed = None
+                            if pmus_stream_failure is not None:
+                                raise pmus_stream_failure
+                            if pmus_stream is not None:
+                                try:
+                                    streamed = pmus_stream.book(raw["slug"])
+                                except PMUSMarketDataUnavailable:
+                                    streamed = None
+                            if streamed is not None:
+                                book = streamed.book
+                                observed_at = streamed.observed_at
+                                statuses["BOOK_STREAMED"] += 1
+                            else:
+                                acquired = acquisition.book(
+                                    raw["slug"],
+                                    lambda raw=raw: pmus.book(raw["slug"]),
+                                    fair_probability=evidence.fair_probability,
+                                    calibration_edge=VALIDATION_ECE,
                                 )
-                                row["scoring_error"] = "ACQUISITION_AVOIDED"
-                                row["scoring_error_reason"] = acquired.avoided_reason
-                                rows_out.append(row)
-                                continue
+                                if acquired.book is None or acquired.observed_at is None:
+                                    statuses["BOOK_REQUEST_AVOIDED"] += 1
+                                    data_unavailable_game_ids.add(mapping.game.game_id)
+                                    publication_blocked_game_venues.add(
+                                        (mapping.game.game_id, venue)
+                                    )
+                                    row["scoring_error"] = "ACQUISITION_AVOIDED"
+                                    row["scoring_error_reason"] = acquired.avoided_reason
+                                    rows_out.append(row)
+                                    continue
+                                book = acquired.book
+                                observed_at = acquired.observed_at
                             market = attach_fees(
                                 normalize_pmus(
-                                    raw, acquired.book, acquired.observed_at
+                                    raw, book, observed_at
                                 ),
                                 utcnow(),
                             )
@@ -805,8 +922,16 @@ def _scan(*, pmus_acquisition: PMUSAcquisition | None = None, fast_publisher=Non
                         # scoring, provider budgets, or completed reconciliation.
                         statuses["FAST_PUBLICATION_ERROR"] += 1
     finally:
+        if pmus_stream is not None:
+            startup_readiness = pmus_stream_diagnostics.get(
+                "startup_readiness", "UNKNOWN"
+            )
+            pmus_stream_diagnostics = pmus_stream.diagnostics()
+            pmus_stream_diagnostics["startup_readiness"] = startup_readiness
+            pmus_stream_diagnostics["shutdown_clean"] = pmus_stream.stop()
         pmus.close()
     result["pmus_acquisition"] = acquisition.diagnostics()
+    result["pmus_market_data"] = pmus_stream_diagnostics
     result["slate"] = reconcile_slate(
         scheduled_for_discovery,
         rows_out,
