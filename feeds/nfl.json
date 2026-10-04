@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-04T17:47:40.659801+00:00",
+  "generated_at": "2026-10-04T17:47:51.401342+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -96,14 +96,33 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "KALSHI"
+    },
+    {
+      "away_team": "New York Giants",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_NYG_WAS:WAS",
+      "edge_pp": 8.5245275,
+      "game_id": "2026_05_NYG_WAS",
+      "home_team": "Washington Commanders",
+      "lifecycle_updated_at": "2026-10-04T17:47:43.274012+00:00",
+      "market_id": "KXNFLGAME-26OCT11NYGWAS-NYG",
+      "model_probability": 0.6752452750163003,
+      "opponent": "New York Giants",
+      "price": 0.59,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Washington Commanders",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "KALSHI"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-04T17:47:32.536094+00:00",
+  "source_feed_generated_at": "2026-10-04T17:47:43.276970+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 5
+    "buy": 6
   }
 }
