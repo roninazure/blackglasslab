@@ -135,7 +135,7 @@ def test_fresh_buy_dispatches_exactly_one_complete_ntfy_alert(tmp_path):
     assert alert_dispatcher.status()["sent"] == 1
 
 
-def test_identical_buy_dedupes_but_material_price_change_realerts(tmp_path):
+def test_identical_buy_and_price_change_dedupe_same_active_position(tmp_path):
     transport = FakeTransport()
     alert_dispatcher = dispatcher(tmp_path, transport)
 
@@ -145,9 +145,9 @@ def test_identical_buy_dedupes_but_material_price_change_realerts(tmp_path):
 
     assert first["deduplicated"] is False
     assert duplicate["deduplicated"] is True
-    assert changed["deduplicated"] is False
-    assert len(transport.calls) == 2
-    assert alert_dispatcher.status()["sent"] == 2
+    assert changed["deduplicated"] is True
+    assert len(transport.calls) == 1
+    assert alert_dispatcher.status()["sent"] == 1
 
 
 @pytest.mark.parametrize("action", [Action.WATCH, Action.PASS])
@@ -199,6 +199,46 @@ def test_ntfy_transport_exception_is_contained_and_failed(tmp_path):
     assert result["status"] == "FAILED"
     assert result["error_code"] == "TRANSPORT_EXCEPTION"
     assert alert_dispatcher.status()["failed"] == 1
+
+
+def test_ntfy_429_retries_same_buy_after_cooldown_without_alert_flood(tmp_path):
+    transport = FakeTransport(
+        DeliveryResult(
+            "FAILED",
+            http_status=429,
+            error_code="HTTP_429",
+            error_summary="ntfy returned HTTP 429.",
+        ),
+        DeliveryResult("SENT", http_status=200),
+    )
+    alert_dispatcher = dispatcher(tmp_path, transport)
+
+    first = send(alert_dispatcher, play())
+    changed_during_cooldown = send(alert_dispatcher, play(price=0.46))
+
+    assert first["status"] == "PENDING"
+    assert first["error_code"] == "HTTP_429"
+    assert changed_during_cooldown["status"] == "PENDING"
+    assert changed_during_cooldown["deduplicated"] is True
+    assert len(transport.calls) == 1
+
+    delivery_id = alert_dispatcher.recent()[0]["delivery_id"]
+    with sqlite3.connect(alert_dispatcher.store.path) as conn:
+        conn.execute(
+            """
+            UPDATE alert_deliveries
+            SET last_attempt_at = '2026-09-23T14:00:00+00:00'
+            WHERE delivery_id = ?
+            """,
+            (delivery_id,),
+        )
+
+    retried = send(alert_dispatcher, play(price=0.47))
+
+    assert retried["status"] == "SENT"
+    assert retried["deduplicated"] is True
+    assert len(transport.calls) == 2
+    assert alert_dispatcher.status()["sent"] == 1
 
 
 
@@ -596,7 +636,7 @@ def test_mlb_scan_collapses_equivalent_kalshi_buys_to_one_best_price(monkeypatch
     assert kwargs["selected_side"] == "San Francisco Giants"
 
 
-def test_general_scan_cross_venue_buy_dedupes_and_material_change_realerts(tmp_path):
+def test_general_scan_cross_venue_buy_dedupes_and_material_change_stays_silent(tmp_path):
     import parallax.__main__ as parallax_main
 
     kalshi_market = _mlb_market("Los Angeles Dodgers", "KAL-LAD-NO")
@@ -632,8 +672,8 @@ def test_general_scan_cross_venue_buy_dedupes_and_material_change_realerts(tmp_p
 
     assert first == {"sent": 1, "deduplicated": 0, "failed": 0}
     assert duplicate == {"sent": 0, "deduplicated": 1, "failed": 0}
-    assert changed == {"sent": 1, "deduplicated": 0, "failed": 0}
-    assert len(transport.calls) == 2
+    assert changed == {"sent": 0, "deduplicated": 1, "failed": 0}
+    assert len(transport.calls) == 1
     assert all("Venue: KALSHI" in payload["message"] for _, payload in transport.calls)
 
 
