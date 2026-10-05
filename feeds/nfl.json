@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T03:01:07.698871+00:00",
+  "generated_at": "2026-10-05T03:01:18.057917+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -20,33 +20,14 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "POLYMARKET"
-    },
-    {
-      "away_team": "Las Vegas Raiders",
-      "contract_side": "NO",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_LV_NE:NE",
-      "edge_pp": 11.95270893,
-      "game_id": "2026_05_LV_NE",
-      "home_team": "New England Patriots",
-      "lifecycle_updated_at": "2026-10-05T02:00:54.300467+00:00",
-      "market_id": "1083084",
-      "model_probability": 0.7570270893015252,
-      "opponent": "Las Vegas Raiders",
-      "price": 0.6375,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "New England Patriots",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T03:00:59.597790+00:00",
+  "source_feed_generated_at": "2026-10-05T03:01:09.951937+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 2
+    "buy": 1
   }
 }
