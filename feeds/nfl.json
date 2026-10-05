@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:43:26.574707+00:00",
+  "generated_at": "2026-10-05T01:43:57.324346+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -10,7 +10,7 @@
       "edge_pp": 19.90945183,
       "game_id": "2026_05_TB_DAL",
       "home_team": "Dallas Cowboys",
-      "lifecycle_updated_at": "2026-10-05T01:43:01.029624+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:43:57.229088+00:00",
       "market_id": "1030131",
       "model_probability": 0.37659451833045976,
       "opponent": "Dallas Cowboys",
@@ -157,7 +157,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:43:22.475028+00:00",
+  "source_feed_generated_at": "2026-10-05T01:43:57.303867+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
