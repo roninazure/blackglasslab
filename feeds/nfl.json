@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:11:55.097046+00:00",
+  "generated_at": "2026-10-05T01:12:05.245472+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -10,7 +10,7 @@
       "edge_pp": 20.73591036,
       "game_id": "2026_05_CHI_GB",
       "home_team": "Green Bay Packers",
-      "lifecycle_updated_at": "2026-10-05T01:11:12.991888+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:12:02.154725+00:00",
       "market_id": "1083103",
       "model_probability": 0.6773591035884879,
       "opponent": "Chicago Bears",
@@ -96,14 +96,52 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "KALSHI"
+    },
+    {
+      "away_team": "Minnesota Vikings",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_MIN_NO:MIN",
+      "edge_pp": 17.90426396,
+      "game_id": "2026_05_MIN_NO",
+      "home_team": "New Orleans Saints",
+      "lifecycle_updated_at": "2026-10-05T01:11:55.160502+00:00",
+      "market_id": "1083087",
+      "model_probability": 0.6915426396381114,
+      "opponent": "New Orleans Saints",
+      "price": 0.5125,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Minnesota Vikings",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "away_team": "Denver Broncos",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_DEN_LAC:LAC",
+      "edge_pp": 10.39727304,
+      "game_id": "2026_05_DEN_LAC",
+      "home_team": "Los Angeles Chargers",
+      "lifecycle_updated_at": "2026-10-05T01:11:55.229815+00:00",
+      "market_id": "1083100",
+      "model_probability": 0.47397273039690035,
+      "opponent": "Denver Broncos",
+      "price": 0.37,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Los Angeles Chargers",
+      "sport": "NFL",
+      "start_time": "2026-10-11T20:05:00+00:00",
+      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:11:46.981928+00:00",
+  "source_feed_generated_at": "2026-10-05T01:12:02.155394+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 5
+    "buy": 7
   }
 }
