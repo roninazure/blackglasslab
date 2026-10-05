@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T04:05:36.095507+00:00",
+  "generated_at": "2026-10-05T04:05:46.913713+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -29,7 +29,7 @@
       "edge_pp": 23.8265611,
       "game_id": "2026_05_PHI_JAX",
       "home_team": "Jacksonville Jaguars",
-      "lifecycle_updated_at": "2026-10-05T04:04:43.582902+00:00",
+      "lifecycle_updated_at": "2026-10-05T04:05:36.221777+00:00",
       "market_id": "1083081",
       "model_probability": 0.5807656109932193,
       "opponent": "Jacksonville Jaguars",
@@ -41,44 +41,6 @@
       "venue": "POLYMARKET"
     },
     {
-      "away_team": "Chicago Bears",
-      "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_CHI_GB:GB",
-      "edge_pp": 23.73591036,
-      "game_id": "2026_05_CHI_GB",
-      "home_team": "Green Bay Packers",
-      "lifecycle_updated_at": "2026-10-05T04:04:47.714211+00:00",
-      "market_id": "KXNFLGAME-26OCT11CHIGB-GB",
-      "model_probability": 0.6773591035884879,
-      "opponent": "Chicago Bears",
-      "price": 0.44,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Green Bay Packers",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "KALSHI"
-    },
-    {
-      "away_team": "Cincinnati Bengals",
-      "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_CIN_MIA:MIA",
-      "edge_pp": 29.87552508,
-      "game_id": "2026_05_CIN_MIA",
-      "home_team": "Miami Dolphins",
-      "lifecycle_updated_at": "2026-10-05T04:04:56.193194+00:00",
-      "market_id": "KXNFLGAME-26OCT11CINMIA-MIA",
-      "model_probability": 0.5187552507699843,
-      "opponent": "Cincinnati Bengals",
-      "price": 0.22,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Miami Dolphins",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "KALSHI"
-    },
-    {
       "away_team": "Cleveland Browns",
       "contract_side": "YES",
       "date": "2026-10-11",
@@ -86,7 +48,7 @@
       "edge_pp": 11.9034898,
       "game_id": "2026_05_CLE_NYJ",
       "home_team": "New York Jets",
-      "lifecycle_updated_at": "2026-10-05T04:05:06.630150+00:00",
+      "lifecycle_updated_at": "2026-10-05T04:05:36.393606+00:00",
       "market_id": "1083082",
       "model_probability": 0.5715348979514447,
       "opponent": "New York Jets",
@@ -96,6 +58,25 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "POLYMARKET"
+    },
+    {
+      "away_team": "Indianapolis Colts",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_IND_PIT:PIT",
+      "edge_pp": 15.280298,
+      "game_id": "2026_05_IND_PIT",
+      "home_team": "Pittsburgh Steelers",
+      "lifecycle_updated_at": "2026-10-05T04:05:38.801512+00:00",
+      "market_id": "KXNFLGAME-26OCT11INDPIT-PIT",
+      "model_probability": 0.712802980013526,
+      "opponent": "Indianapolis Colts",
+      "price": 0.56,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Pittsburgh Steelers",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "KALSHI"
     },
     {
       "away_team": "Las Vegas Raiders",
@@ -136,25 +117,6 @@
       "venue": "POLYMARKET"
     },
     {
-      "away_team": "Denver Broncos",
-      "contract_side": "NO",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_DEN_LAC:LAC",
-      "edge_pp": 10.39727304,
-      "game_id": "2026_05_DEN_LAC",
-      "home_team": "Los Angeles Chargers",
-      "lifecycle_updated_at": "2026-10-05T04:05:25.384426+00:00",
-      "market_id": "1083100",
-      "model_probability": 0.47397273039690035,
-      "opponent": "Denver Broncos",
-      "price": 0.37,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Los Angeles Chargers",
-      "sport": "NFL",
-      "start_time": "2026-10-11T20:05:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
       "away_team": "Buffalo Bills",
       "contract_side": "YES",
       "date": "2026-10-12",
@@ -176,10 +138,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T04:05:33.991013+00:00",
+  "source_feed_generated_at": "2026-10-05T04:05:38.804421+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 9
+    "buy": 7
   }
 }
