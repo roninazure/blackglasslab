@@ -1,0 +1,10 @@
+DROP TRIGGER IF EXISTS trg_revenue_thresholds_no_delete;
+DROP TRIGGER IF EXISTS trg_revenue_thresholds_no_update;
+DROP TRIGGER IF EXISTS trg_revenue_discovery_no_delete;
+DROP TRIGGER IF EXISTS trg_revenue_discovery_no_update;
+DROP TRIGGER IF EXISTS trg_revenue_budget_events_no_delete;
+DROP TRIGGER IF EXISTS trg_revenue_budget_events_no_update;
+DROP TABLE IF EXISTS revenue_poc_shadow_thresholds;
+DROP TABLE IF EXISTS revenue_poc_market_health;
+DROP TABLE IF EXISTS revenue_poc_discovery_snapshots;
+DROP TABLE IF EXISTS revenue_poc_budget_events;
