@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T04:02:26.802306+00:00",
+  "generated_at": "2026-10-05T04:02:37.330284+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -41,6 +41,25 @@
       "venue": "KALSHI"
     },
     {
+      "away_team": "Cincinnati Bengals",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_CIN_MIA:MIA",
+      "edge_pp": 29.87552508,
+      "game_id": "2026_05_CIN_MIA",
+      "home_team": "Miami Dolphins",
+      "lifecycle_updated_at": "2026-10-05T04:02:29.213467+00:00",
+      "market_id": "KXNFLGAME-26OCT11CINMIA-MIA",
+      "model_probability": 0.5187552507699843,
+      "opponent": "Cincinnati Bengals",
+      "price": 0.22,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Miami Dolphins",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "KALSHI"
+    },
+    {
       "away_team": "Denver Broncos",
       "contract_side": "NO",
       "date": "2026-10-11",
@@ -62,10 +81,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T04:02:20.688959+00:00",
+  "source_feed_generated_at": "2026-10-05T04:02:29.216415+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 3
+    "buy": 4
   }
 }
