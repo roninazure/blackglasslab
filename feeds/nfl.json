@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:31:00.373821+00:00",
+  "generated_at": "2026-10-05T01:31:29.606864+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -10,7 +10,7 @@
       "edge_pp": 20.15945183,
       "game_id": "2026_05_TB_DAL",
       "home_team": "Dallas Cowboys",
-      "lifecycle_updated_at": "2026-10-05T01:30:35.728829+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:31:29.508352+00:00",
       "market_id": "1030131",
       "model_probability": 0.37659451833045976,
       "opponent": "Dallas Cowboys",
@@ -29,7 +29,7 @@
       "edge_pp": 23.8265611,
       "game_id": "2026_05_PHI_JAX",
       "home_team": "Jacksonville Jaguars",
-      "lifecycle_updated_at": "2026-10-05T01:30:38.941703+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:31:29.588417+00:00",
       "market_id": "1083081",
       "model_probability": 0.5807656109932193,
       "opponent": "Jacksonville Jaguars",
@@ -176,7 +176,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:30:56.274184+00:00",
+  "source_feed_generated_at": "2026-10-05T01:31:29.589506+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
