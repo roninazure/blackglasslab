@@ -1,4 +1,4 @@
-# PARALLAX / Swarm Edge
+# PARALLAX / Development name - Swarm Edge
 
 PARALLAX is Swarm Axis's production prediction-market intelligence system. It scans supported venues, scores market opportunities, applies fail-closed publication rules, publishes sanitized customer feeds, and sends qualified alerts through **ntfy**.
 
