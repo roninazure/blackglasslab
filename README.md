@@ -1,234 +1,275 @@
-# PARALLAX / Swarm Edge
+<div align="center">
 
-PARALLAX is Swarm Axis's production prediction-market intelligence system. It scans supported venues, scores market opportunities, applies fail-closed publication rules, publishes sanitized customer feeds, and sends qualified alerts through **ntfy**.
+# ◈ PARALLAX
 
-The commercial objective is simple: find real, executable market opportunities with enough edge to matter, surface them quickly, and avoid wasting capital, API budget, or operator time.
+### **Prediction-Market Intelligence Engine**
 
-> **Production principle:** revenue and executable opportunity yield come before architecture work. Do not add complexity unless it improves signal quality, timeliness, reliability, or commercial value.
+**Discover → Reconcile → Score → Certify → Publish**
 
----
+<p>
+  <img src="https://img.shields.io/badge/STATUS-LIVE-22c55e?style=for-the-badge&labelColor=111827" alt="LIVE"/>
+  <img src="https://img.shields.io/badge/MODE-UNATTENDED-2563eb?style=for-the-badge&labelColor=111827" alt="UNATTENDED"/>
+  <img src="https://img.shields.io/badge/SPORTS-NFL_%7C_MLB-7c3aed?style=for-the-badge&labelColor=111827" alt="NFL MLB"/>
+  <img src="https://img.shields.io/badge/EXECUTION-READ_ONLY-f59e0b?style=for-the-badge&labelColor=111827" alt="READ ONLY"/>
+  <img src="https://img.shields.io/badge/ALERTS-ntfy-06b6d4?style=for-the-badge&labelColor=111827" alt="ntfy"/>
+</p>
 
-## Current production state
+**SWARM AXIS // PRODUCTION INTELLIGENCE**
 
-As of **2026-10-05**:
+> Find the edge. Prove the edge. Publish only what survives.
 
-- Production code baseline: `82dafc21d09089893153f6342658df44eb91b998`
-- Authoritative code branch: `main`
-- Live generated-data branch: `parallax-live-data`
-- Preserved review/rollback branch: `review/nfl-p0-offline`
-- Runtime: macOS `launchd`
-- Production service: `com.swarmedge.parallax-sports`
-- Alert provider: **ntfy**
-- Current production focus: **NFL + MLB**
-- Real-money execution: **not part of this runtime**
-
-The checked-out production code and GitHub `main` are expected to remain aligned. Runtime data is deliberately separated from application code.
+</div>
 
 ---
 
-## Repository model
+## ◈ Mission
 
-### `main`
+PARALLAX is Swarm Axis's production prediction-market intelligence system.
 
-Authoritative application code.
+It scans supported venues, reconciles market identity against authoritative sports schedules, scores opportunities, applies execution and publication gates, emits a sanitized customer feed, and delivers qualified alerts through **ntfy**.
 
-Code changes belong here only after they are tested and safe for production.
+The mandate is commercial:
 
-### `parallax-live-data`
+> **Maximize executable opportunity yield without sacrificing trust.**
 
-Automation-owned live feed/data branch.
-
-It changes frequently because unattended publishing updates customer-facing data. **Do not merge this branch into `main` simply because GitHub offers a “Compare & pull request” button.**
-
-### `review/nfl-p0-offline`
-
-Preserved tested baseline used during the NFL P0 hardening work. It currently matches the production-tested code line and is retained until no workflow or operational dependency requires it.
-
-Historical feature work that was intentionally retired from the active branch list is preserved with `archive-*` tags.
+PARALLAX is not an engineering showcase. Architecture exists to serve signal quality, speed, reliability, customer value, and realized-return potential.
 
 ---
 
-## What PARALLAX does
+## ◈ Production Command Deck
 
-The production path is:
+| Surface | Current state |
+|---|---|
+| **Runtime** | macOS `launchd` |
+| **Service** | `com.swarmedge.parallax-sports` |
+| **Operating mode** | Unattended |
+| **Primary sports lanes** | NFL + MLB |
+| **Alerts** | ntfy |
+| **Execution** | Read-only; no real-money order placement |
+| **Deployed production SHA** | `82dafc21d09089893153f6342658df44eb91b998` |
+| **Current GitHub main** | advances independently through tested source/docs cleanup |
+| **Live data branch** | `parallax-live-data` |
+| **Rollback posture** | two known-good generations retained |
+
+**Important:** the deployed production release and GitHub `main` are intentionally distinct concepts. Production runs an immutable tested SHA. `main` may advance with documentation or cleanup work before a new deployment is approved.
+
+---
+
+## ◈ The PARALLAX Decision Chain
 
 ```text
-venue discovery
-    ↓
-market normalization
-    ↓
-authoritative schedule / identity reconciliation
-    ↓
-evidence + model scoring
-    ↓
-economic / execution gates
-    ↓
-BUY / WATCH / PASS
-    ↓
-publication certification
-    ↓
-sanitized customer feed
-    ↓
-ntfy alerting for eligible events
+                 ┌─────────────────────────────┐
+                 │      MARKET VENUES          │
+                 │   Kalshi · Polymarket US    │
+                 └──────────────┬──────────────┘
+                                │
+                                ▼
+                 ┌─────────────────────────────┐
+                 │        DISCOVERY            │
+                 │ bounded · rate-aware        │
+                 └──────────────┬──────────────┘
+                                │
+                                ▼
+                 ┌─────────────────────────────┐
+                 │      NORMALIZATION          │
+                 │ venue data → common model   │
+                 └──────────────┬──────────────┘
+                                │
+                                ▼
+                 ┌─────────────────────────────┐
+                 │    IDENTITY RECONCILIATION  │
+                 │ authoritative game/slate    │
+                 └──────────────┬──────────────┘
+                                │
+                                ▼
+                 ┌─────────────────────────────┐
+                 │      EVIDENCE + MODEL       │
+                 │ probability · confidence    │
+                 └──────────────┬──────────────┘
+                                │
+                                ▼
+                 ┌─────────────────────────────┐
+                 │      ECONOMIC GATES         │
+                 │ price · fees · execution    │
+                 └──────────────┬──────────────┘
+                                │
+                       BUY / WATCH / PASS
+                                │
+                                ▼
+                 ┌─────────────────────────────┐
+                 │  PUBLICATION CERTIFICATION  │
+                 │ fail closed by default      │
+                 └──────────────┬──────────────┘
+                                │
+                 ┌──────────────┴──────────────┐
+                 ▼                             ▼
+      ┌─────────────────────┐       ┌─────────────────────┐
+      │ SANITIZED CUSTOMER  │       │      NTFY ALERT     │
+      │        FEED         │       │ qualified events    │
+      └─────────────────────┘       └─────────────────────┘
 ```
 
-The browser/customer feed is the **post-certification boundary**. Internal certification fields are not required in the customer payload once the publisher has admitted a play.
-
-PARALLAX is an intelligence and publication system. It does not place trades from this production sports runtime.
+The browser/customer feed is the **post-certification boundary**. If a BUY appears in the customer feed, upstream PARALLAX has already admitted it through the publication path.
 
 ---
 
-## Supported venue behavior
+## ◈ What Makes PARALLAX Different
 
-PARALLAX currently works across supported Kalshi and Polymarket US market data paths.
+### 01 // No forced BUYs
 
-Important safety behavior:
+PARALLAX does not relax thresholds to make the product look busy. A quiet system is preferable to fabricated confidence.
 
-- venue failures are isolated
-- one unhealthy venue must not suppress a separately certified BUY from a healthy venue
-- rate limits are treated as a stop condition, not a reason to hammer the provider
-- stale quotes must not remain actionable
-- executable-book requirements fail closed
-- public/customer data is sanitized before publication
+### 02 // Fail closed
 
-### Kalshi
+Missing identity, stale data, incomplete evidence, unsafe execution state, or invalid publication state must not become a customer BUY.
 
-Kalshi discovery is rate-limited and bounded. Public requests use explicit request ceilings and lock out the client after a detected rate-limit event.
+### 03 // Venue isolation
 
-### Polymarket US
+A failure at one venue must not suppress a separately certified opportunity from another healthy venue.
 
-Polymarket US acquisition has its own health and entitlement behavior. Authentication or entitlement problems are treated as that venue's problem and must not suppress healthy Kalshi output.
+### 04 // Natural acceptance
+
+The strongest proof of an alerting or publication change is the **next naturally qualifying BUY** through the unattended pipeline—not a manufactured test signal.
+
+### 05 // Rate limits are signals
+
+HTTP 429 means stop and cool down. PARALLAX does not hammer an unhealthy provider to preserve the appearance of activity.
+
+### 06 // Customer contract over internal plumbing
+
+The public feed contains the customer representation of a certified play. Internal certification flags are not required to leak into the browser schema.
 
 ---
 
-## Sports lanes
+## ◈ Sports Intelligence Lanes
 
-### NFL
+### NFL // Hardened
 
 NFL P0 hardening is complete.
 
-Key production behavior includes:
+The lane includes:
 
 - fast refresh relative to the supervisor cadence
-- stale BUYs become non-actionable
-- BUY publication is isolated from failures on another venue
-- executable-market state is reconciled across refreshes/restarts
-- customer-feed publication is downstream of certification
+- authoritative schedule and market reconciliation
+- stale BUY invalidation
+- executable-book enforcement
+- venue-isolated certification
+- restart-safe market state
+- downstream customer publication only after certification
 
-The production supervisor wakes frequently; NFL refresh operates on a faster cadence than the slower sports lanes.
+### MLB // Hardened
 
-### MLB
+MLB uses authoritative slate identity before a play can become publication eligible.
 
-MLB uses authoritative schedule identity and market-to-game reconciliation before a BUY can become publication eligible.
+Protection includes:
 
-The MLB path includes protection against ambiguous city-form names and venue naming differences. Official slate identity is used to canonicalize teams before evidence certification.
+- city-form team canonicalization
+- venue naming reconciliation
+- freshness checks
+- market-state checks
+- evidence/model gates
+- publication certification
 
-A BUY must survive freshness, market state, schedule identity, evidence/model, and publication gates before it can appear as an actionable customer play.
+A market does not become actionable merely because a venue lists it.
 
-### CFB
+### CFB // Preserved
 
-CFB code and historical work exist in the repository, but CFB is not part of the current frozen NFL/MLB production-change scope. Do not modify CFB incidentally while working on NFL or MLB.
+CFB code remains in the repository, but it is outside the current frozen NFL/MLB production-change scope.
+
+Do not modify CFB incidentally during NFL or MLB work.
 
 ---
 
-## BUY alerting and ntfy
+## ◈ Alert Fabric // ntfy
 
-PARALLAX uses the existing **ntfy** integration for outbound production notifications.
+PARALLAX uses **ntfy** as the production notification provider.
 
-Alert state is persisted in:
+```text
+PARALLAX
+   │
+   ▼
+Alert Store
+   │
+   ▼
+Deduplication
+   │
+   ▼
+Global Cooldown / Retry Policy
+   │
+   ▼
+ntfy
+   │
+   ▼
+Operator / Customer Notification
+```
+
+Alert state persists in:
 
 ```text
 ~/Library/Application Support/SwarmEdge/state/parallax_inbox.sqlite
 ```
 
-The alert pipeline provides:
+Current protections include:
 
-- stable BUY identity so normal quote movement does not create duplicate BUY alerts
-- delivery persistence and deduplication
+- stable BUY identity across ordinary quote drift
+- delivery persistence
+- deduplication
 - retry handling
-- global ntfy cooldown after HTTP 429
-- bounded retry attempts
-- fail-safe behavior so alert delivery errors do not crash the sports scan
+- HTTP 429 classification
+- **300-second global ntfy cooldown**
+- queue preservation during cooldown
+- bounded retry behavior
+- alert failures that do not crash the sports scanner
 
-The current 429 protection uses a **300-second global cooldown**. When ntfy rate-limits the system, additional pending BUYs remain queued rather than being fired repeatedly.
-
-Do not add a second notification provider. Notification defects should be traced through the existing:
-
-```text
-PARALLAX → alert store → ntfy transport → delivery state
-```
-
-The final live acceptance proof for any alerting change should be a **natural qualifying BUY** delivered by the unattended pipeline. Do not manufacture a BUY or run provider scans merely to create an alert.
+**Do not add a second notification provider.** Alert defects belong in the existing PARALLAX → ntfy path.
 
 ---
 
-## Operational invariants
-
-These rules are deliberate:
-
-1. **No forced BUYs.** Scoring thresholds are not relaxed to make the system look active.
-2. **No routine manual scans.** Normal NFL/MLB operation is unattended.
-3. **Rate limit means stop.** Do not repeatedly retry a provider that is returning 429.
-4. **Venue isolation.** One venue failure must not suppress a certified BUY from another healthy venue.
-5. **Fail closed.** Missing mapping, stale data, incomplete evidence, or unsafe execution state must not become a customer BUY.
-6. **Customer feed is post-certification.** Internal certification metadata does not have to leak into the browser schema.
-7. **Production first.** Do not change working production without a concrete regression or revenue-backed reason.
-8. **Rollback stays available.** Deployment changes must preserve a known-good rollback path.
-
----
-
-## Production deployment layout
-
-Runtime assets live under:
+## ◈ Production Runtime
 
 ```text
 ~/Library/Application Support/SwarmEdge/
+├── releases/<git-sha>/      immutable source releases
+├── venvs/<git-sha>/         release-specific environments
+├── state/                   SQLite + runtime state
+├── logs/                    operational logs
+└── parallax-alerts.env      alert configuration
 ```
 
-Current deployment structure:
-
-```text
-releases/<git-sha>/    immutable release source
-venvs/<git-sha>/       release-specific Python environment
-state/                 SQLite/runtime state
-logs/                  runtime logs
-parallax-alerts.env    alert configuration
-```
-
-Current retained release generations:
-
-```text
-82dafc21...   current production
-48fe365d...   immediate rollback
-f3009fe6...   second rollback
-```
-
-The active system LaunchDaemon is:
+The active service is:
 
 ```text
 /Library/LaunchDaemons/com.swarmedge.parallax-sports.plist
 ```
 
-Two rollback plist generations are intentionally retained.
+Retained production generations:
+
+```text
+82dafc21...   CURRENT PRODUCTION
+48fe365d...   ROLLBACK #1
+f3009fe6...   ROLLBACK #2
+```
+
+Production releases are immutable. A dirty working tree is never the deployment source.
 
 ---
 
-## Verify production
-
-Read-only verification:
+## ◈ Read-Only Production Verification
 
 ```bash
 sudo launchctl print system/com.swarmedge.parallax-sports | \
 grep -E 'state =|pid =|program =|PARALLAX_RELEASE_SHA'
 ```
 
-Expected characteristics:
+Expected:
 
-- `state = running`
-- program path under the current release venv
-- `PARALLAX_RELEASE_SHA` matches the intended deployment
+```text
+state = running
+program = .../venvs/<deployed-sha>/bin/python
+PARALLAX_RELEASE_SHA = <deployed-sha>
+```
 
-Check the local source checkout:
+Local source checkout:
 
 ```bash
 cd "$HOME/swarm-runtime/swarm-edge"
@@ -237,47 +278,50 @@ git branch --show-current
 git rev-parse HEAD
 ```
 
-The normal clean state is:
-
-```text
-(no status output)
-main
-<current production-tested SHA>
-```
+A clean checkout may be ahead of the currently deployed production SHA. That is normal until an explicit deployment occurs.
 
 ---
 
-## Testing
+## ◈ Repository Topology
 
-Use an existing development/test environment rather than installing test packages into the production venv.
+### `main`
 
-Focused production regression testing should cover the subsystem being changed plus the neighboring sports lanes most likely to regress.
+Authoritative application source and documentation.
 
-For the 2026-10-05 ntfy/global-cooldown release, the final focused regression gate was:
+### `parallax-live-data`
 
-```text
-161 passed
-```
+Automation-owned customer/live-data branch.
 
-Do not interpret test count alone as production acceptance. Runtime behavior must still be verified naturally after deployment.
+It changes frequently. **Do not merge it into `main` merely because GitHub presents a “Compare & pull request” banner.**
+
+### `review/nfl-p0-offline`
+
+Preserved tested NFL P0 baseline retained until all workflow and operational references are retired.
+
+Historical generations may be retained through `archive-*` tags instead of active branches.
 
 ---
 
-## Development and deployment discipline
+## ◈ Release Discipline
 
-Use this sequence:
+PARALLAX follows:
 
 ```text
 BUILD
-  ↓
+  │
+  ▼
 VERIFY
-  ↓
+  │
+  ▼
 ATTACK
-  ↓
+  │
+  ▼
 IMPROVE
-  ↓
+  │
+  ▼
 RE-VERIFY
-  ↓
+  │
+  ▼
 FREEZE
 ```
 
@@ -288,73 +332,110 @@ For production work:
 - avoid broad refactors during incidents
 - test the exact failure mode
 - preserve rollback
-- deploy the tested SHA
+- deploy the exact tested SHA
 - verify the running process and release SHA
-- freeze when the defect is proven fixed
-
-Do not use the dirty/working checkout as an ad hoc production deployment source. Production releases are immutable SHA-addressed directories.
+- freeze once the defect is proven fixed
 
 ---
 
-## Public feed
+## ◈ Production Invariants
 
-The customer-facing feed is a sanitized artifact produced after upstream certification.
+> These are not suggestions. They are operating law.
 
-For a play to appear as a customer BUY, the upstream scanner/publisher path must have already admitted it. Internal fields such as `publication_eligible` or internal verdict structures may be intentionally absent from the customer schema.
-
-The frontend should consume the customer contract, not attempt to recreate internal certification logic.
-
----
-
-## Alert incident note: 2026-10-05
-
-A production ntfy incident exposed two problems:
-
-1. active BUY identity was too sensitive to normal quote changes, creating repeated alert identities
-2. HTTP 429 handling cooled down individual deliveries but initially allowed other distinct BUYs to continue hitting ntfy
-
-The current production fix:
-
-- stabilizes active BUY identity
-- classifies HTTP 429 explicitly
-- applies a global ntfy cooldown
-- leaves newly queued BUYs pending during cooldown
-- stops traversing additional pending deliveries once ntfy returns 429
-
-After deployment, repeated 429 traffic stopped. Existing queued deliveries are allowed to remain pending; they are not manually replayed to manufacture success.
+1. **No forced BUYs.**
+2. **No routine manual provider scans.**
+3. **429 means stop.**
+4. **Venue failures stay isolated.**
+5. **Unsafe or incomplete data fails closed.**
+6. **Customer feed is post-certification.**
+7. **Working production is not changed without a concrete reason.**
+8. **Every deployment preserves rollback.**
+9. **No real-money execution from the current sports runtime.**
+10. **Revenue value outranks architectural novelty.**
 
 ---
 
-## Revenue mandate
+## ◈ 2026-10-05 ntfy Hardening
 
-PARALLAX is a commercial product, not an infrastructure demonstration.
+A production alert incident exposed two failure modes:
 
-Engineering work should be prioritized by whether it improves one or more of:
+- BUY identity changed with normal quote movement, creating duplicate alert identities.
+- HTTP 429 handling initially cooled individual deliveries while allowing other queued BUYs to continue hitting ntfy.
 
-- executable opportunity yield
-- signal quality
-- timeliness
-- customer trust
-- capital efficiency
-- realized return potential
-- reliability of delivery
+The production fix:
 
-If a feature does not materially improve one of those outcomes, it should not displace revenue work.
+- stabilized BUY identity
+- explicitly classified HTTP 429
+- added a global ntfy cooldown
+- preserved new BUYs in the queue during cooldown
+- stopped additional pending delivery traversal after rate limiting
 
----
+After deployment, repeated 429 traffic stopped.
 
-## Near-term agenda
-
-1. Keep NFL/MLB running unattended and observe the next natural qualifying BUY end to end.
-2. Measure executable opportunity yield rather than raw scan volume.
-3. Audit whether `review/nfl-p0-offline` is still referenced anywhere.
-4. Improve customer-facing value only where it supports conversion, retention, or better decisions.
-5. Add a visible Research/Challenger agent later, after the revenue path remains stable and the agent has a defined commercial role.
+Acceptance remains deliberately conservative: the final proof is a naturally qualifying BUY through the unattended production path.
 
 ---
 
-## Project ownership
+## ◈ Testing Philosophy
 
-PARALLAX is developed under **Swarm Axis**.
+A passing test suite is necessary, not sufficient.
 
-The system should remain easy to operate, easy to roll back, and difficult to fool into publishing low-confidence or stale BUYs.
+PARALLAX acceptance combines:
+
+```text
+UNIT / REGRESSION TESTS
+          +
+RUNTIME VERIFICATION
+          +
+NATURAL PRODUCTION BEHAVIOR
+          =
+ACCEPTANCE
+```
+
+Use development/test environments for pytest. Do not install test tooling into the production venv solely to run validation.
+
+---
+
+## ◈ Revenue Doctrine
+
+PARALLAX exists to create commercially useful intelligence.
+
+Engineering priority is determined by impact on:
+
+| Priority | Outcome |
+|---|---|
+| **1** | Executable opportunity yield |
+| **2** | Signal quality |
+| **3** | Timeliness |
+| **4** | Customer trust |
+| **5** | Capital efficiency |
+| **6** | Realized-return potential |
+| **7** | Delivery reliability |
+
+If work does not materially improve one of these outcomes, it should not displace revenue work.
+
+---
+
+## ◈ Near-Term Flight Plan
+
+1. Keep NFL and MLB running unattended.
+2. Observe the next naturally qualifying BUY end to end.
+3. Measure executable opportunity yield instead of raw scan volume.
+4. Continue surgical removal of legacy dependencies only when current code no longer needs them.
+5. Improve customer-facing value where it supports conversion, retention, or better decisions.
+6. Introduce a visible Research / Challenger agent only after the revenue path remains stable and the role has measurable commercial value.
+
+---
+
+<div align="center">
+
+## ◈ SWARM AXIS
+
+**PARALLAX is not built to look active.  
+It is built to be right often enough, fast enough, and disciplined enough to matter.**
+
+`DISCOVER // SCORE // CERTIFY // PUBLISH // ALERT`
+
+**Revenue first. Evidence always. Fail closed.**
+
+</div>
