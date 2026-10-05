@@ -278,8 +278,11 @@ def test_ntfy_429_globally_blocks_distinct_buy_attempts_during_cooldown(tmp_path
     assert second["error_code"] is None
     assert len(transport.calls) == 1
 
+    assert alert_dispatcher.store.channel_rate_limited("ntfy") is True
     pending = alert_dispatcher.store.pending("ntfy")
-    assert pending == []
+    assert len(pending) == 1
+    assert pending[0]["attempt_count"] == 0
+    assert pending[0]["market_id"] == "KXNFLGAME-TEST-BAL"
 
 
 
