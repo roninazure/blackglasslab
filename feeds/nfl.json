@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:20:31.642396+00:00",
+  "generated_at": "2026-10-05T01:20:42.466192+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -143,7 +143,7 @@
       "edge_pp": 10.39727304,
       "game_id": "2026_05_DEN_LAC",
       "home_team": "Los Angeles Chargers",
-      "lifecycle_updated_at": "2026-10-05T01:19:49.362389+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:20:38.352528+00:00",
       "market_id": "1083100",
       "model_probability": 0.47397273039690035,
       "opponent": "Denver Broncos",
@@ -157,7 +157,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:20:23.536641+00:00",
+  "source_feed_generated_at": "2026-10-05T01:20:38.355636+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
