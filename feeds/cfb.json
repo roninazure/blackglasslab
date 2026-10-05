@@ -1,14 +1,14 @@
 {
-  "generated_at": "2026-10-05T15:58:51.026998+00:00",
+  "generated_at": "2026-10-05T16:43:54.025241+00:00",
   "lane": "CFB",
   "plays": [
     {
       "contract_side": "YES",
-      "edge_pp": 39.380264,
+      "edge_pp": 38.880264,
       "market_id": "1016456",
       "matchup": "Southern Miss at Troy",
       "model_probability": 0.6188026400059088,
-      "price": 0.225,
+      "price": 0.23,
       "sport": "CFB",
       "start_time": "2026-10-07T00:00:00+00:00",
       "venue": "POLYMARKET"
@@ -25,14 +25,14 @@
       "venue": "POLYMARKET"
     },
     {
-      "contract_side": "YES",
-      "edge_pp": 34.12934482,
-      "market_id": "1113494",
-      "matchup": "UCLA at Oregon",
-      "model_probability": 0.5562934481578262,
-      "price": 0.215,
+      "contract_side": "NO",
+      "edge_pp": 15.64312356,
+      "market_id": "1113505",
+      "matchup": "LSU at Kentucky",
+      "model_probability": 0.4014312355970244,
+      "price": 0.245,
       "sport": "CFB",
-      "start_time": "2026-10-10T19:30:00+00:00",
+      "start_time": "2026-10-10T23:00:00+00:00",
       "venue": "POLYMARKET"
     },
     {
@@ -49,7 +49,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T15:54:11.569475+00:00",
+  "source_feed_generated_at": "2026-10-05T16:38:58.679516+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
