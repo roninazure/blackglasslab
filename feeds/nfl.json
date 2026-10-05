@@ -1,25 +1,25 @@
 {
-  "generated_at": "2026-10-05T03:39:45.543566+00:00",
+  "generated_at": "2026-10-05T03:39:56.545275+00:00",
   "lane": "NFL",
   "plays": [
     {
       "away_team": "Tampa Bay Buccaneers",
-      "contract_side": "NO",
+      "contract_side": "YES",
       "date": "2026-10-08",
       "economic_key": "NFL:2026_05_TB_DAL:TB",
-      "edge_pp": 20.65945183,
+      "edge_pp": 20.40945183,
       "game_id": "2026_05_TB_DAL",
       "home_team": "Dallas Cowboys",
-      "lifecycle_updated_at": "2026-10-05T03:39:03.555722+00:00",
-      "market_id": "KXNFLGAME-26OCT08TBDAL-DAL",
+      "lifecycle_updated_at": "2026-10-05T03:39:52.448537+00:00",
+      "market_id": "1030131",
       "model_probability": 0.37659451833045976,
       "opponent": "Dallas Cowboys",
-      "price": 0.17,
+      "price": 0.1725,
       "schedule_status": "SCHEDULED",
       "selected_team": "Tampa Bay Buccaneers",
       "sport": "NFL",
       "start_time": "2026-10-09T00:15:00+00:00",
-      "venue": "KALSHI"
+      "venue": "POLYMARKET"
     },
     {
       "away_team": "Philadelphia Eagles",
@@ -115,14 +115,33 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "POLYMARKET"
+    },
+    {
+      "away_team": "Minnesota Vikings",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_MIN_NO:MIN",
+      "edge_pp": 17.90426396,
+      "game_id": "2026_05_MIN_NO",
+      "home_team": "New Orleans Saints",
+      "lifecycle_updated_at": "2026-10-05T03:39:45.585033+00:00",
+      "market_id": "1083087",
+      "model_probability": 0.6915426396381114,
+      "opponent": "New Orleans Saints",
+      "price": 0.5125,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Minnesota Vikings",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T03:39:37.449949+00:00",
+  "source_feed_generated_at": "2026-10-05T03:39:52.449542+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 6
+    "buy": 7
   }
 }
