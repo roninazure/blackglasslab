@@ -241,6 +241,47 @@ def test_ntfy_429_retries_same_buy_after_cooldown_without_alert_flood(tmp_path):
     assert alert_dispatcher.status()["sent"] == 1
 
 
+def test_ntfy_429_globally_blocks_distinct_buy_attempts_during_cooldown(tmp_path):
+    transport = FakeTransport(
+        DeliveryResult(
+            "FAILED",
+            http_status=429,
+            error_code="HTTP_429",
+            error_summary="ntfy returned HTTP 429.",
+        )
+    )
+    alert_dispatcher = dispatcher(tmp_path, transport)
+
+    first = send(alert_dispatcher, play())
+
+    second_play = play(price=0.45)
+    second_play.market_id = "KXNFLGAME-TEST-BAL"
+    second_market = replace(
+        market(),
+        venue_market_id="KXNFLGAME-TEST-BAL",
+        slug="KXNFLGAME-TEST-BAL",
+        title="Baltimore at Kansas City alternate",
+    )
+    second = dispatch_scored_buy(
+        alert_dispatcher,
+        second_play,
+        second_market,
+        sport="NFL",
+        matchup="Baltimore at Kansas City",
+        detected_at="2026-09-23T15:01:03+00:00",
+    )
+
+    assert first["status"] == "PENDING"
+    assert first["error_code"] == "HTTP_429"
+    assert second["status"] == "PENDING"
+    assert second["http_status"] is None
+    assert second["error_code"] is None
+    assert len(transport.calls) == 1
+
+    pending = alert_dispatcher.store.pending("ntfy")
+    assert pending == []
+
+
 
 def test_mlb_scan_dispatches_only_fresh_buy_alerts(monkeypatch):
     import parallax.__main__ as parallax_main
