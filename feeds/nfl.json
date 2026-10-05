@@ -1,25 +1,25 @@
 {
-  "generated_at": "2026-10-05T03:45:48.764110+00:00",
+  "generated_at": "2026-10-05T03:45:59.598275+00:00",
   "lane": "NFL",
   "plays": [
     {
       "away_team": "Tampa Bay Buccaneers",
-      "contract_side": "NO",
+      "contract_side": "YES",
       "date": "2026-10-08",
       "economic_key": "NFL:2026_05_TB_DAL:TB",
-      "edge_pp": 20.65945183,
+      "edge_pp": 20.15945183,
       "game_id": "2026_05_TB_DAL",
       "home_team": "Dallas Cowboys",
-      "lifecycle_updated_at": "2026-10-05T03:45:07.049131+00:00",
-      "market_id": "KXNFLGAME-26OCT08TBDAL-DAL",
+      "lifecycle_updated_at": "2026-10-05T03:45:55.503658+00:00",
+      "market_id": "1030131",
       "model_probability": 0.37659451833045976,
       "opponent": "Dallas Cowboys",
-      "price": 0.17,
+      "price": 0.175,
       "schedule_status": "SCHEDULED",
       "selected_team": "Tampa Bay Buccaneers",
       "sport": "NFL",
       "start_time": "2026-10-09T00:15:00+00:00",
-      "venue": "KALSHI"
+      "venue": "POLYMARKET"
     },
     {
       "away_team": "Philadelphia Eagles",
@@ -29,7 +29,7 @@
       "edge_pp": 23.8265611,
       "game_id": "2026_05_PHI_JAX",
       "home_team": "Jacksonville Jaguars",
-      "lifecycle_updated_at": "2026-10-05T03:45:07.232628+00:00",
+      "lifecycle_updated_at": "2026-10-05T03:45:59.584416+00:00",
       "market_id": "1083081",
       "model_probability": 0.5807656109932193,
       "opponent": "Jacksonville Jaguars",
@@ -115,14 +115,52 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "POLYMARKET"
+    },
+    {
+      "away_team": "Las Vegas Raiders",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_LV_NE:NE",
+      "edge_pp": 12.20270893,
+      "game_id": "2026_05_LV_NE",
+      "home_team": "New England Patriots",
+      "lifecycle_updated_at": "2026-10-05T03:45:48.832325+00:00",
+      "market_id": "1083084",
+      "model_probability": 0.7570270893015252,
+      "opponent": "Las Vegas Raiders",
+      "price": 0.635,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "New England Patriots",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "away_team": "Minnesota Vikings",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_MIN_NO:MIN",
+      "edge_pp": 17.90426396,
+      "game_id": "2026_05_MIN_NO",
+      "home_team": "New Orleans Saints",
+      "lifecycle_updated_at": "2026-10-05T03:45:48.976543+00:00",
+      "market_id": "1083087",
+      "model_probability": 0.6915426396381114,
+      "opponent": "New Orleans Saints",
+      "price": 0.5125,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Minnesota Vikings",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T03:45:40.674826+00:00",
+  "source_feed_generated_at": "2026-10-05T03:45:59.585552+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 6
+    "buy": 8
   }
 }
