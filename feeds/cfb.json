@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T07:53:23.836383+00:00",
+  "generated_at": "2026-10-05T08:53:27.039378+00:00",
   "lane": "CFB",
   "plays": [
     {
@@ -9,17 +9,6 @@
       "matchup": "Texas at Oklahoma",
       "model_probability": 0.5509031496532268,
       "price": 0.245,
-      "sport": "CFB",
-      "start_time": "2026-10-10T19:30:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "YES",
-      "edge_pp": 34.12934482,
-      "market_id": "1113494",
-      "matchup": "UCLA at Oregon",
-      "model_probability": 0.5562934481578262,
-      "price": 0.215,
       "sport": "CFB",
       "start_time": "2026-10-10T19:30:00+00:00",
       "venue": "POLYMARKET"
@@ -38,10 +27,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T07:51:31.793512+00:00",
+  "source_feed_generated_at": "2026-10-05T08:50:34.111542+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 3
+    "buy": 2
   }
 }
