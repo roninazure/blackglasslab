@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:45:00.280426+00:00",
+  "generated_at": "2026-10-05T01:45:11.036922+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -20,25 +20,6 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "KALSHI"
-    },
-    {
-      "away_team": "Cleveland Browns",
-      "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_CLE_NYJ:CLE",
-      "edge_pp": 11.4034898,
-      "game_id": "2026_05_CLE_NYJ",
-      "home_team": "New York Jets",
-      "lifecycle_updated_at": "2026-10-05T01:44:20.418687+00:00",
-      "market_id": "1083082",
-      "model_probability": 0.5715348979514447,
-      "opponent": "New York Jets",
-      "price": 0.4575,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Cleveland Browns",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
     },
     {
       "away_team": "Indianapolis Colts",
@@ -79,31 +60,31 @@
       "venue": "POLYMARKET"
     },
     {
-      "away_team": "Minnesota Vikings",
-      "contract_side": "YES",
+      "away_team": "Denver Broncos",
+      "contract_side": "NO",
       "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_MIN_NO:MIN",
-      "edge_pp": 17.90426396,
-      "game_id": "2026_05_MIN_NO",
-      "home_team": "New Orleans Saints",
-      "lifecycle_updated_at": "2026-10-05T01:44:52.176230+00:00",
-      "market_id": "1083087",
-      "model_probability": 0.6915426396381114,
-      "opponent": "New Orleans Saints",
-      "price": 0.5125,
+      "economic_key": "NFL:2026_05_DEN_LAC:LAC",
+      "edge_pp": 10.39727304,
+      "game_id": "2026_05_DEN_LAC",
+      "home_team": "Los Angeles Chargers",
+      "lifecycle_updated_at": "2026-10-05T01:45:06.933113+00:00",
+      "market_id": "1083100",
+      "model_probability": 0.47397273039690035,
+      "opponent": "Denver Broncos",
+      "price": 0.37,
       "schedule_status": "SCHEDULED",
-      "selected_team": "Minnesota Vikings",
+      "selected_team": "Los Angeles Chargers",
       "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
+      "start_time": "2026-10-11T20:05:00+00:00",
       "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:44:52.178361+00:00",
+  "source_feed_generated_at": "2026-10-05T01:45:06.935053+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 5
+    "buy": 4
   }
 }
