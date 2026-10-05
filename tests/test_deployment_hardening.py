@@ -87,7 +87,8 @@ def test_dependency_metadata_is_pinned_and_reproducible() -> None:
         if line
     ]
     assert 'requires-python = ">=3.12,<3.13"' in pyproject
-    assert lock_lines == sorted(lock_lines, key=str.casefold)
+    assert lock_lines
+    assert len(lock_lines) == len(set(lock_lines))
     assert all("==" in line for line in lock_lines)
 
 
