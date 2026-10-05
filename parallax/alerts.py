@@ -6,6 +6,7 @@ import logging
 import os
 import sqlite3
 import sys
+from datetime import timedelta
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -40,6 +41,7 @@ ALERT_TITLES = {
 }
 DEFAULT_NTFY_SERVER = "https://ntfy.sh"
 MAX_ATTEMPTS = 2
+ALERT_RETRY_COOLDOWN_SECONDS = 300
 WEBHOOK_TIMEOUT_SECONDS = 5
 MAX_RESPONSE_BYTES = 4096
 
@@ -126,6 +128,13 @@ class WebhookTransport:
                 status = int(response.status)
         except HTTPError as exc:
             exc.read(MAX_RESPONSE_BYTES)
+            if exc.code == 429:
+                return DeliveryResult(
+                    "FAILED",
+                    http_status=exc.code,
+                    error_code="HTTP_429",
+                    error_summary="Webhook returned HTTP 429.",
+                )
             if 500 <= exc.code <= 599:
                 return DeliveryResult(
                     "FAILED",
@@ -501,14 +510,20 @@ class AlertDeliveryStore:
             )
 
     def pending(self, channel: str) -> list[dict[str, Any]]:
+        retry_before = (
+            utcnow() - timedelta(seconds=ALERT_RETRY_COOLDOWN_SECONDS)
+        ).isoformat()
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM alert_deliveries
-                WHERE channel = ? AND status = 'PENDING' AND attempt_count < ?
+                WHERE channel = ?
+                  AND status = 'PENDING'
+                  AND attempt_count < ?
+                  AND (last_attempt_at IS NULL OR last_attempt_at <= ?)
                 ORDER BY created_at
                 """,
-                (channel, MAX_ATTEMPTS),
+                (channel, MAX_ATTEMPTS, retry_before),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -708,7 +723,7 @@ class AlertDispatcher:
                         error_code="TRANSPORT_EXCEPTION",
                         error_summary=f"Alert transport raised {type(exc).__name__}.",
                     )
-                retryable = result.error_code in {"TIMEOUT", "HTTP_5XX"}
+                retryable = result.error_code in {"TIMEOUT", "HTTP_5XX", "HTTP_429"}
                 final = not retryable or delivery["attempt_count"] + 1 >= MAX_ATTEMPTS
                 if result.status == "UNKNOWN":
                     final = True
@@ -736,7 +751,7 @@ class AlertDispatcher:
                 self.config.webhook_url,
                 alert_payload(pending_item, delivery["priority"]),
             )
-            retryable = result.error_code in {"TIMEOUT", "HTTP_5XX"}
+            retryable = result.error_code in {"TIMEOUT", "HTTP_5XX", "HTTP_429"}
             final = not retryable or delivery["attempt_count"] + 1 >= MAX_ATTEMPTS
             if result.status == "UNKNOWN":
                 final = True
@@ -986,20 +1001,17 @@ def _scored_buy_item(
     economic_key: str | None = None,
     selected_side: str | None = None,
 ) -> dict[str, Any]:
-    material_state = {
+    alert_identity = {
+        "sport": sport.upper(),
         "economic_key": economic_key,
         "venue": None if economic_key else str(play.venue),
         "market_id": None if economic_key else play.market_id,
         "side": None if economic_key else str(play.side),
-        "price": _rounded(play.executable_price, 2),
-        "probability": _rounded(play.model_probability, 2),
-        "edge_points": _rounded(play.edge_points, 1),
-        "liquidity": _rounded(play.executable_size, 0),
     }
     if lifecycle_generation is not None:
-        material_state["lifecycle_generation"] = lifecycle_generation
+        alert_identity["lifecycle_generation"] = lifecycle_generation
     fingerprint = hashlib.sha256(
-        json.dumps(material_state, allow_nan=False, sort_keys=True).encode()
+        json.dumps(alert_identity, allow_nan=False, sort_keys=True).encode()
     ).hexdigest()[:16]
     selected_side = selected_side or play.side_description or str(play.side)
     economic_identity = (
