@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T03:31:03.801481+00:00",
+  "generated_at": "2026-10-05T03:31:14.337483+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -29,7 +29,7 @@
       "edge_pp": 23.8265611,
       "game_id": "2026_05_PHI_JAX",
       "home_team": "Jacksonville Jaguars",
-      "lifecycle_updated_at": "2026-10-05T03:30:20.373447+00:00",
+      "lifecycle_updated_at": "2026-10-05T03:31:03.904117+00:00",
       "market_id": "1083081",
       "model_probability": 0.5807656109932193,
       "opponent": "Jacksonville Jaguars",
@@ -38,6 +38,25 @@
       "selected_team": "Philadelphia Eagles",
       "sport": "NFL",
       "start_time": "2026-10-11T13:30:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "away_team": "Chicago Bears",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_CHI_GB:GB",
+      "edge_pp": 23.98591036,
+      "game_id": "2026_05_CHI_GB",
+      "home_team": "Green Bay Packers",
+      "lifecycle_updated_at": "2026-10-05T03:31:06.220654+00:00",
+      "market_id": "1083103",
+      "model_probability": 0.6773591035884879,
+      "opponent": "Chicago Bears",
+      "price": 0.4375,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Green Bay Packers",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "POLYMARKET"
     },
     {
@@ -119,10 +138,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T03:31:03.730712+00:00",
+  "source_feed_generated_at": "2026-10-05T03:31:06.223764+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 6
+    "buy": 7
   }
 }
