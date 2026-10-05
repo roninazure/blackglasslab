@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T03:52:33.982436+00:00",
+  "generated_at": "2026-10-05T03:52:44.192657+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -41,20 +41,20 @@
       "venue": "POLYMARKET"
     },
     {
-      "away_team": "Cincinnati Bengals",
+      "away_team": "Chicago Bears",
       "contract_side": "NO",
       "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_CIN_MIA:MIA",
-      "edge_pp": 29.87552508,
-      "game_id": "2026_05_CIN_MIA",
-      "home_team": "Miami Dolphins",
-      "lifecycle_updated_at": "2026-10-05T03:51:36.555461+00:00",
-      "market_id": "1083083",
-      "model_probability": 0.5187552507699843,
-      "opponent": "Cincinnati Bengals",
-      "price": 0.22,
+      "economic_key": "NFL:2026_05_CHI_GB:GB",
+      "edge_pp": 23.98591036,
+      "game_id": "2026_05_CHI_GB",
+      "home_team": "Green Bay Packers",
+      "lifecycle_updated_at": "2026-10-05T03:52:38.086727+00:00",
+      "market_id": "1083103",
+      "model_probability": 0.6773591035884879,
+      "opponent": "Chicago Bears",
+      "price": 0.4375,
       "schedule_status": "SCHEDULED",
-      "selected_team": "Miami Dolphins",
+      "selected_team": "Green Bay Packers",
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "POLYMARKET"
@@ -119,7 +119,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T03:52:33.963804+00:00",
+  "source_feed_generated_at": "2026-10-05T03:52:38.088951+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
