@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:19:59.809847+00:00",
+  "generated_at": "2026-10-05T01:20:10.651299+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -29,7 +29,7 @@
       "edge_pp": 20.73591036,
       "game_id": "2026_05_CHI_GB",
       "home_team": "Green Bay Packers",
-      "lifecycle_updated_at": "2026-10-05T01:19:12.053910+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:19:59.932847+00:00",
       "market_id": "1083103",
       "model_probability": 0.6773591035884879,
       "opponent": "Chicago Bears",
@@ -48,7 +48,7 @@
       "edge_pp": 30.12552508,
       "game_id": "2026_05_CIN_MIA",
       "home_team": "Miami Dolphins",
-      "lifecycle_updated_at": "2026-10-05T01:19:20.280112+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:19:59.971670+00:00",
       "market_id": "1083083",
       "model_probability": 0.5187552507699843,
       "opponent": "Cincinnati Bengals",
@@ -67,7 +67,7 @@
       "edge_pp": 8.9034898,
       "game_id": "2026_05_CLE_NYJ",
       "home_team": "New York Jets",
-      "lifecycle_updated_at": "2026-10-05T01:19:30.705677+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:20:00.096979+00:00",
       "market_id": "1083082",
       "model_probability": 0.5715348979514447,
       "opponent": "New York Jets",
@@ -80,41 +80,22 @@
     },
     {
       "away_team": "Indianapolis Colts",
-      "contract_side": "NO",
+      "contract_side": "YES",
       "date": "2026-10-11",
       "economic_key": "NFL:2026_05_IND_PIT:PIT",
-      "edge_pp": 16.030298,
+      "edge_pp": 16.280298,
       "game_id": "2026_05_IND_PIT",
       "home_team": "Pittsburgh Steelers",
-      "lifecycle_updated_at": "2026-10-05T01:19:41.115878+00:00",
-      "market_id": "1083096",
+      "lifecycle_updated_at": "2026-10-05T01:20:02.535812+00:00",
+      "market_id": "KXNFLGAME-26OCT11INDPIT-PIT",
       "model_probability": 0.712802980013526,
       "opponent": "Indianapolis Colts",
-      "price": 0.5525,
+      "price": 0.55,
       "schedule_status": "SCHEDULED",
       "selected_team": "Pittsburgh Steelers",
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "away_team": "Minnesota Vikings",
-      "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_MIN_NO:MIN",
-      "edge_pp": 17.90426396,
-      "game_id": "2026_05_MIN_NO",
-      "home_team": "New Orleans Saints",
-      "lifecycle_updated_at": "2026-10-05T01:19:49.300708+00:00",
-      "market_id": "1083087",
-      "model_probability": 0.6915426396381114,
-      "opponent": "New Orleans Saints",
-      "price": 0.5125,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Minnesota Vikings",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
+      "venue": "KALSHI"
     },
     {
       "away_team": "Denver Broncos",
@@ -138,10 +119,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:19:55.715591+00:00",
+  "source_feed_generated_at": "2026-10-05T01:20:02.538828+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 7
+    "buy": 6
   }
 }
