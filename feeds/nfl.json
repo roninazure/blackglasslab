@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:21:36.839137+00:00",
+  "generated_at": "2026-10-05T01:21:47.425574+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -29,7 +29,7 @@
       "edge_pp": 23.8265611,
       "game_id": "2026_05_PHI_JAX",
       "home_team": "Jacksonville Jaguars",
-      "lifecycle_updated_at": "2026-10-05T01:20:57.785985+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:21:36.893486+00:00",
       "market_id": "1083081",
       "model_probability": 0.5807656109932193,
       "opponent": "Jacksonville Jaguars",
@@ -48,7 +48,7 @@
       "edge_pp": 20.73591036,
       "game_id": "2026_05_CHI_GB",
       "home_team": "Green Bay Packers",
-      "lifecycle_updated_at": "2026-10-05T01:21:01.661374+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:21:36.927768+00:00",
       "market_id": "1083103",
       "model_probability": 0.6773591035884879,
       "opponent": "Chicago Bears",
@@ -67,7 +67,7 @@
       "edge_pp": 30.12552508,
       "game_id": "2026_05_CIN_MIA",
       "home_team": "Miami Dolphins",
-      "lifecycle_updated_at": "2026-10-05T01:21:10.264662+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:21:37.074533+00:00",
       "market_id": "1083083",
       "model_probability": 0.5187552507699843,
       "opponent": "Cincinnati Bengals",
@@ -77,6 +77,25 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "POLYMARKET"
+    },
+    {
+      "away_team": "Cleveland Browns",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_CLE_NYJ:CLE",
+      "edge_pp": 8.1534898,
+      "game_id": "2026_05_CLE_NYJ",
+      "home_team": "New York Jets",
+      "lifecycle_updated_at": "2026-10-05T01:21:39.311799+00:00",
+      "market_id": "KXNFLGAME-26OCT11CLENYJ-CLE",
+      "model_probability": 0.5715348979514447,
+      "opponent": "New York Jets",
+      "price": 0.49,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Cleveland Browns",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "KALSHI"
     },
     {
       "away_team": "Indianapolis Colts",
@@ -138,10 +157,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:21:36.762964+00:00",
+  "source_feed_generated_at": "2026-10-05T01:21:39.314738+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 7
+    "buy": 8
   }
 }
