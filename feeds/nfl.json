@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T00:57:35.665288+00:00",
+  "generated_at": "2026-10-05T00:57:46.295908+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -80,22 +80,22 @@
     },
     {
       "away_team": "Indianapolis Colts",
-      "contract_side": "NO",
+      "contract_side": "YES",
       "date": "2026-10-11",
       "economic_key": "NFL:2026_05_IND_PIT:PIT",
-      "edge_pp": 16.030298,
+      "edge_pp": 16.280298,
       "game_id": "2026_05_IND_PIT",
       "home_team": "Pittsburgh Steelers",
-      "lifecycle_updated_at": "2026-10-05T00:57:06.910983+00:00",
-      "market_id": "1083096",
+      "lifecycle_updated_at": "2026-10-05T00:57:42.192520+00:00",
+      "market_id": "KXNFLGAME-26OCT11INDPIT-PIT",
       "model_probability": 0.712802980013526,
       "opponent": "Indianapolis Colts",
-      "price": 0.5525,
+      "price": 0.55,
       "schedule_status": "SCHEDULED",
       "selected_team": "Pittsburgh Steelers",
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
+      "venue": "KALSHI"
     },
     {
       "away_team": "Minnesota Vikings",
@@ -119,7 +119,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T00:57:27.563026+00:00",
+  "source_feed_generated_at": "2026-10-05T00:57:42.194376+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
