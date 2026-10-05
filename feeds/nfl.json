@@ -1,7 +1,26 @@
 {
-  "generated_at": "2026-10-05T17:04:13.994157+00:00",
+  "generated_at": "2026-10-05T17:04:24.618588+00:00",
   "lane": "NFL",
   "plays": [
+    {
+      "away_team": "Cleveland Browns",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_CLE_NYJ:CLE",
+      "edge_pp": 12.1534898,
+      "game_id": "2026_05_CLE_NYJ",
+      "home_team": "New York Jets",
+      "lifecycle_updated_at": "2026-10-05T04:08:05.813668+00:00",
+      "market_id": "1083082",
+      "model_probability": 0.5715348979514447,
+      "opponent": "New York Jets",
+      "price": 0.45,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Cleveland Browns",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
     {
       "away_team": "Buffalo Bills",
       "contract_side": "YES",
@@ -24,10 +43,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T17:04:11.892910+00:00",
+  "source_feed_generated_at": "2026-10-05T17:04:17.519413+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 1
+    "buy": 2
   }
 }
