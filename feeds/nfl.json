@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T03:58:55.158667+00:00",
+  "generated_at": "2026-10-05T03:59:05.610742+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -41,20 +41,20 @@
       "venue": "POLYMARKET"
     },
     {
-      "away_team": "Indianapolis Colts",
+      "away_team": "Cincinnati Bengals",
       "contract_side": "YES",
       "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_IND_PIT:PIT",
-      "edge_pp": 16.280298,
-      "game_id": "2026_05_IND_PIT",
-      "home_team": "Pittsburgh Steelers",
-      "lifecycle_updated_at": "2026-10-05T03:57:49.832566+00:00",
-      "market_id": "KXNFLGAME-26OCT11INDPIT-PIT",
-      "model_probability": 0.712802980013526,
-      "opponent": "Indianapolis Colts",
-      "price": 0.55,
+      "economic_key": "NFL:2026_05_CIN_MIA:MIA",
+      "edge_pp": 29.87552508,
+      "game_id": "2026_05_CIN_MIA",
+      "home_team": "Miami Dolphins",
+      "lifecycle_updated_at": "2026-10-05T03:58:57.506131+00:00",
+      "market_id": "KXNFLGAME-26OCT11CINMIA-MIA",
+      "model_probability": 0.5187552507699843,
+      "opponent": "Cincinnati Bengals",
+      "price": 0.22,
       "schedule_status": "SCHEDULED",
-      "selected_team": "Pittsburgh Steelers",
+      "selected_team": "Miami Dolphins",
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "KALSHI"
@@ -81,7 +81,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T03:58:49.055618+00:00",
+  "source_feed_generated_at": "2026-10-05T03:58:57.508085+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
