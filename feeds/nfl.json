@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T03:40:17.813779+00:00",
+  "generated_at": "2026-10-05T03:40:28.170767+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -124,7 +124,7 @@
       "edge_pp": 17.90426396,
       "game_id": "2026_05_MIN_NO",
       "home_team": "New Orleans Saints",
-      "lifecycle_updated_at": "2026-10-05T03:39:45.585033+00:00",
+      "lifecycle_updated_at": "2026-10-05T03:40:20.067034+00:00",
       "market_id": "1083087",
       "model_probability": 0.6915426396381114,
       "opponent": "New Orleans Saints",
@@ -138,7 +138,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T03:40:09.703102+00:00",
+  "source_feed_generated_at": "2026-10-05T03:40:20.068855+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
