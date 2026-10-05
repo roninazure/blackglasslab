@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -15,6 +16,56 @@ from .model import MakerFeeMetadata, QuoteSnapshot, fee_metadata_from_venue
 
 
 ALLOWED_HOSTS = {"gamma-api.polymarket.com", "clob.polymarket.com", "data-api.polymarket.com"}
+
+_SENSITIVE_QUERY_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "key",
+    "secret",
+    "token",
+}
+
+
+class PublicHTTPError(RuntimeError):
+    """Bounded, redacted context for a failed public read-only HTTP request."""
+
+
+def _redact_url(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    redacted_query = [
+        (key, "<redacted>" if key.lower() in _SENSITIVE_QUERY_KEYS else value)
+        for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    ]
+    return urllib.parse.urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urllib.parse.urlencode(redacted_query),
+            parsed.fragment,
+        )
+    )
+
+
+def _http_error_message(
+    exc: urllib.error.HTTPError, *, operation: str | None
+) -> str:
+    try:
+        raw = exc.read(512)
+    except Exception:
+        raw = b""
+    response = raw.decode("utf-8", errors="replace").strip()
+    if not response:
+        response = "<empty>"
+    return (
+        "public HTTP request failed "
+        f"operation={operation or 'unspecified'} "
+        "method=GET "
+        f"status={exc.code} "
+        f"url={_redact_url(exc.geturl())} "
+        f"response={response}"
+    )
 
 
 @dataclass(frozen=True)
@@ -33,10 +84,10 @@ class ReadOnlyPublicClient:
         self.timeout_seconds = timeout_seconds
         self.deadline_monotonic = deadline_monotonic
 
-    def get(self, url: str) -> Any:
+    def get(self, url: str, *, operation: str | None = None) -> Any:
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
-            raise ValueError(f"URL is outside the public read-only allowlist: {url}")
+            raise ValueError(f"URL is outside the public read-only allowlist: {_redact_url(url)}")
         timeout = self.timeout_seconds
         if self.deadline_monotonic is not None:
             timeout = min(timeout, self.deadline_monotonic - time.monotonic())
@@ -47,8 +98,15 @@ class ReadOnlyPublicClient:
             method="GET",
             headers={"Accept": "application/json", "User-Agent": "swarm-edge-maker-paper/1.0"},
         )
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=timeout) as response:
-            return json.loads(response.read())
+        try:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+                request, timeout=timeout
+            ) as response:
+                return json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            raise PublicHTTPError(
+                _http_error_message(exc, operation=operation)
+            ) from exc
 
 
 def _list(value: Any) -> list[Any]:
