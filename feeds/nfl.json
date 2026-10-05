@@ -1,13 +1,33 @@
 {
-  "generated_at": "2026-10-05T06:22:35.190868+00:00",
+  "generated_at": "2026-10-05T06:22:59.163742+00:00",
   "lane": "NFL",
-  "plays": [],
+  "plays": [
+    {
+      "away_team": "Tampa Bay Buccaneers",
+      "contract_side": "YES",
+      "date": "2026-10-08",
+      "economic_key": "NFL:2026_05_TB_DAL:TB",
+      "edge_pp": 20.40945183,
+      "game_id": "2026_05_TB_DAL",
+      "home_team": "Dallas Cowboys",
+      "lifecycle_updated_at": "2026-10-05T04:08:03.533979+00:00",
+      "market_id": "1030131",
+      "model_probability": 0.37659451833045976,
+      "opponent": "Dallas Cowboys",
+      "price": 0.1725,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Tampa Bay Buccaneers",
+      "sport": "NFL",
+      "start_time": "2026-10-09T00:15:00+00:00",
+      "venue": "POLYMARKET"
+    }
+  ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T06:22:35.086930+00:00",
+  "source_feed_generated_at": "2026-10-05T06:22:59.141054+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 0
+    "buy": 1
   }
 }
