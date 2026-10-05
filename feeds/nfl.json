@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T03:37:30.512488+00:00",
+  "generated_at": "2026-10-05T03:37:41.057857+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -79,28 +79,28 @@
       "venue": "KALSHI"
     },
     {
-      "away_team": "Denver Broncos",
-      "contract_side": "NO",
+      "away_team": "Cleveland Browns",
+      "contract_side": "YES",
       "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_DEN_LAC:LAC",
-      "edge_pp": 10.39727304,
-      "game_id": "2026_05_DEN_LAC",
-      "home_team": "Los Angeles Chargers",
-      "lifecycle_updated_at": "2026-10-05T03:36:30.454679+00:00",
-      "market_id": "KXNFLGAME-26OCT11DENLAC-DEN",
-      "model_probability": 0.47397273039690035,
-      "opponent": "Denver Broncos",
-      "price": 0.37,
+      "economic_key": "NFL:2026_05_CLE_NYJ:CLE",
+      "edge_pp": 11.1534898,
+      "game_id": "2026_05_CLE_NYJ",
+      "home_team": "New York Jets",
+      "lifecycle_updated_at": "2026-10-05T03:37:32.935828+00:00",
+      "market_id": "KXNFLGAME-26OCT11CLENYJ-CLE",
+      "model_probability": 0.5715348979514447,
+      "opponent": "New York Jets",
+      "price": 0.46,
       "schedule_status": "SCHEDULED",
-      "selected_team": "Los Angeles Chargers",
+      "selected_team": "Cleveland Browns",
       "sport": "NFL",
-      "start_time": "2026-10-11T20:05:00+00:00",
+      "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "KALSHI"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T03:37:22.407108+00:00",
+  "source_feed_generated_at": "2026-10-05T03:37:32.938734+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
