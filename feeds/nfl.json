@@ -1,25 +1,25 @@
 {
-  "generated_at": "2026-10-05T04:13:19.104260+00:00",
+  "generated_at": "2026-10-05T04:13:29.722116+00:00",
   "lane": "NFL",
   "plays": [
     {
-      "away_team": "Minnesota Vikings",
+      "away_team": "Cincinnati Bengals",
       "contract_side": "YES",
       "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_MIN_NO:MIN",
-      "edge_pp": 17.90426396,
-      "game_id": "2026_05_MIN_NO",
-      "home_team": "New Orleans Saints",
-      "lifecycle_updated_at": "2026-10-05T04:08:08.286838+00:00",
-      "market_id": "1083087",
-      "model_probability": 0.6915426396381114,
-      "opponent": "New Orleans Saints",
-      "price": 0.5125,
+      "economic_key": "NFL:2026_05_CIN_MIA:MIA",
+      "edge_pp": 29.87552508,
+      "game_id": "2026_05_CIN_MIA",
+      "home_team": "Miami Dolphins",
+      "lifecycle_updated_at": "2026-10-05T04:07:17.072824+00:00",
+      "market_id": "KXNFLGAME-26OCT11CINMIA-MIA",
+      "model_probability": 0.5187552507699843,
+      "opponent": "Cincinnati Bengals",
+      "price": 0.22,
       "schedule_status": "SCHEDULED",
-      "selected_team": "Minnesota Vikings",
+      "selected_team": "Miami Dolphins",
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
+      "venue": "KALSHI"
     },
     {
       "away_team": "Denver Broncos",
@@ -43,7 +43,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T04:13:13.000541+00:00",
+  "source_feed_generated_at": "2026-10-05T04:13:21.609862+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
