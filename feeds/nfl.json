@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:51:48.656028+00:00",
+  "generated_at": "2026-10-05T01:51:58.973956+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -20,6 +20,25 @@
       "sport": "NFL",
       "start_time": "2026-10-09T00:15:00+00:00",
       "venue": "POLYMARKET"
+    },
+    {
+      "away_team": "Chicago Bears",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_CHI_GB:GB",
+      "edge_pp": 20.73591036,
+      "game_id": "2026_05_CHI_GB",
+      "home_team": "Green Bay Packers",
+      "lifecycle_updated_at": "2026-10-05T01:51:52.858394+00:00",
+      "market_id": "KXNFLGAME-26OCT11CHIGB-CHI",
+      "model_probability": 0.6773591035884879,
+      "opponent": "Chicago Bears",
+      "price": 0.47,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Green Bay Packers",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "KALSHI"
     },
     {
       "away_team": "Cincinnati Bengals",
@@ -138,10 +157,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:51:48.634549+00:00",
+  "source_feed_generated_at": "2026-10-05T01:51:52.861424+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 7
+    "buy": 8
   }
 }
