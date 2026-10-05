@@ -1,7 +1,26 @@
 {
-  "generated_at": "2026-10-05T02:31:07.634961+00:00",
+  "generated_at": "2026-10-05T02:31:18.423499+00:00",
   "lane": "NFL",
   "plays": [
+    {
+      "away_team": "Cincinnati Bengals",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_CIN_MIA:MIA",
+      "edge_pp": 29.87552508,
+      "game_id": "2026_05_CIN_MIA",
+      "home_team": "Miami Dolphins",
+      "lifecycle_updated_at": "2026-10-05T02:03:24.241143+00:00",
+      "market_id": "1083083",
+      "model_probability": 0.5187552507699843,
+      "opponent": "Cincinnati Bengals",
+      "price": 0.22,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Miami Dolphins",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
     {
       "away_team": "Cleveland Browns",
       "contract_side": "YES",
@@ -20,6 +39,25 @@
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "POLYMARKET"
+    },
+    {
+      "away_team": "Indianapolis Colts",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_IND_PIT:PIT",
+      "edge_pp": 16.280298,
+      "game_id": "2026_05_IND_PIT",
+      "home_team": "Pittsburgh Steelers",
+      "lifecycle_updated_at": "2026-10-05T02:31:10.318490+00:00",
+      "market_id": "KXNFLGAME-26OCT11INDPIT-PIT",
+      "model_probability": 0.712802980013526,
+      "opponent": "Indianapolis Colts",
+      "price": 0.55,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Pittsburgh Steelers",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "KALSHI"
     },
     {
       "away_team": "Minnesota Vikings",
@@ -43,10 +81,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T02:31:03.539332+00:00",
+  "source_feed_generated_at": "2026-10-05T02:31:10.320895+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 2
+    "buy": 4
   }
 }
