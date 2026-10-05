@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:52:52.197255+00:00",
+  "generated_at": "2026-10-05T01:53:02.472895+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -86,7 +86,7 @@
       "edge_pp": 11.95270893,
       "game_id": "2026_05_LV_NE",
       "home_team": "New England Patriots",
-      "lifecycle_updated_at": "2026-10-05T01:52:30.745958+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:52:54.373859+00:00",
       "market_id": "1083084",
       "model_probability": 0.7570270893015252,
       "opponent": "Las Vegas Raiders",
@@ -138,7 +138,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:52:44.087014+00:00",
+  "source_feed_generated_at": "2026-10-05T01:52:54.375606+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
