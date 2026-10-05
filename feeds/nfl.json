@@ -1,26 +1,7 @@
 {
-  "generated_at": "2026-10-05T03:42:41.382832+00:00",
+  "generated_at": "2026-10-05T03:43:14.347865+00:00",
   "lane": "NFL",
   "plays": [
-    {
-      "away_team": "Tampa Bay Buccaneers",
-      "contract_side": "NO",
-      "date": "2026-10-08",
-      "economic_key": "NFL:2026_05_TB_DAL:TB",
-      "edge_pp": 20.65945183,
-      "game_id": "2026_05_TB_DAL",
-      "home_team": "Dallas Cowboys",
-      "lifecycle_updated_at": "2026-10-05T03:42:31.119418+00:00",
-      "market_id": "KXNFLGAME-26OCT08TBDAL-DAL",
-      "model_probability": 0.37659451833045976,
-      "opponent": "Dallas Cowboys",
-      "price": 0.17,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Tampa Bay Buccaneers",
-      "sport": "NFL",
-      "start_time": "2026-10-09T00:15:00+00:00",
-      "venue": "KALSHI"
-    },
     {
       "away_team": "Philadelphia Eagles",
       "contract_side": "YES",
@@ -29,7 +10,7 @@
       "edge_pp": 23.8265611,
       "game_id": "2026_05_PHI_JAX",
       "home_team": "Jacksonville Jaguars",
-      "lifecycle_updated_at": "2026-10-05T03:42:31.283022+00:00",
+      "lifecycle_updated_at": "2026-10-05T03:43:14.271683+00:00",
       "market_id": "1083081",
       "model_probability": 0.5807656109932193,
       "opponent": "Jacksonville Jaguars",
@@ -157,10 +138,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T03:42:35.274559+00:00",
+  "source_feed_generated_at": "2026-10-05T03:43:14.272983+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 8
+    "buy": 7
   }
 }
