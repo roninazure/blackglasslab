@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T04:06:18.289114+00:00",
+  "generated_at": "2026-10-05T04:06:31.549684+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -10,7 +10,7 @@
       "edge_pp": 20.40945183,
       "game_id": "2026_05_TB_DAL",
       "home_team": "Dallas Cowboys",
-      "lifecycle_updated_at": "2026-10-05T04:05:33.989477+00:00",
+      "lifecycle_updated_at": "2026-10-05T04:06:31.454568+00:00",
       "market_id": "1030131",
       "model_probability": 0.37659451833045976,
       "opponent": "Dallas Cowboys",
@@ -29,7 +29,7 @@
       "edge_pp": 23.8265611,
       "game_id": "2026_05_PHI_JAX",
       "home_team": "Jacksonville Jaguars",
-      "lifecycle_updated_at": "2026-10-05T04:05:36.221777+00:00",
+      "lifecycle_updated_at": "2026-10-05T04:06:31.528588+00:00",
       "market_id": "1083081",
       "model_probability": 0.5807656109932193,
       "opponent": "Jacksonville Jaguars",
@@ -134,14 +134,33 @@
       "sport": "NFL",
       "start_time": "2026-10-11T20:05:00+00:00",
       "venue": "KALSHI"
+    },
+    {
+      "away_team": "Buffalo Bills",
+      "contract_side": "YES",
+      "date": "2026-10-12",
+      "economic_key": "NFL:2026_05_BUF_LA:BUF",
+      "edge_pp": 11.0746578,
+      "game_id": "2026_05_BUF_LA",
+      "home_team": "Los Angeles Rams",
+      "lifecycle_updated_at": "2026-10-05T04:06:18.480029+00:00",
+      "market_id": "1106139",
+      "model_probability": 0.5307465780009113,
+      "opponent": "Los Angeles Rams",
+      "price": 0.42,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Buffalo Bills",
+      "sport": "NFL",
+      "start_time": "2026-10-13T00:15:00+00:00",
+      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T04:06:14.188839+00:00",
+  "source_feed_generated_at": "2026-10-05T04:06:31.529617+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 7
+    "buy": 8
   }
 }
