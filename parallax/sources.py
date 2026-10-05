@@ -179,6 +179,52 @@ def _kalshi_mlb_row_in_slate(
     return str(row.get("event_ticker") or "").strip().upper() in eligible_event_tickers
 
 
+def _with_authoritative_mlb_metadata(
+    market: NormalizedMarket,
+    game: dict | None,
+) -> NormalizedMarket:
+    """Replace derived MLB identity with exact official-slate identity."""
+    if not game:
+        return market
+
+    home = str(game.get("home_team") or "").strip()
+    away = str(game.get("away_team") or "").strip()
+    start = str(game.get("start_time") or "").strip()
+    if not home or not away or not start:
+        return market
+
+    metadata = dict(market.original_metadata)
+    raw = dict(metadata.get("market") or {})
+    raw["mlb"] = {
+        "league": "MLB",
+        "market_type": "moneyline",
+        "home_team": home,
+        "away_team": away,
+        "start_time": start,
+    }
+    metadata["market"] = raw
+
+    outcomes = dict(market.outcomes)
+    ticker = str(raw.get("ticker") or market.venue_market_id or "").strip().upper()
+    selected_code = ticker.rsplit("-", 1)[-1] if "-" in ticker else ""
+
+    home_code = str(game.get("home_team_code") or "").strip().upper()
+    away_code = str(game.get("away_team_code") or "").strip().upper()
+
+    if selected_code == home_code:
+        outcomes["YES"] = home
+        outcomes["NO"] = home
+    elif selected_code == away_code:
+        outcomes["YES"] = away
+        outcomes["NO"] = away
+
+    return replace(
+        market,
+        original_metadata=metadata,
+        outcomes=outcomes,
+    )
+
+
 def _scope_pmus_mlb(
     client: PolymarketUSPublicClient,
     acquisition: PMUSAcquisition,
@@ -485,7 +531,12 @@ def collect_markets(
     kalshi = KalshiPublicClient()
     events, series = {}, {}
     try:
-        eligible_event_tickers = _kalshi_mlb_event_tickers(slate_schedule)
+        authoritative_kalshi_games = {
+            ticker: game
+            for game in slate_schedule
+            for ticker in _kalshi_mlb_event_tickers([game])
+        }
+        eligible_event_tickers = set(authoritative_kalshi_games)
         rows, kalshi_coverage = paginate_collection(
             kalshi.mlb_markets_page,
             key="markets",
@@ -511,9 +562,13 @@ def collect_markets(
         for row in scoped_rows:
             book, trades = {}, None
             event, fee_series = None, None
+            authoritative_game = None
             mapped_game_id = None
             try:
                 event_id = row["event_ticker"]
+                authoritative_game = authoritative_kalshi_games.get(
+                    str(event_id).strip().upper()
+                )
                 if event_id not in events:
                     events[event_id] = kalshi.event(event_id)
                 event = events[event_id]
@@ -527,6 +582,9 @@ def collect_markets(
             try:
                 # Exact mapping/evidence precedes executable-book retrieval.
                 candidate = normalize_kalshi(row, {}, discovery_at, None, event)
+                candidate = _with_authoritative_mlb_metadata(
+                    candidate, authoritative_game
+                )
                 proof = provider.assess(candidate)
                 if proof is None:
                     failure(
@@ -546,6 +604,9 @@ def collect_markets(
                 book = kalshi.book(row["ticker"])
                 observed_at = utcnow().isoformat()
                 market = normalize_kalshi(row, book, observed_at, trades, event)
+                market = _with_authoritative_mlb_metadata(
+                    market, authoritative_game
+                )
                 market = replace(market, data_timestamp=discovery_at)
                 market = attach_fees(market, utcnow(), event=event, series=fee_series)
                 markets.append(market)

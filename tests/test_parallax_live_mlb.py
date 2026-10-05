@@ -7,7 +7,7 @@ import parallax.__main__ as parallax_main
 from parallax import sources
 from parallax.demo import demo_inputs
 from parallax.inbox import InboxStore
-from parallax.mlb import DIVISION_SERIES_VALIDATION_REFERENCE, MLBStatsAPI
+from parallax.mlb import DIVISION_SERIES_VALIDATION_REFERENCE, MLBEvidenceProvider, MLBStatsAPI
 from parallax.models import Action, Evidence, Venue
 from parallax.normalization import normalize_kalshi, rules_digest
 from parallax.pmus_acquisition import PMUSAcquisition
@@ -933,3 +933,175 @@ def test_ambiguous_postseason_market_is_not_publication_attested():
     certified = parallax_main.certify_mlb_publication_rows(service, [row], slate)
 
     assert certified[0]["publication_eligible"] is False
+
+
+def test_kalshi_city_form_milwaukee_uses_authoritative_slate_identity(monkeypatch):
+    game = {
+        "game_id": "849825",
+        "game_type": "D",
+        "date": "2026-10-04",
+        "start_time": "2026-10-04T20:00:00+00:00",
+        "away_team": "San Diego Padres",
+        "home_team": "Milwaukee Brewers",
+        "away_team_code": "SD",
+        "home_team_code": "MIL",
+        "schedule_status": "SCHEDULED",
+    }
+
+    raw = {
+        "ticker": "KXMLBGAME-26OCT04SDMIL-MIL",
+        "event_ticker": "KXMLBGAME-26OCT04SDMIL",
+        "title": "Milwaukee wins",
+        "yes_sub_title": "Milwaukee",
+        "no_sub_title": "Milwaukee",
+        "status": "active",
+        "market_type": "binary",
+        "rules_primary": (
+            "If Milwaukee wins the San Diego vs Milwaukee "
+            "professional baseball game originally scheduled for "
+            "Oct 4, 2026 at 4:00 PM EDT, then the market resolves to Yes."
+        ),
+    }
+
+    market = normalize_kalshi(
+        raw,
+        {},
+        "2026-10-04T12:00:00+00:00",
+    )
+
+    market = sources._with_authoritative_mlb_metadata(market, game)
+
+    assert market.original_metadata["market"]["mlb"]["away_team"] == "San Diego Padres"
+    assert market.original_metadata["market"]["mlb"]["home_team"] == "Milwaukee Brewers"
+    assert market.outcomes["YES"] == "Milwaukee Brewers"
+    assert market.outcomes["NO"] == "Milwaukee Brewers"
+
+
+def test_kalshi_bare_los_angeles_uses_lad_ticker_not_ambiguous_city_alias(monkeypatch):
+    game = {
+        "game_id": "849823",
+        "game_type": "D",
+        "date": "2026-10-04",
+        "start_time": "2026-10-05T00:00:00+00:00",
+        "away_team": "Atlanta Braves",
+        "home_team": "Los Angeles Dodgers",
+        "away_team_code": "ATL",
+        "home_team_code": "LAD",
+        "schedule_status": "SCHEDULED",
+    }
+
+    raw = {
+        "ticker": "KXMLBGAME-26OCT04ATLLAD-LAD",
+        "event_ticker": "KXMLBGAME-26OCT04ATLLAD",
+        "title": "Los Angeles wins",
+        "yes_sub_title": "Los Angeles",
+        "no_sub_title": "Los Angeles",
+        "status": "active",
+        "market_type": "binary",
+        "rules_primary": (
+            "If Los Angeles wins the Atlanta vs Los Angeles "
+            "professional baseball game originally scheduled for "
+            "Oct 4, 2026 at 8:00 PM EDT, then the market resolves to Yes."
+        ),
+    }
+
+    market = normalize_kalshi(
+        raw,
+        {},
+        "2026-10-04T12:00:00+00:00",
+    )
+
+    market = sources._with_authoritative_mlb_metadata(market, game)
+
+    assert market.original_metadata["market"]["mlb"]["away_team"] == "Atlanta Braves"
+    assert market.original_metadata["market"]["mlb"]["home_team"] == "Los Angeles Dodgers"
+    assert market.outcomes["YES"] == "Los Angeles Dodgers"
+    assert market.outcomes["NO"] == "Los Angeles Dodgers"
+
+
+
+def test_kalshi_bare_los_angeles_certifies_through_real_mlb_evidence(monkeypatch):
+    game = {
+        "game_id": "849823",
+        "game_type": "D",
+        "date": "2026-10-04",
+        "start_time": "2026-10-05T00:00:00+00:00",
+        "away_team": "Atlanta Braves",
+        "home_team": "Los Angeles Dodgers",
+        "away_team_code": "ATL",
+        "home_team_code": "LAD",
+        "schedule_status": "SCHEDULED",
+    }
+
+    raw = {
+        "ticker": "KXMLBGAME-26OCT04ATLLAD-LAD",
+        "event_ticker": "KXMLBGAME-26OCT04ATLLAD",
+        "title": "Los Angeles wins",
+        "yes_sub_title": "Los Angeles",
+        "no_sub_title": "Los Angeles",
+        "status": "active",
+        "market_type": "binary",
+        "rules_primary": (
+            "If Los Angeles wins the Atlanta vs Los Angeles "
+            "professional baseball game originally scheduled for "
+            "Oct 4, 2026 at 8:00 PM EDT, then the market resolves to Yes."
+        ),
+    }
+
+    target = {
+        "gamePk": 849823,
+        "gameType": "D",
+        "gameDate": "2026-10-05T00:00:00Z",
+        "status": {
+            "abstractGameState": "Preview",
+            "detailedState": "Scheduled",
+        },
+        "teams": {
+            "away": {
+                "team": {
+                    "id": 144,
+                    "name": "Atlanta Braves",
+                }
+            },
+            "home": {
+                "team": {
+                    "id": 119,
+                    "name": "Los Angeles Dodgers",
+                }
+            },
+        },
+    }
+
+    def transport(path):
+        if path.startswith("/standings?"):
+            return {"records": []}
+        return {"dates": [{"games": [target]}]}
+
+    market = normalize_kalshi(
+        raw,
+        {},
+        "2026-10-04T12:00:00+00:00",
+    )
+
+    # Before authoritative slate identity is attached, bare "Los Angeles"
+    # cannot safely map to Dodgers rather than Angels.
+    monkeypatch.setattr(
+        "parallax.mlb.utcnow",
+        lambda: datetime(2026, 10, 4, 12, tzinfo=UTC),
+    )
+
+    source = MLBStatsAPI(transport=transport)
+
+    assert source.game_for_market(market) is None
+
+    market = sources._with_authoritative_mlb_metadata(market, game)
+
+    evidence = MLBEvidenceProvider(
+        source,
+        clock=lambda: datetime(2026, 10, 4, 12, tzinfo=UTC),
+    ).assess(market)
+
+    assert evidence is not None
+    assert evidence.review_reference.endswith(":849823")
+    assert market.outcomes["YES"] == "Los Angeles Dodgers"
+    assert evidence.forecast_metadata["official_game_type"] == "D"
