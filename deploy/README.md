@@ -1,50 +1,68 @@
-# Swarm Edge deployment contract
+# PARALLAX deployment contract
 
-This directory contains versioned deployment inputs. Nothing here is installed
-or activated by the application branch.
+This directory contains versioned deployment inputs for the production PARALLAX sports runtime.
 
-## Render and install (future cutover)
+Nothing in this directory is activated merely by being present in a Git branch. Production cutovers are explicit, SHA-addressed, validated, and reversible.
 
-Render `launchd/com.swarmedge.runner.plist.in` by replacing every `@NAME@`
-placeholder with an absolute path from the release manifest. Validate the
-rendered file with `plutil -lint`, then install it with `launchctl bootstrap`
-and verify `launchctl print gui/$(id -u)/com.swarmedge.runner`. The cutover
-procedure must stop the old job, verify its final PID, bootstrap the rendered
-job, and confirm the release manifest before traffic is enabled.
+## Production owner
 
-The current checkout-relative deployment remains untouched until that
-cutover. Do not copy runtime state into a release; use the configured absolute
-runtime paths at migration time.
+`launchd/com.swarmedge.parallax-sports.plist.in` is the production owner for the unattended sports scheduler.
 
-## Release manifest
+The scheduler entrypoint is:
 
-Generate a deterministic manifest without exposing configuration values:
-
-```sh
-python scripts/deployment_manifest.py generate \
-  --output deploy/manifest.json \
-  --runtime-env .env.runtime \
-  --plist deploy/launchd/com.swarmedge.runner.plist \
-  --lock requirements.lock
+```text
+scripts/parallax_unattended.py
 ```
 
-The manifest records the Git SHA, Python version, and SHA-256 digests of the
-dependency lock, runtime environment file, and launchd plist. `validate`
-recomputes those values and fails on drift.
+It owns the NFL, optional CFB, MLB, and prospective-reconciliation schedules. Each lane keeps its own business logic; the unattended scheduler owns only cadence, isolation, locking, health state, and child-process execution.
 
-## PARALLAX unattended sports runner
+## Release layout
 
-`launchd/com.swarmedge.parallax-sports.plist.in` is the only production owner
-for NFL, CFB, MLB, and prospective reconciliation. Render it with absolute
-release, venv Python, runtime-environment, state, log, and release-SHA paths;
-then validate it with `plutil -lint`. The runner writes only to its supplied
-state directory, including `parallax_unattended_health.json` and the local
-singleton lock.
+Production releases are immutable and named by full Git SHA:
 
-Package from a committed SHA with the existing `migration_preflight.py
-create-release` command. Name the immutable release directory with that full
-SHA, render the plist against that directory, and generate a manifest that
-binds both the plist and scheduler entrypoint:
+```text
+~/Library/Application Support/SwarmEdge/
+  releases/<git-sha>/
+  venvs/<git-sha>/
+  state/
+  logs/
+```
+
+Do not deploy directly from a mutable checkout.
+
+## Package a release
+
+Create a release from a committed SHA with the existing migration/release tooling:
+
+```sh
+python scripts/migration_preflight.py create-release \
+  --source "$SOURCE" \
+  --sha "$SHA" \
+  --target-release "$RELEASE"
+```
+
+The release directory must remain immutable after packaging.
+
+## Render the launchd plist
+
+Render `launchd/com.swarmedge.parallax-sports.plist.in` with absolute paths for:
+
+- release root
+- SHA-matched venv Python
+- runtime environment file
+- PARALLAX state directory
+- log directory
+- release SHA
+
+Validate the rendered plist before any cutover:
+
+```sh
+plutil -lint "$RENDERED_PLIST"
+```
+
+## Generate the deployment manifest
+
+Bind the release, dependency lock, runtime environment, launchd plist, and scheduler entrypoint:
 
 ```sh
 python scripts/deployment_manifest.py generate \
@@ -56,4 +74,29 @@ python scripts/deployment_manifest.py generate \
   --output "$RELEASE/deploy/manifest.json"
 ```
 
-Do not bootstrap this plist until the controlled cutover checks are complete.
+The manifest records the Git SHA, Python version, and hashes needed to detect deployment drift.
+
+## Cutover rules
+
+Before reloading `com.swarmedge.parallax-sports`:
+
+1. verify the target release SHA
+2. verify the SHA-matched venv exists
+3. verify the rendered plist with `plutil -lint`
+4. preserve the current plist as the immediate rollback
+5. reload the launchd job
+6. verify `state = running`
+7. verify the running program path points at the target venv
+8. verify `PARALLAX_RELEASE_SHA` matches the target SHA
+9. verify natural unattended behavior without forcing provider scans or BUYs
+
+Do not remove the previous known-good release until the new release is proven stable.
+
+## Operational safety
+
+- launchd is the process owner
+- one sports lane failure must not prevent later lanes from running
+- provider rate limits are stop conditions, not retry loops
+- runtime state lives outside immutable release directories
+- alert failures must not crash sports scans
+- production changes must preserve rollback
