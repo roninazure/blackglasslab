@@ -113,6 +113,23 @@ class FakeMarkets:
             ]
         }
 
+    def retrieve_by_slug(self, slug: str) -> dict:
+        assert slug == "market-one"
+        return {
+            "market": {
+                "id": 1,
+                "slug": "market-one",
+                "question": "Will it happen?",
+                "active": True,
+                "closed": False,
+                "status": "MARKET_STATUS_OPEN",
+                "ep3Status": "OPEN",
+                "orderPriceMinTickSize": 0.01,
+                "minimumTradeQty": 1,
+                "marketSides": [{"tradable": True}],
+            }
+        }
+
     def book(self, slug: str) -> dict:
         assert slug == "market-one"
         return raw_book()
