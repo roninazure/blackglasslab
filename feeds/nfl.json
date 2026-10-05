@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:23:25.405891+00:00",
+  "generated_at": "2026-10-05T01:23:35.786277+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -48,7 +48,7 @@
       "edge_pp": 20.73591036,
       "game_id": "2026_05_CHI_GB",
       "home_team": "Green Bay Packers",
-      "lifecycle_updated_at": "2026-10-05T01:22:42.532782+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:23:27.683466+00:00",
       "market_id": "1083103",
       "model_probability": 0.6773591035884879,
       "opponent": "Chicago Bears",
@@ -138,7 +138,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:23:25.385503+00:00",
+  "source_feed_generated_at": "2026-10-05T01:23:27.685111+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
