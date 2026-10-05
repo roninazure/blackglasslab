@@ -527,6 +527,27 @@ class AlertDeliveryStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def channel_rate_limited(self, channel: str) -> bool:
+        """Return True while a recent HTTP 429 cooldown is active for the channel."""
+        retry_before = (
+            utcnow() - timedelta(seconds=ALERT_RETRY_COOLDOWN_SECONDS)
+        ).isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM alert_deliveries
+                WHERE channel = ?
+                  AND http_status = 429
+                  AND last_attempt_at IS NOT NULL
+                  AND last_attempt_at > ?
+                ORDER BY last_attempt_at DESC
+                LIMIT 1
+                """,
+                (channel, retry_before),
+            ).fetchone()
+        return row is not None
+
     def has_actionable_delivery(
         self,
         channel: str,
@@ -680,6 +701,8 @@ class AlertDispatcher:
         ]
         for item in eligible:
             self.store.ensure_delivery(item, self.channel)
+        if self.config.mode == "ntfy" and self.store.channel_rate_limited(self.channel):
+            return
         for delivery in self.store.pending(self.channel):
             pending_item: dict[str, Any] | None = None
             for row in eligible:
@@ -736,6 +759,8 @@ class AlertDispatcher:
                         result.error_code,
                         delivery["delivery_id"],
                     )
+                if result.error_code == "HTTP_429":
+                    break
                 continue
             if not self.config.webhook_url:
                 self.store.record_attempt(
