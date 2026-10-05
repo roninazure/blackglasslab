@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T04:03:54.222566+00:00",
+  "generated_at": "2026-10-05T04:04:04.334443+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -22,58 +22,39 @@
       "venue": "POLYMARKET"
     },
     {
+      "away_team": "Philadelphia Eagles",
+      "contract_side": "YES",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_PHI_JAX:PHI",
+      "edge_pp": 23.8265611,
+      "game_id": "2026_05_PHI_JAX",
+      "home_team": "Jacksonville Jaguars",
+      "lifecycle_updated_at": "2026-10-05T04:03:54.341783+00:00",
+      "market_id": "1083081",
+      "model_probability": 0.5807656109932193,
+      "opponent": "Jacksonville Jaguars",
+      "price": 0.3425,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Philadelphia Eagles",
+      "sport": "NFL",
+      "start_time": "2026-10-11T13:30:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
       "away_team": "Cleveland Browns",
       "contract_side": "YES",
       "date": "2026-10-11",
       "economic_key": "NFL:2026_05_CLE_NYJ:CLE",
-      "edge_pp": 12.1534898,
+      "edge_pp": 11.9034898,
       "game_id": "2026_05_CLE_NYJ",
       "home_team": "New York Jets",
-      "lifecycle_updated_at": "2026-10-05T04:03:05.398555+00:00",
-      "market_id": "KXNFLGAME-26OCT11CLENYJ-CLE",
+      "lifecycle_updated_at": "2026-10-05T04:03:54.541053+00:00",
+      "market_id": "1083082",
       "model_probability": 0.5715348979514447,
       "opponent": "New York Jets",
-      "price": 0.45,
+      "price": 0.4525,
       "schedule_status": "SCHEDULED",
       "selected_team": "Cleveland Browns",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "KALSHI"
-    },
-    {
-      "away_team": "Indianapolis Colts",
-      "contract_side": "YES",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_IND_PIT:PIT",
-      "edge_pp": 15.280298,
-      "game_id": "2026_05_IND_PIT",
-      "home_team": "Pittsburgh Steelers",
-      "lifecycle_updated_at": "2026-10-05T04:03:18.319113+00:00",
-      "market_id": "KXNFLGAME-26OCT11INDPIT-PIT",
-      "model_probability": 0.712802980013526,
-      "opponent": "Indianapolis Colts",
-      "price": 0.56,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "Pittsburgh Steelers",
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "KALSHI"
-    },
-    {
-      "away_team": "Las Vegas Raiders",
-      "contract_side": "NO",
-      "date": "2026-10-11",
-      "economic_key": "NFL:2026_05_LV_NE:NE",
-      "edge_pp": 12.45270893,
-      "game_id": "2026_05_LV_NE",
-      "home_team": "New England Patriots",
-      "lifecycle_updated_at": "2026-10-05T04:03:24.672526+00:00",
-      "market_id": "1083084",
-      "model_probability": 0.7570270893015252,
-      "opponent": "Las Vegas Raiders",
-      "price": 0.6325,
-      "schedule_status": "SCHEDULED",
-      "selected_team": "New England Patriots",
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "POLYMARKET"
@@ -86,7 +67,7 @@
       "edge_pp": 17.90426396,
       "game_id": "2026_05_MIN_NO",
       "home_team": "New Orleans Saints",
-      "lifecycle_updated_at": "2026-10-05T04:03:35.177293+00:00",
+      "lifecycle_updated_at": "2026-10-05T04:03:54.641097+00:00",
       "market_id": "1083087",
       "model_probability": 0.6915426396381114,
       "opponent": "New Orleans Saints",
@@ -105,8 +86,8 @@
       "edge_pp": 10.39727304,
       "game_id": "2026_05_DEN_LAC",
       "home_team": "Los Angeles Chargers",
-      "lifecycle_updated_at": "2026-10-05T04:03:43.316200+00:00",
-      "market_id": "1083100",
+      "lifecycle_updated_at": "2026-10-05T04:04:01.234670+00:00",
+      "market_id": "KXNFLGAME-26OCT11DENLAC-DEN",
       "model_probability": 0.47397273039690035,
       "opponent": "Denver Broncos",
       "price": 0.37,
@@ -114,7 +95,7 @@
       "selected_team": "Los Angeles Chargers",
       "sport": "NFL",
       "start_time": "2026-10-11T20:05:00+00:00",
-      "venue": "POLYMARKET"
+      "venue": "KALSHI"
     },
     {
       "away_team": "Buffalo Bills",
@@ -138,10 +119,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T04:03:52.118596+00:00",
+  "source_feed_generated_at": "2026-10-05T04:04:01.236376+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 7
+    "buy": 6
   }
 }
