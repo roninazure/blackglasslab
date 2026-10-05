@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-05T01:36:53.367758+00:00",
+  "generated_at": "2026-10-05T01:37:04.114871+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -22,15 +22,34 @@
       "venue": "POLYMARKET"
     },
     {
+      "away_team": "Chicago Bears",
+      "contract_side": "NO",
+      "date": "2026-10-11",
+      "economic_key": "NFL:2026_05_CHI_GB:GB",
+      "edge_pp": 20.73591036,
+      "game_id": "2026_05_CHI_GB",
+      "home_team": "Green Bay Packers",
+      "lifecycle_updated_at": "2026-10-05T01:36:53.431993+00:00",
+      "market_id": "1083103",
+      "model_probability": 0.6773591035884879,
+      "opponent": "Chicago Bears",
+      "price": 0.47,
+      "schedule_status": "SCHEDULED",
+      "selected_team": "Green Bay Packers",
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
       "away_team": "Cincinnati Bengals",
-      "contract_side": "YES",
+      "contract_side": "NO",
       "date": "2026-10-11",
       "economic_key": "NFL:2026_05_CIN_MIA:MIA",
       "edge_pp": 29.87552508,
       "game_id": "2026_05_CIN_MIA",
       "home_team": "Miami Dolphins",
-      "lifecycle_updated_at": "2026-10-05T01:36:02.882127+00:00",
-      "market_id": "KXNFLGAME-26OCT11CINMIA-MIA",
+      "lifecycle_updated_at": "2026-10-05T01:36:53.472873+00:00",
+      "market_id": "1083083",
       "model_probability": 0.5187552507699843,
       "opponent": "Cincinnati Bengals",
       "price": 0.22,
@@ -38,7 +57,7 @@
       "selected_team": "Miami Dolphins",
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "KALSHI"
+      "venue": "POLYMARKET"
     },
     {
       "away_team": "Cleveland Browns",
@@ -48,7 +67,7 @@
       "edge_pp": 10.4034898,
       "game_id": "2026_05_CLE_NYJ",
       "home_team": "New York Jets",
-      "lifecycle_updated_at": "2026-10-05T01:36:13.298631+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:36:53.603610+00:00",
       "market_id": "1083082",
       "model_probability": 0.5715348979514447,
       "opponent": "New York Jets",
@@ -61,22 +80,22 @@
     },
     {
       "away_team": "Indianapolis Colts",
-      "contract_side": "YES",
+      "contract_side": "NO",
       "date": "2026-10-11",
       "economic_key": "NFL:2026_05_IND_PIT:PIT",
-      "edge_pp": 16.280298,
+      "edge_pp": 16.030298,
       "game_id": "2026_05_IND_PIT",
       "home_team": "Pittsburgh Steelers",
-      "lifecycle_updated_at": "2026-10-05T01:36:27.990528+00:00",
-      "market_id": "KXNFLGAME-26OCT11INDPIT-PIT",
+      "lifecycle_updated_at": "2026-10-05T01:36:53.671382+00:00",
+      "market_id": "1083096",
       "model_probability": 0.712802980013526,
       "opponent": "Indianapolis Colts",
-      "price": 0.55,
+      "price": 0.5525,
       "schedule_status": "SCHEDULED",
       "selected_team": "Pittsburgh Steelers",
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "KALSHI"
+      "venue": "POLYMARKET"
     },
     {
       "away_team": "Las Vegas Raiders",
@@ -86,7 +105,7 @@
       "edge_pp": 11.95270893,
       "game_id": "2026_05_LV_NE",
       "home_team": "New England Patriots",
-      "lifecycle_updated_at": "2026-10-05T01:36:34.342829+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:36:53.703436+00:00",
       "market_id": "1083084",
       "model_probability": 0.7570270893015252,
       "opponent": "Las Vegas Raiders",
@@ -105,7 +124,7 @@
       "edge_pp": 17.90426396,
       "game_id": "2026_05_MIN_NO",
       "home_team": "New Orleans Saints",
-      "lifecycle_updated_at": "2026-10-05T01:36:42.690507+00:00",
+      "lifecycle_updated_at": "2026-10-05T01:36:56.005972+00:00",
       "market_id": "1083087",
       "model_probability": 0.6915426396381114,
       "opponent": "New Orleans Saints",
@@ -119,10 +138,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-05T01:36:49.273453+00:00",
+  "source_feed_generated_at": "2026-10-05T01:36:56.007686+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
-    "buy": 6
+    "buy": 7
   }
 }
