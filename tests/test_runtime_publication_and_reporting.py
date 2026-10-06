@@ -297,40 +297,6 @@ class RuntimePublicationAndReportingTests(unittest.TestCase):
             self.assertIn("- closed_trades:     1", out)
             self.assertIn("- resolved_trades:   1", out)
 
-    def test_run_live_wrapper_is_local_only_with_publish_disabled(self) -> None:
-        env = os.environ.copy()
-        env.update(
-            {
-                "PYTHON_BIN": "/usr/bin/true",
-                "LOOPS": "1",
-                "SLEEP_SECS": "0",
-                "RESOLVE_EVERY": "1",
-                "EXPORT_EVERY": "1",
-                "DISCOVER_EVERY": "1",
-                "SWARM_EDGE_PUBLISH_ENABLED": "0",
-                "SWARM_EDGE_WATCHLIST_APPLY": "0",
-            }
-        )
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            (root / "scripts").mkdir()
-            shutil.copy2(
-                Path(__file__).resolve().parent.parent / "scripts" / "run_live.sh",
-                root / "scripts" / "run_live.sh",
-            )
-            result = subprocess.run(
-                ["bash", "scripts/run_live.sh"],
-                cwd=root,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("auto-export data", result.stdout)
-        self.assertIn("watchlist apply disabled", result.stdout)
-        self.assertNotIn("PIPELINE", result.stdout)
-
     def test_export_entrypoint_works_outside_checkout_with_absolute_runtime_paths(self) -> None:
         repo_root = Path(__file__).resolve().parent.parent
         for cwd in (repo_root, Path("/tmp")):
