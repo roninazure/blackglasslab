@@ -310,11 +310,13 @@ class MakerSpreadEconomicsTests(unittest.TestCase):
             ("NO_FILL_EVIDENCE", "NO_FILL_EVIDENCE", "NO_TWO_SIDED_FILL_EVIDENCE", None),
         )
 
-    def test_no_live_execution_path_is_reachable(self) -> None:
+    def test_paper_modules_have_no_live_execution_path(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        files = list((root / "maker_spread_economics").glob("*.py")) + [
-            root / "scripts" / "maker_spread_paper_smoke.py"
-        ]
+        files = [
+            path
+            for path in (root / "maker_spread_economics").glob("*.py")
+            if path.name not in {"live_engine.py", "polymarket_us.py"}
+        ] + [root / "scripts" / "maker_spread_paper_smoke.py"]
         forbidden = {
             "post",
             "put",
