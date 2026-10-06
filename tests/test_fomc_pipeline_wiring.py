@@ -74,7 +74,7 @@ def test_economic_provider_is_registered_fail_closed_and_never_uses_price():
     provider = EconomicsEvidenceProvider()
     assert provider.supports(market)
     assert provider.assess(market) is None
-    assert provider.last_reason.startswith("missing_independent_economic_source:CPI_INFLATION")
+    assert provider.last_reason.startswith("economic_probability_methodology_unvalidated:CPI_INFLATION")
 
 
 def test_authoritative_source_observation_is_recorded_without_becoming_a_forecast():
@@ -151,8 +151,8 @@ def test_live_source_wires_fed_contract_to_exact_normalized_path(monkeypatch):
             pass
 
     class Kalshi:
-        def mlb_markets_page(self, limit=100):
-            return {"markets": []}
+        def mlb_markets_page(self, limit=100, cursor=""):
+            return {"markets": [], "cursor": None}
 
     monkeypatch.setattr(sources, "PolymarketUSPublicClient", PMUS)
     monkeypatch.setattr(sources, "KalshiPublicClient", Kalshi)
