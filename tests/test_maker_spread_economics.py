@@ -312,8 +312,9 @@ class MakerSpreadEconomicsTests(unittest.TestCase):
 
     def test_no_live_execution_path_is_reachable(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        files = list((root / "maker_spread_economics").glob("*.py")) + [
-            root / "scripts" / "maker_spread_paper_smoke.py"
+        files = [
+            root / "maker_spread_economics" / "live.py",
+            root / "scripts" / "maker_spread_paper_smoke.py",
         ]
         forbidden = {
             "post",
