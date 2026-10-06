@@ -27,11 +27,9 @@ class RevenueArchitectureTests(unittest.TestCase):
         self.assertNotIn("get_adapter", text)
         self.assertNotIn('add_argument("--live"', text)
 
-    def test_production_approval_default_remains_and_revenue_is_opt_in(self) -> None:
-        wrapper = (ROOT / "scripts" / "run_live.sh").read_text(encoding="utf-8")
+    def test_retired_live_wrapper_is_absent_and_revenue_remains_opt_in(self) -> None:
+        self.assertFalse((ROOT / "scripts" / "run_live.sh").exists())
         example = (ROOT / ".env.example").read_text(encoding="utf-8")
-        self.assertIn('BGL_REQUIRE_APPROVAL="${BGL_REQUIRE_APPROVAL:-1}"', wrapper)
-        self.assertIn('${BGL_REVENUE_POC_ENABLED:-0}', wrapper)
         self.assertIn("BGL_REVENUE_POC_ENABLED=0", example)
 
 
