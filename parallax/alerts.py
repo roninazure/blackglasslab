@@ -510,8 +510,11 @@ class AlertDeliveryStore:
             )
 
     def pending(self, channel: str) -> list[dict[str, Any]]:
+        cooldown_seconds = (
+            ALERT_RETRY_COOLDOWN_SECONDS if channel == "ntfy" else 0
+        )
         retry_before = (
-            utcnow() - timedelta(seconds=ALERT_RETRY_COOLDOWN_SECONDS)
+            utcnow() - timedelta(seconds=cooldown_seconds)
         ).isoformat()
         with self._connect() as conn:
             rows = conn.execute(
