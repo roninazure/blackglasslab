@@ -1832,7 +1832,8 @@ def test_alert_success_does_not_mark_inbox_seen(tmp_path):
     assert item["seen_at"] is None
 
 
-def test_alert_webhook_4xx_5xx_timeout_unknown_and_missing_config(tmp_path):
+def test_alert_webhook_4xx_5xx_timeout_unknown_and_missing_config(tmp_path, monkeypatch):
+    monkeypatch.setattr("parallax.alerts.ALERT_RETRY_COOLDOWN_SECONDS", 0)
     market = tight_context_market(
         replace(demo_inputs()[0][0], demo=False),
         original_metadata={"opened_at": "2026-09-07T00:00:00+00:00"},
