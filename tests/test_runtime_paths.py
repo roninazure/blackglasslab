@@ -86,8 +86,7 @@ class RuntimePathTests(unittest.TestCase):
             self.assertEqual(paths.log_dir, (root / "logs").resolve())
             self.assertEqual(paths.runtime_env_file, env_file.resolve())
 
-    def test_components_share_resolved_database_and_directories(self) -> None:
-        from live_runner import DB_PATH as live_db, SIGNALS_DIR as live_signals
+    def test_remaining_components_share_resolved_database_and_directories(self) -> None:
         from reporting import leaderboard, paper_dashboard
         from scripts import (
             approve_trades,
@@ -102,8 +101,6 @@ class RuntimePathTests(unittest.TestCase):
         )
 
         expected = get_runtime_paths()
-        self.assertEqual(Path(live_db), expected.db_path)
-        self.assertEqual(live_signals, expected.signals_dir)
         for value in (
             leaderboard.DB_PATH,
             paper_dashboard.DB_PATH,

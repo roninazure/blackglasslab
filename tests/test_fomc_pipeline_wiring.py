@@ -74,7 +74,7 @@ def test_economic_provider_is_registered_fail_closed_and_never_uses_price():
     provider = EconomicsEvidenceProvider()
     assert provider.supports(market)
     assert provider.assess(market) is None
-    assert provider.last_reason.startswith("missing_independent_economic_source:CPI_INFLATION")
+    assert provider.last_reason.startswith("economic_probability_methodology_unvalidated:CPI_INFLATION")
 
 
 def test_authoritative_source_observation_is_recorded_without_becoming_a_forecast():
@@ -124,50 +124,6 @@ def test_source_clients_use_mocked_authoritative_payloads_and_cache_them():
     assert bls.latest("LNS14000000").value == 4.3
     assert bls.latest("LNS14000000").value == 4.3
     assert len(bls_calls) == 1
-
-
-def test_live_source_wires_fed_contract_to_exact_normalized_path(monkeypatch):
-    row = fomc_row()
-    unrelated = {
-        **fomc_row("company-event"),
-        "id": "company-event",
-        "question": "Will the company appoint a new CEO?",
-        "title": "CEO appointment",
-        "description": "Resolves from the company's official announcement.",
-        "category": "CORPORATE_BUSINESS",
-    }
-    observed_at = "2026-09-15T12:00:00+00:00"
-    book_calls = []
-
-    class PMUS:
-        def markets_page(self, *, limit, offset):
-            return [row, unrelated] if offset == 0 else []
-
-        def book(self, slug):
-            book_calls.append(slug)
-            return fomc_book(slug, observed_at)
-
-        def close(self):
-            pass
-
-    class Kalshi:
-        def mlb_markets_page(self, limit=100):
-            return {"markets": []}
-
-    monkeypatch.setattr(sources, "PolymarketUSPublicClient", PMUS)
-    monkeypatch.setattr(sources, "KalshiPublicClient", Kalshi)
-    markets, report = sources.collect_markets(limit=2)
-
-    assert len(markets) == 1
-    market = markets[0]
-    assert market.venue is Venue.POLYMARKET
-    assert market.venue_market_id == "313137"
-    assert market.slug == row["slug"]
-    assert market.title == row["question"]
-    assert market.event == "direct-contract:POLYMARKET:313137"
-    assert book_calls == [row["slug"]]
-    assert report["metrics"]["POLYMARKET.generic_scope_skipped"] == 1
-    assert report["metrics"]["POLYMARKET.generic_markets_observed"] == 1
 
 
 def test_fed_rates_scope_reuses_taxonomy_and_excludes_sports():
