@@ -7,7 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -593,6 +593,10 @@ class OperationalReadinessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             trial, store = operationally_ready_trial(Path(td) / "trial.sqlite")
             trial.arm()
+            trial.config = replace(
+                trial.config,
+                release_at=datetime.now(EASTERN) + timedelta(minutes=5),
+            )
             asyncio.run(trial.on_stream_gap("stream_disconnect", 1))
             self.assertFalse(trial.armed)
             self.assertIn("stream_disconnect", trial.disarmed_reason or "")
