@@ -1,29 +1,7 @@
 {
-  "generated_at": "2026-10-08T16:54:32.660053+00:00",
+  "generated_at": "2026-10-08T16:55:36.117195+00:00",
   "lane": "NFL",
   "plays": [
-    {
-      "contract_side": "YES",
-      "edge_pp": 17.40945183,
-      "market_id": "1030131",
-      "matchup": "TB at DAL",
-      "model_probability": 0.37659451833045976,
-      "price": 0.2025,
-      "sport": "NFL",
-      "start_time": "2026-10-09T00:15:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "YES",
-      "edge_pp": 34.5765611,
-      "market_id": "1083081",
-      "matchup": "PHI at JAX",
-      "model_probability": 0.5807656109932193,
-      "price": 0.235,
-      "sport": "NFL",
-      "start_time": "2026-10-11T13:30:00+00:00",
-      "venue": "POLYMARKET"
-    },
     {
       "contract_side": "NO",
       "edge_pp": 21.48591036,
@@ -126,18 +104,40 @@
     {
       "contract_side": "NO",
       "edge_pp": 7.77953054,
-      "market_id": "1155064",
+      "market_id": "KXNFLGAME-26OCT15SEADEN-SEA",
       "matchup": "SEA at DEN",
       "model_probability": 0.5177953053552936,
       "price": 0.44,
       "sport": "NFL",
       "start_time": "2026-10-16T00:15:00+00:00",
+      "venue": "KALSHI"
+    },
+    {
+      "contract_side": "YES",
+      "edge_pp": 17.40945183,
+      "market_id": "1030131",
+      "matchup": "TB at DAL",
+      "model_probability": 0.37659451833045976,
+      "price": 0.2025,
+      "sport": "NFL",
+      "start_time": "2026-10-09T00:15:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "YES",
+      "edge_pp": 34.5765611,
+      "market_id": "1083081",
+      "matchup": "PHI at JAX",
+      "model_probability": 0.5807656109932193,
+      "price": 0.235,
+      "sport": "NFL",
+      "start_time": "2026-10-11T13:30:00+00:00",
       "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-08T16:54:25.461846+00:00",
+  "source_feed_generated_at": "2026-10-08T16:55:34.407865+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
