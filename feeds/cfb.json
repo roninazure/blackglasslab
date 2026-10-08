@@ -1,13 +1,69 @@
 {
-  "generated_at": "2026-10-08T10:52:07.404277+00:00",
+  "generated_at": "2026-10-08T11:53:12.916973+00:00",
   "lane": "CFB",
-  "plays": [],
+  "plays": [
+    {
+      "contract_side": "NO",
+      "edge_pp": 30.09031497,
+      "market_id": "1071469",
+      "matchup": "Texas at Oklahoma",
+      "model_probability": 0.5509031496532268,
+      "price": 0.25,
+      "sport": "CFB",
+      "start_time": "2026-10-10T19:30:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "YES",
+      "edge_pp": 15.45230458,
+      "market_id": "1063752",
+      "matchup": "Iowa at Washington",
+      "model_probability": 0.5645230458376151,
+      "price": 0.41,
+      "sport": "CFB",
+      "start_time": "2026-10-10T01:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 14.64312356,
+      "market_id": "1113505",
+      "matchup": "LSU at Kentucky",
+      "model_probability": 0.4014312355970244,
+      "price": 0.255,
+      "sport": "CFB",
+      "start_time": "2026-10-10T23:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "YES",
+      "edge_pp": 13.13522945,
+      "market_id": "1044672",
+      "matchup": "South Alabama at Arkansas State",
+      "model_probability": 0.5713522944878505,
+      "price": 0.44,
+      "sport": "CFB",
+      "start_time": "2026-10-08T23:30:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "YES",
+      "edge_pp": 12.87355876,
+      "market_id": "1113507",
+      "matchup": "Georgia at Alabama",
+      "model_probability": 0.6087355876133824,
+      "price": 0.48,
+      "sport": "CFB",
+      "start_time": "2026-10-10T23:30:00+00:00",
+      "venue": "POLYMARKET"
+    }
+  ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-08T10:50:39.342407+00:00",
+  "source_feed_generated_at": "2026-10-08T11:52:23.233416+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 0
+    "buy": 5
   }
 }
