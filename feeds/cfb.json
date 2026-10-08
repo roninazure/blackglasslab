@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-08T22:52:39.626908+00:00",
+  "generated_at": "2026-10-08T23:54:42.890414+00:00",
   "lane": "CFB",
   "plays": [
     {
@@ -15,17 +15,6 @@
     },
     {
       "contract_side": "YES",
-      "edge_pp": 16.13522945,
-      "market_id": "1044672",
-      "matchup": "South Alabama at Arkansas State",
-      "model_probability": 0.5713522944878505,
-      "price": 0.41,
-      "sport": "CFB",
-      "start_time": "2026-10-08T23:30:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "YES",
       "edge_pp": 14.95230458,
       "market_id": "1063752",
       "matchup": "Iowa at Washington",
@@ -33,6 +22,28 @@
       "price": 0.415,
       "sport": "CFB",
       "start_time": "2026-10-10T01:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 14.64312356,
+      "market_id": "1113505",
+      "matchup": "LSU at Kentucky",
+      "model_probability": 0.4014312355970244,
+      "price": 0.255,
+      "sport": "CFB",
+      "start_time": "2026-10-10T23:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 14.12999093,
+      "market_id": "1113479",
+      "matchup": "Indiana at Nebraska",
+      "model_probability": 0.4062999093290828,
+      "price": 0.265,
+      "sport": "CFB",
+      "start_time": "2026-10-10T16:00:00+00:00",
       "venue": "POLYMARKET"
     },
     {
@@ -49,10 +60,10 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-08T22:52:30.348934+00:00",
+  "source_feed_generated_at": "2026-10-08T23:53:53.934507+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 4
+    "buy": 5
   }
 }
