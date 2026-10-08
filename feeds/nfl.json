@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-08T03:31:19.142386+00:00",
+  "generated_at": "2026-10-08T03:33:23.568813+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -25,15 +25,15 @@
       "venue": "POLYMARKET"
     },
     {
-      "contract_side": "NO",
+      "contract_side": "YES",
       "edge_pp": 22.73591036,
-      "market_id": "1083103",
+      "market_id": "KXNFLGAME-26OCT11CHIGB-GB",
       "matchup": "CHI at GB",
       "model_probability": 0.6773591035884879,
       "price": 0.45,
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
+      "venue": "KALSHI"
     },
     {
       "contract_side": "NO",
@@ -126,7 +126,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-08T03:31:03.427708+00:00",
+  "source_feed_generated_at": "2026-10-08T03:33:20.493879+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
