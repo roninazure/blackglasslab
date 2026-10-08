@@ -1,14 +1,14 @@
 {
-  "generated_at": "2026-10-08T14:52:11.658880+00:00",
+  "generated_at": "2026-10-08T15:53:27.013114+00:00",
   "lane": "CFB",
   "plays": [
     {
       "contract_side": "NO",
-      "edge_pp": 30.09031497,
+      "edge_pp": 29.59031497,
       "market_id": "1071469",
       "matchup": "Texas at Oklahoma",
       "model_probability": 0.5509031496532268,
-      "price": 0.25,
+      "price": 0.255,
       "sport": "CFB",
       "start_time": "2026-10-10T19:30:00+00:00",
       "venue": "POLYMARKET"
@@ -48,11 +48,11 @@
     },
     {
       "contract_side": "YES",
-      "edge_pp": 10.61223173,
+      "edge_pp": 10.11223173,
       "market_id": "1044670",
       "matchup": "Missouri State at Western Kentucky",
       "model_probability": 0.5861223172666322,
-      "price": 0.48,
+      "price": 0.485,
       "sport": "CFB",
       "start_time": "2026-10-08T23:00:00+00:00",
       "venue": "POLYMARKET"
@@ -60,7 +60,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-08T14:51:14.147449+00:00",
+  "source_feed_generated_at": "2026-10-08T15:52:38.532818+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
