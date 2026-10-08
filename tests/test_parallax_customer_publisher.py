@@ -75,6 +75,28 @@ def test_nfl_certified_buy_is_authority_not_slate_status(tmp_path):
     assert expected["nfl"]["plays"][0]["start_time"] == "2026-10-11T20:25:00+00:00"
 
 
+def test_kalshi_rams_market_id_matches_slate_la_alias(tmp_path):
+    feed, db = fixtures(tmp_path)
+    nfl = source()
+    nfl["plays"] = [{
+        **play("KXNFLGAME-26OCT12BUFLAR-LAR", title=False),
+        "venue": "KALSHI",
+        "contract_side": "YES",
+        "resolution_time": "2026-10-12T20:15:00+00:00",
+    }]
+    nfl["summary"]["buy"] = 1
+    nfl["slate"]["dates"][0]["games"] = [{
+        "away_team": "BUF", "home_team": "LA", "date": "2026-10-12",
+        "schedule_status": "SCHEDULED", "status": "PASS",
+        "start_time": "2026-10-12T20:15:00+00:00",
+    }]
+    (feed / "nfl.json").write_text(json.dumps(nfl))
+    expected, _ = publisher.build_all(feed, db, NOW)
+    assert expected["nfl"]["summary"]["buy"] == 1
+    assert expected["nfl"]["plays"][0]["matchup"] == "BUF at LA"
+    assert expected["nfl"]["plays"][0]["start_time"] == "2026-10-12T20:15:00+00:00"
+
+
 def test_db_enrichment_requires_exact_sport_venue_market_and_side(tmp_path):
     feed, db = fixtures(tmp_path)
     cfb = source("cfb", [{**play("777", title=False, start=None), "sport": "CFB"}])
