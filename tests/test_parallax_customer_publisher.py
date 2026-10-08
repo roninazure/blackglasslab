@@ -57,6 +57,24 @@ def test_missing_nfl_matchup_1083096_uses_only_sanitized_title_and_slate(tmp_pat
     assert expected["nfl"]["plays"][0]["start_time"] == "2026-10-11T17:00:00+00:00"
 
 
+def test_nfl_certified_buy_is_authority_not_slate_status(tmp_path):
+    feed, db = fixtures(tmp_path)
+    nfl = source()
+    nfl["plays"] = [play("1083103")]
+    nfl["plays"][0]["market_title"] = "Who will win in the upcoming football event Chicago Bears vs Green Bay Packers scheduled for October 11, 2026 at 8:25 PM UTC?"
+    nfl["summary"]["buy"] = 1
+    nfl["slate"]["dates"][0]["games"] = [{
+        "away_team": "CHI", "home_team": "GB", "date": "2026-10-11",
+        "schedule_status": "SCHEDULED", "status": "PASS",
+        "start_time": "2026-10-11T20:25:00+00:00",
+    }]
+    (feed / "nfl.json").write_text(json.dumps(nfl))
+    expected, _ = publisher.build_all(feed, db, NOW)
+    assert expected["nfl"]["summary"]["buy"] == 1
+    assert expected["nfl"]["plays"][0]["matchup"] == "CHI at GB"
+    assert expected["nfl"]["plays"][0]["start_time"] == "2026-10-11T20:25:00+00:00"
+
+
 def test_db_enrichment_requires_exact_sport_venue_market_and_side(tmp_path):
     feed, db = fixtures(tmp_path)
     cfb = source("cfb", [{**play("777", title=False, start=None), "sport": "CFB"}])
@@ -177,6 +195,37 @@ def test_unchanged_remote_writes_healthy_count_and_sha(monkeypatch, tmp_path):
     assert health["changed_lanes"] == []
     assert all(health["lanes"][lane]["source_buy"] == health["lanes"][lane]["customer_buy"] for lane in publisher.LANES)
     assert "push" not in calls
+
+
+def test_live_source_refresh_after_snapshot_does_not_invalidate_publication(monkeypatch, tmp_path):
+    feed, db = fixtures(tmp_path)
+    worktree, state = tmp_path / "worktree", tmp_path / "state"
+    (worktree / "feeds").mkdir(parents=True)
+    expected, _ = publisher.build_all(feed, db, NOW)
+    for lane in publisher.LANES:
+        (worktree / "feeds" / f"{lane}.json").write_text(json.dumps(expected[lane]))
+    monkeypatch.setattr(publisher, "checked_worktree", lambda _path: "a" * 40)
+    mutated = {"done": False}
+
+    def fake_git(_worktree, *args, **_kwargs):
+        if args[0] == "rev-parse":
+            return subprocess.CompletedProcess(args, 0, "a" * 40 + "\n", "")
+        if args[0] == "ls-remote":
+            return subprocess.CompletedProcess(args, 0, "a" * 40 + "\trefs/heads/parallax-live-data\n", "")
+        if args[0] == "show":
+            if not mutated["done"]:
+                current = json.loads((feed / "nfl.json").read_text())
+                current["generated_at"] = "2026-10-08T00:30:01+00:00"
+                (feed / "nfl.json").write_text(json.dumps(current))
+                mutated["done"] = True
+            lane = args[1].split("/")[-1]
+            return subprocess.CompletedProcess(args, 0, (worktree / "feeds" / lane).read_text(), "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(publisher, "git", fake_git)
+    health = publisher.publish(worktree, feed, db, state, NOW)
+    assert mutated["done"] is True
+    assert health["state"] == "HEALTHY"
 
 
 def test_deployment_bootstrap_failure_restores_prior_plists_and_loaded_jobs(tmp_path):
