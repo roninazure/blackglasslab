@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-08T15:53:27.013114+00:00",
+  "generated_at": "2026-10-08T16:53:29.152371+00:00",
   "lane": "CFB",
   "plays": [
     {
@@ -26,11 +26,11 @@
     },
     {
       "contract_side": "YES",
-      "edge_pp": 13.13522945,
+      "edge_pp": 13.63522945,
       "market_id": "1044672",
       "matchup": "South Alabama at Arkansas State",
       "model_probability": 0.5713522944878505,
-      "price": 0.44,
+      "price": 0.435,
       "sport": "CFB",
       "start_time": "2026-10-08T23:30:00+00:00",
       "venue": "POLYMARKET"
@@ -48,11 +48,11 @@
     },
     {
       "contract_side": "YES",
-      "edge_pp": 10.11223173,
+      "edge_pp": 9.11223173,
       "market_id": "1044670",
       "matchup": "Missouri State at Western Kentucky",
       "model_probability": 0.5861223172666322,
-      "price": 0.485,
+      "price": 0.495,
       "sport": "CFB",
       "start_time": "2026-10-08T23:00:00+00:00",
       "venue": "POLYMARKET"
@@ -60,7 +60,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-08T15:52:38.532818+00:00",
+  "source_feed_generated_at": "2026-10-08T16:53:07.396270+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
