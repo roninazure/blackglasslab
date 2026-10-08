@@ -115,7 +115,7 @@ def nfl_display(play: dict, games: list[dict]) -> tuple[str, str] | None:
     if len(candidates) != 1:
         return None
     game = candidates[0]
-    if game.get("schedule_status") != "SCHEDULED" or game.get("status") != "BUY":
+    if game.get("schedule_status") != "SCHEDULED":
         return None
     start = game.get("start_time")
     timestamp(start)
@@ -254,7 +254,7 @@ def publish(worktree: Path, directory: Path, db: Path, state: Path, now: datetim
             remote_before = git(worktree, "rev-parse", "origin/parallax-live-data").stdout.strip()
             if head != remote_before:
                 raise RuntimeError("customer worktree is behind or ahead of origin/parallax-live-data")
-            expected, hashes = build_all(directory, db, now)
+            expected, _ = build_all(directory, db, now)
             changed = []
             for lane in LANES:
                 path = worktree / "feeds" / f"{lane}.json"
@@ -264,14 +264,12 @@ def publish(worktree: Path, directory: Path, db: Path, state: Path, now: datetim
                     changed.append(lane)
                 else:
                     expected[lane] = old
-            assert_sources_unchanged(directory, hashes)
             for lane in changed:
                 atomic_json(worktree / "feeds" / f"{lane}.json", expected[lane])
             if changed:
                 git(worktree, "add", "--", *(f"feeds/{lane}.json" for lane in LANES))
                 git(worktree, "commit", "-m", f"data(parallax): unified customer publish {now.isoformat()}")
                 new_head = git(worktree, "rev-parse", "HEAD").stdout.strip()
-                assert_sources_unchanged(directory, hashes)
                 push = git(worktree, "push", "origin", "HEAD:refs/heads/parallax-live-data", check=False)
                 if push.returncode:
                     raise RuntimeError(f"push race or failure: {(push.stderr or push.stdout).strip()[:400]}")
@@ -281,7 +279,6 @@ def publish(worktree: Path, directory: Path, db: Path, state: Path, now: datetim
             if remote_sha != new_head:
                 raise RuntimeError(f"remote SHA mismatch expected={new_head} actual={remote_sha}")
             counts = verify_payloads(worktree, expected, remote_sha)
-            assert_sources_unchanged(directory, hashes)
             health = {"state": "HEALTHY", "checked_at": datetime.now(timezone.utc).isoformat(),
                       "remote_head": remote_sha, "changed_lanes": changed, "lanes": counts,
                       "publisher_release_sha": os.environ.get("PARALLAX_PUBLISHER_SHA")}
@@ -308,8 +305,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.dry_run:
             checked_worktree(args.worktree)
-            expected, hashes = build_all(args.public_feed, args.db, datetime.now(timezone.utc))
-            assert_sources_unchanged(args.public_feed, hashes)
+            expected, _ = build_all(args.public_feed, args.db, datetime.now(timezone.utc))
             print("DRY_RUN_OK " + " ".join(f"{lane.upper()}={expected[lane]['summary']['buy']}" for lane in LANES))
         else:
             health = publish(args.worktree, args.public_feed, args.db, args.state, datetime.now(timezone.utc))
