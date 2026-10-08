@@ -1,7 +1,18 @@
 {
-  "generated_at": "2026-10-08T10:42:40.131296+00:00",
+  "generated_at": "2026-10-08T10:43:43.510561+00:00",
   "lane": "NFL",
   "plays": [
+    {
+      "contract_side": "YES",
+      "edge_pp": 13.0746578,
+      "market_id": "KXNFLGAME-26OCT12BUFLAR-BUF",
+      "matchup": "BUF at LA",
+      "model_probability": 0.5307465780009113,
+      "price": 0.4,
+      "sport": "NFL",
+      "start_time": "2026-10-13T00:15:00+00:00",
+      "venue": "KALSHI"
+    },
     {
       "contract_side": "YES",
       "edge_pp": 16.65945183,
@@ -15,30 +26,19 @@
     },
     {
       "contract_side": "YES",
-      "edge_pp": 9.39727304,
-      "market_id": "KXNFLGAME-26OCT11DENLAC-LAC",
-      "matchup": "DEN at LAC",
-      "model_probability": 0.47397273039690035,
-      "price": 0.38,
+      "edge_pp": 13.280298,
+      "market_id": "KXNFLGAME-26OCT11INDPIT-PIT",
+      "matchup": "IND at PIT",
+      "model_probability": 0.712802980013526,
+      "price": 0.58,
       "sport": "NFL",
-      "start_time": "2026-10-11T20:05:00+00:00",
-      "venue": "KALSHI"
-    },
-    {
-      "contract_side": "YES",
-      "edge_pp": 22.47544818,
-      "market_id": "KXNFLGAME-26OCT11BALATL-BAL",
-      "matchup": "BAL at ATL",
-      "model_probability": 0.6147544818161963,
-      "price": 0.39,
-      "sport": "NFL",
-      "start_time": "2026-10-12T00:20:00+00:00",
+      "start_time": "2026-10-11T17:00:00+00:00",
       "venue": "KALSHI"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-08T10:42:16.066121+00:00",
+  "source_feed_generated_at": "2026-10-08T10:43:43.049881+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
