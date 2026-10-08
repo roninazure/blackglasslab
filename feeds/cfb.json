@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-08T16:53:29.152371+00:00",
+  "generated_at": "2026-10-08T17:52:30.612995+00:00",
   "lane": "CFB",
   "plays": [
     {
@@ -45,25 +45,14 @@
       "sport": "CFB",
       "start_time": "2026-10-10T23:30:00+00:00",
       "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "YES",
-      "edge_pp": 9.11223173,
-      "market_id": "1044670",
-      "matchup": "Missouri State at Western Kentucky",
-      "model_probability": 0.5861223172666322,
-      "price": 0.495,
-      "sport": "CFB",
-      "start_time": "2026-10-08T23:00:00+00:00",
-      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-08T16:53:07.396270+00:00",
+  "source_feed_generated_at": "2026-10-08T17:51:29.449434+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 5
+    "buy": 4
   }
 }
