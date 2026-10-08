@@ -32,7 +32,7 @@ NFL_TEAMS = {
     "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
     "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
     "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
-    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
+    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAC": "Jacksonville Jaguars", "JAX": "Jacksonville Jaguars",
     "KC": "Kansas City Chiefs", "LA": "Los Angeles Rams", "LAC": "Los Angeles Chargers",
     "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
     "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
@@ -110,7 +110,7 @@ def nfl_display(play: dict, games: list[dict]) -> tuple[str, str] | None:
     elif venue(play.get("venue")) == "KALSHI":
         def kalshi_team_code(code: object) -> str:
             value = str(code or "")
-            return {"LA": "LAR"}.get(value, value)
+            return {"LA": "LAR", "JAC": "JAX"}.get(value, value)
 
         candidates = [g for g in games if isinstance(g, dict) and
                       market_id.startswith("KXNFLGAME-" +
