@@ -108,10 +108,15 @@ def nfl_display(play: dict, games: list[dict]) -> tuple[str, str] | None:
             candidates = [g for g in games if NFL_TEAMS.get(g.get("away_team")) == match[1]
                           and NFL_TEAMS.get(g.get("home_team")) == match[2]]
     elif venue(play.get("venue")) == "KALSHI":
+        def kalshi_team_code(code: object) -> str:
+            value = str(code or "")
+            return {"LA": "LAR"}.get(value, value)
+
         candidates = [g for g in games if isinstance(g, dict) and
                       market_id.startswith("KXNFLGAME-" +
                           datetime.fromisoformat(str(g.get("date"))).strftime("%y%b%d").upper() +
-                          str(g.get("away_team")) + str(g.get("home_team")) + "-")]
+                          kalshi_team_code(g.get("away_team")) +
+                          kalshi_team_code(g.get("home_team")) + "-")]
     if len(candidates) != 1:
         return None
     game = candidates[0]
