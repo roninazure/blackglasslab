@@ -68,7 +68,9 @@ class Deployment:
         if self.command("/usr/bin/git", "-C", str(worktree), "status", "--porcelain", "--untracked-files=all").stdout.strip():
             raise ValueError("customer worktree is dirty")
         local = self.command("/usr/bin/git", "-C", str(worktree), "rev-parse", "HEAD").stdout.strip()
-        remote = self.command("/usr/bin/git", "-C", str(worktree), "ls-remote", "--heads", "origin", "parallax-live-data").stdout.split()[0]
+        remote = self.command("/usr/bin/sudo", "-H", "-u", user,
+                              "/usr/bin/git", "-C", str(worktree), "ls-remote",
+                              "--heads", "origin", "parallax-live-data").stdout.split()[0]
         if local != remote:
             raise ValueError("customer worktree is behind/ahead of remote")
         state = Path("/Users") / user / "Library/Application Support/SwarmEdge/state"
