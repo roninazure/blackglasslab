@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-09T15:37:50.620825+00:00",
+  "generated_at": "2026-10-09T16:37:41.591205+00:00",
   "lane": "CFB",
   "plays": [
     {
@@ -37,11 +37,11 @@
     },
     {
       "contract_side": "YES",
-      "edge_pp": 13.37355876,
+      "edge_pp": 13.87355876,
       "market_id": "1113507",
       "matchup": "Georgia at Alabama",
       "model_probability": 0.6087355876133824,
-      "price": 0.475,
+      "price": 0.47,
       "sport": "CFB",
       "start_time": "2026-10-10T23:30:00+00:00",
       "venue": "POLYMARKET"
@@ -60,7 +60,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-09T15:36:56.983972+00:00",
+  "source_feed_generated_at": "2026-10-09T16:37:02.425065+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
