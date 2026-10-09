@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-09T22:39:11.383205+00:00",
+  "generated_at": "2026-10-09T23:39:04.801192+00:00",
   "lane": "CFB",
   "plays": [
     {
@@ -14,23 +14,12 @@
       "venue": "POLYMARKET"
     },
     {
-      "contract_side": "YES",
-      "edge_pp": 18.7180918,
-      "market_id": "1063748",
-      "matchup": "Florida State at Louisville",
-      "model_probability": 0.5671809179778309,
-      "price": 0.38,
-      "sport": "CFB",
-      "start_time": "2026-10-09T23:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
       "contract_side": "NO",
-      "edge_pp": 14.12999093,
+      "edge_pp": 14.62999093,
       "market_id": "1113479",
       "matchup": "Indiana at Nebraska",
       "model_probability": 0.4062999093290828,
-      "price": 0.265,
+      "price": 0.26,
       "sport": "CFB",
       "start_time": "2026-10-10T16:00:00+00:00",
       "venue": "POLYMARKET"
@@ -56,11 +45,22 @@
       "sport": "CFB",
       "start_time": "2026-10-10T01:00:00+00:00",
       "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 9.91844389,
+      "market_id": "1083586",
+      "matchup": "Boise State at Fresno State",
+      "model_probability": 0.3941844388682407,
+      "price": 0.295,
+      "sport": "CFB",
+      "start_time": "2026-10-11T02:30:00+00:00",
+      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-09T22:38:11.058151+00:00",
+  "source_feed_generated_at": "2026-10-09T23:38:15.274362+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
