@@ -1,7 +1,62 @@
 {
-  "generated_at": "2026-10-09T20:30:01.562510+00:00",
+  "generated_at": "2026-10-09T20:31:05.062225+00:00",
   "lane": "NFL",
   "plays": [
+    {
+      "contract_side": "YES",
+      "edge_pp": 22.97544818,
+      "market_id": "1083109",
+      "matchup": "BAL at ATL",
+      "model_probability": 0.6147544818161963,
+      "price": 0.385,
+      "sport": "NFL",
+      "start_time": "2026-10-12T00:20:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 19.73591036,
+      "market_id": "1083103",
+      "matchup": "CHI at GB",
+      "model_probability": 0.6773591035884879,
+      "price": 0.48,
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 25.62552508,
+      "market_id": "1083083",
+      "matchup": "CIN at MIA",
+      "model_probability": 0.5187552507699843,
+      "price": 0.2625,
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "YES",
+      "edge_pp": 12.9034898,
+      "market_id": "1083082",
+      "matchup": "CLE at NYJ",
+      "model_probability": 0.5715348979514447,
+      "price": 0.4425,
+      "sport": "NFL",
+      "start_time": "2026-10-11T17:00:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 10.39727304,
+      "market_id": "KXNFLGAME-26OCT11DENLAC-DEN",
+      "matchup": "DEN at LAC",
+      "model_probability": 0.47397273039690035,
+      "price": 0.37,
+      "sport": "NFL",
+      "start_time": "2026-10-11T20:05:00+00:00",
+      "venue": "KALSHI"
+    },
     {
       "contract_side": "NO",
       "edge_pp": 13.030298,
@@ -36,61 +91,6 @@
       "venue": "POLYMARKET"
     },
     {
-      "contract_side": "NO",
-      "edge_pp": 10.14727304,
-      "market_id": "1083100",
-      "matchup": "DEN at LAC",
-      "model_probability": 0.47397273039690035,
-      "price": 0.3725,
-      "sport": "NFL",
-      "start_time": "2026-10-11T20:05:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "YES",
-      "edge_pp": 22.97544818,
-      "market_id": "1083109",
-      "matchup": "BAL at ATL",
-      "model_probability": 0.6147544818161963,
-      "price": 0.385,
-      "sport": "NFL",
-      "start_time": "2026-10-12T00:20:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "YES",
-      "edge_pp": 14.8246578,
-      "market_id": "1106139",
-      "matchup": "BUF at LA",
-      "model_probability": 0.5307465780009113,
-      "price": 0.3825,
-      "sport": "NFL",
-      "start_time": "2026-10-13T00:15:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "NO",
-      "edge_pp": 19.73591036,
-      "market_id": "1083103",
-      "matchup": "CHI at GB",
-      "model_probability": 0.6773591035884879,
-      "price": 0.48,
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "NO",
-      "edge_pp": 25.62552508,
-      "market_id": "1083083",
-      "matchup": "CIN at MIA",
-      "model_probability": 0.5187552507699843,
-      "price": 0.2625,
-      "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
       "contract_side": "YES",
       "edge_pp": 34.5765611,
       "market_id": "1083081",
@@ -103,19 +103,19 @@
     },
     {
       "contract_side": "YES",
-      "edge_pp": 12.9034898,
-      "market_id": "1083082",
-      "matchup": "CLE at NYJ",
-      "model_probability": 0.5715348979514447,
-      "price": 0.4425,
+      "edge_pp": 14.8246578,
+      "market_id": "1106139",
+      "matchup": "BUF at LA",
+      "model_probability": 0.5307465780009113,
+      "price": 0.3825,
       "sport": "NFL",
-      "start_time": "2026-10-11T17:00:00+00:00",
+      "start_time": "2026-10-13T00:15:00+00:00",
       "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-09T20:30:01.506710+00:00",
+  "source_feed_generated_at": "2026-10-09T20:31:04.549514+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
