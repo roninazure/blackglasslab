@@ -1,16 +1,16 @@
 {
-  "generated_at": "2026-10-10T18:41:37.102934+00:00",
+  "generated_at": "2026-10-10T19:43:14.263811+00:00",
   "lane": "CFB",
   "plays": [
     {
       "contract_side": "NO",
-      "edge_pp": 29.09031497,
-      "market_id": "1071469",
-      "matchup": "Texas at Oklahoma",
-      "model_probability": 0.5509031496532268,
-      "price": 0.26,
+      "edge_pp": 28.04396889,
+      "market_id": "1113504",
+      "matchup": "Tennessee at Arkansas",
+      "model_probability": 0.4554396888706982,
+      "price": 0.175,
       "sport": "CFB",
-      "start_time": "2026-10-10T19:30:00+00:00",
+      "start_time": "2026-10-10T20:15:00+00:00",
       "venue": "POLYMARKET"
     },
     {
@@ -48,11 +48,11 @@
     },
     {
       "contract_side": "YES",
-      "edge_pp": 7.47412232,
+      "edge_pp": 6.47412232,
       "market_id": "1083578",
       "matchup": "USC at Penn State",
       "model_probability": 0.559741223174176,
-      "price": 0.485,
+      "price": 0.495,
       "sport": "CFB",
       "start_time": "2026-10-10T23:30:00+00:00",
       "venue": "POLYMARKET"
@@ -60,7 +60,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-10T18:41:25.547453+00:00",
+  "source_feed_generated_at": "2026-10-10T19:42:45.822885+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
