@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-10T14:40:59.796945+00:00",
+  "generated_at": "2026-10-10T15:43:20.466381+00:00",
   "lane": "CFB",
   "plays": [
     {
@@ -11,6 +11,17 @@
       "price": 0.26,
       "sport": "CFB",
       "start_time": "2026-10-10T19:30:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "YES",
+      "edge_pp": 24.61906908,
+      "market_id": "1199241",
+      "matchup": "Texas A&M at Missouri",
+      "model_probability": 0.6161906908159013,
+      "price": 0.37,
+      "sport": "CFB",
+      "start_time": "2026-10-10T16:00:00+00:00",
       "venue": "POLYMARKET"
     },
     {
@@ -37,30 +48,19 @@
     },
     {
       "contract_side": "NO",
-      "edge_pp": 9.91844389,
+      "edge_pp": 11.41844389,
       "market_id": "1083586",
       "matchup": "Boise State at Fresno State",
       "model_probability": 0.3941844388682407,
-      "price": 0.295,
+      "price": 0.28,
       "sport": "CFB",
       "start_time": "2026-10-11T02:30:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "YES",
-      "edge_pp": 8.97412232,
-      "market_id": "1083578",
-      "matchup": "USC at Penn State",
-      "model_probability": 0.559741223174176,
-      "price": 0.47,
-      "sport": "CFB",
-      "start_time": "2026-10-10T23:30:00+00:00",
       "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-10T14:40:05.251027+00:00",
+  "source_feed_generated_at": "2026-10-10T15:40:48.647608+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
