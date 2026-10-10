@@ -1,16 +1,16 @@
 {
-  "generated_at": "2026-10-10T19:43:14.263811+00:00",
+  "generated_at": "2026-10-10T20:44:00.750375+00:00",
   "lane": "CFB",
   "plays": [
     {
       "contract_side": "NO",
-      "edge_pp": 28.04396889,
-      "market_id": "1113504",
-      "matchup": "Tennessee at Arkansas",
-      "model_probability": 0.4554396888706982,
-      "price": 0.175,
+      "edge_pp": 17.28430528,
+      "market_id": "1083580",
+      "matchup": "Air Force at Northern Illinois",
+      "model_probability": 0.45284305276963066,
+      "price": 0.28,
       "sport": "CFB",
-      "start_time": "2026-10-10T20:15:00+00:00",
+      "start_time": "2026-10-10T23:30:00+00:00",
       "venue": "POLYMARKET"
     },
     {
@@ -45,25 +45,14 @@
       "sport": "CFB",
       "start_time": "2026-10-11T02:30:00+00:00",
       "venue": "POLYMARKET"
-    },
-    {
-      "contract_side": "YES",
-      "edge_pp": 6.47412232,
-      "market_id": "1083578",
-      "matchup": "USC at Penn State",
-      "model_probability": 0.559741223174176,
-      "price": 0.495,
-      "sport": "CFB",
-      "start_time": "2026-10-10T23:30:00+00:00",
-      "venue": "POLYMARKET"
     }
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-10T19:42:45.822885+00:00",
+  "source_feed_generated_at": "2026-10-10T20:43:04.809514+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
-    "buy": 5
+    "buy": 4
   }
 }
