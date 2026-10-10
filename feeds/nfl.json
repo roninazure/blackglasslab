@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-10T11:03:50.104410+00:00",
+  "generated_at": "2026-10-10T11:04:54.770382+00:00",
   "lane": "NFL",
   "plays": [
     {
@@ -37,14 +37,14 @@
     },
     {
       "contract_side": "YES",
-      "edge_pp": 12.9034898,
-      "market_id": "1083082",
+      "edge_pp": 13.1534898,
+      "market_id": "KXNFLGAME-26OCT11CLENYJ-CLE",
       "matchup": "CLE at NYJ",
       "model_probability": 0.5715348979514447,
-      "price": 0.4425,
+      "price": 0.44,
       "sport": "NFL",
       "start_time": "2026-10-11T17:00:00+00:00",
-      "venue": "POLYMARKET"
+      "venue": "KALSHI"
     },
     {
       "contract_side": "NO",
@@ -115,7 +115,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-10T11:03:30.807921+00:00",
+  "source_feed_generated_at": "2026-10-10T11:04:46.039174+00:00",
   "source_schedule_state": "INCOMPLETE",
   "state": "LIVE",
   "summary": {
