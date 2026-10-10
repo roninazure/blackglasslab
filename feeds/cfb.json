@@ -1,14 +1,14 @@
 {
-  "generated_at": "2026-10-10T21:42:32.926643+00:00",
+  "generated_at": "2026-10-10T22:45:22.242251+00:00",
   "lane": "CFB",
   "plays": [
     {
       "contract_side": "NO",
-      "edge_pp": 14.64312356,
+      "edge_pp": 15.14312356,
       "market_id": "1113505",
       "matchup": "LSU at Kentucky",
       "model_probability": 0.4014312355970244,
-      "price": 0.255,
+      "price": 0.25,
       "sport": "CFB",
       "start_time": "2026-10-10T23:00:00+00:00",
       "venue": "POLYMARKET"
@@ -26,11 +26,11 @@
     },
     {
       "contract_side": "NO",
-      "edge_pp": 12.41844389,
+      "edge_pp": 12.91844389,
       "market_id": "1083586",
       "matchup": "Boise State at Fresno State",
       "model_probability": 0.3941844388682407,
-      "price": 0.27,
+      "price": 0.265,
       "sport": "CFB",
       "start_time": "2026-10-11T02:30:00+00:00",
       "venue": "POLYMARKET"
@@ -38,7 +38,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-10T21:41:56.617478+00:00",
+  "source_feed_generated_at": "2026-10-10T22:43:48.129520+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
