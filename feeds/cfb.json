@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-10T00:39:02.021076+00:00",
+  "generated_at": "2026-10-10T01:38:52.488406+00:00",
   "lane": "CFB",
   "plays": [
     {
@@ -11,6 +11,17 @@
       "price": 0.26,
       "sport": "CFB",
       "start_time": "2026-10-10T19:30:00+00:00",
+      "venue": "POLYMARKET"
+    },
+    {
+      "contract_side": "NO",
+      "edge_pp": 14.64312356,
+      "market_id": "1113505",
+      "matchup": "LSU at Kentucky",
+      "model_probability": 0.4014312355970244,
+      "price": 0.255,
+      "sport": "CFB",
+      "start_time": "2026-10-10T23:00:00+00:00",
       "venue": "POLYMARKET"
     },
     {
@@ -36,17 +47,6 @@
       "venue": "POLYMARKET"
     },
     {
-      "contract_side": "YES",
-      "edge_pp": 13.45230458,
-      "market_id": "1063752",
-      "matchup": "Iowa at Washington",
-      "model_probability": 0.5645230458376151,
-      "price": 0.43,
-      "sport": "CFB",
-      "start_time": "2026-10-10T01:00:00+00:00",
-      "venue": "POLYMARKET"
-    },
-    {
       "contract_side": "NO",
       "edge_pp": 9.91844389,
       "market_id": "1083586",
@@ -60,7 +60,7 @@
   ],
   "read_only": true,
   "schema_version": "parallax.customer.v1",
-  "source_feed_generated_at": "2026-10-10T00:38:23.740888+00:00",
+  "source_feed_generated_at": "2026-10-10T01:38:26.161852+00:00",
   "source_schedule_state": "UNVERIFIED",
   "state": "LIVE",
   "summary": {
